@@ -1,0 +1,391 @@
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
+module API.Types.ProviderPlatform.Management where
+
+import qualified API.Types.ProviderPlatform.Management.Account
+import qualified API.Types.ProviderPlatform.Management.Booking
+import qualified API.Types.ProviderPlatform.Management.CoinsConfig
+import qualified API.Types.ProviderPlatform.Management.Communication
+import qualified API.Types.ProviderPlatform.Management.DomainDiscountConfig
+import qualified API.Types.ProviderPlatform.Management.Driver
+import qualified API.Types.ProviderPlatform.Management.DriverCoins
+import qualified API.Types.ProviderPlatform.Management.DriverGoHome
+import qualified API.Types.ProviderPlatform.Management.DriverReferral
+import qualified API.Types.ProviderPlatform.Management.DriverRegistration
+import qualified API.Types.ProviderPlatform.Management.DriverVehicleQuality
+import qualified API.Types.ProviderPlatform.Management.EntityInfo
+import qualified API.Types.ProviderPlatform.Management.FeedbackForm
+import qualified API.Types.ProviderPlatform.Management.FinanceManagement
+import qualified API.Types.ProviderPlatform.Management.KnowledgeCenter
+import qualified API.Types.ProviderPlatform.Management.Media
+import qualified API.Types.ProviderPlatform.Management.MediaFileDocument
+import qualified API.Types.ProviderPlatform.Management.Merchant
+import qualified API.Types.ProviderPlatform.Management.Message
+import qualified API.Types.ProviderPlatform.Management.NammaTag
+import qualified API.Types.ProviderPlatform.Management.Payout
+import qualified API.Types.ProviderPlatform.Management.PlanManagement
+import qualified API.Types.ProviderPlatform.Management.Revenue
+import qualified API.Types.ProviderPlatform.Management.Ride
+import qualified API.Types.ProviderPlatform.Management.SearchTry
+import qualified API.Types.ProviderPlatform.Management.SosMedia
+import qualified API.Types.ProviderPlatform.Management.SpecialZoneQueue
+import qualified API.Types.ProviderPlatform.Management.System
+import qualified API.Types.ProviderPlatform.Management.VehicleDetails
+import qualified API.Types.ProviderPlatform.Management.VehicleInfo
+import qualified API.Types.ProviderPlatform.Management.Volunteer
+import qualified Data.List
+import Data.OpenApi (ToSchema)
+import qualified Data.Singletons.TH
+import EulerHS.Prelude
+import qualified Text.Read
+import qualified Text.Show
+
+data ManagementUserActionType
+  = ACCOUNT API.Types.ProviderPlatform.Management.Account.AccountUserActionType
+  | BOOKING API.Types.ProviderPlatform.Management.Booking.BookingUserActionType
+  | COINS_CONFIG API.Types.ProviderPlatform.Management.CoinsConfig.CoinsConfigUserActionType
+  | COMMUNICATION API.Types.ProviderPlatform.Management.Communication.CommunicationUserActionType
+  | DOMAIN_DISCOUNT_CONFIG API.Types.ProviderPlatform.Management.DomainDiscountConfig.DomainDiscountConfigUserActionType
+  | DRIVER API.Types.ProviderPlatform.Management.Driver.DriverUserActionType
+  | DRIVER_COINS API.Types.ProviderPlatform.Management.DriverCoins.DriverCoinsUserActionType
+  | DRIVER_GO_HOME API.Types.ProviderPlatform.Management.DriverGoHome.DriverGoHomeUserActionType
+  | DRIVER_REFERRAL API.Types.ProviderPlatform.Management.DriverReferral.DriverReferralUserActionType
+  | DRIVER_REGISTRATION API.Types.ProviderPlatform.Management.DriverRegistration.DriverRegistrationUserActionType
+  | DRIVER_VEHICLE_QUALITY API.Types.ProviderPlatform.Management.DriverVehicleQuality.DriverVehicleQualityUserActionType
+  | ENTITY_INFO API.Types.ProviderPlatform.Management.EntityInfo.EntityInfoUserActionType
+  | FEEDBACK_FORM API.Types.ProviderPlatform.Management.FeedbackForm.FeedbackFormUserActionType
+  | FINANCE_MANAGEMENT API.Types.ProviderPlatform.Management.FinanceManagement.FinanceManagementUserActionType
+  | KNOWLEDGE_CENTER API.Types.ProviderPlatform.Management.KnowledgeCenter.KnowledgeCenterUserActionType
+  | MEDIA API.Types.ProviderPlatform.Management.Media.MediaUserActionType
+  | MEDIA_FILE_DOCUMENT API.Types.ProviderPlatform.Management.MediaFileDocument.MediaFileDocumentUserActionType
+  | MERCHANT API.Types.ProviderPlatform.Management.Merchant.MerchantUserActionType
+  | MESSAGE API.Types.ProviderPlatform.Management.Message.MessageUserActionType
+  | NAMMA_TAG API.Types.ProviderPlatform.Management.NammaTag.NammaTagUserActionType
+  | PAYOUT API.Types.ProviderPlatform.Management.Payout.PayoutUserActionType
+  | PLAN_MANAGEMENT API.Types.ProviderPlatform.Management.PlanManagement.PlanManagementUserActionType
+  | REVENUE API.Types.ProviderPlatform.Management.Revenue.RevenueUserActionType
+  | RIDE API.Types.ProviderPlatform.Management.Ride.RideUserActionType
+  | SEARCH_TRY API.Types.ProviderPlatform.Management.SearchTry.SearchTryUserActionType
+  | SOS_MEDIA API.Types.ProviderPlatform.Management.SosMedia.SosMediaUserActionType
+  | SPECIAL_ZONE_QUEUE API.Types.ProviderPlatform.Management.SpecialZoneQueue.SpecialZoneQueueUserActionType
+  | SYSTEM API.Types.ProviderPlatform.Management.System.SystemUserActionType
+  | VEHICLE_DETAILS API.Types.ProviderPlatform.Management.VehicleDetails.VehicleDetailsUserActionType
+  | VEHICLE_INFO API.Types.ProviderPlatform.Management.VehicleInfo.VehicleInfoUserActionType
+  | VOLUNTEER API.Types.ProviderPlatform.Management.Volunteer.VolunteerUserActionType
+  deriving stock (Generic, Eq, Ord)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+instance Text.Show.Show ManagementUserActionType where
+  show = \case
+    ACCOUNT e -> "ACCOUNT/" <> show e
+    BOOKING e -> "BOOKING/" <> show e
+    COINS_CONFIG e -> "COINS_CONFIG/" <> show e
+    COMMUNICATION e -> "COMMUNICATION/" <> show e
+    DOMAIN_DISCOUNT_CONFIG e -> "DOMAIN_DISCOUNT_CONFIG/" <> show e
+    DRIVER e -> "DRIVER/" <> show e
+    DRIVER_COINS e -> "DRIVER_COINS/" <> show e
+    DRIVER_GO_HOME e -> "DRIVER_GO_HOME/" <> show e
+    DRIVER_REFERRAL e -> "DRIVER_REFERRAL/" <> show e
+    DRIVER_REGISTRATION e -> "DRIVER_REGISTRATION/" <> show e
+    DRIVER_VEHICLE_QUALITY e -> "DRIVER_VEHICLE_QUALITY/" <> show e
+    ENTITY_INFO e -> "ENTITY_INFO/" <> show e
+    FEEDBACK_FORM e -> "FEEDBACK_FORM/" <> show e
+    FINANCE_MANAGEMENT e -> "FINANCE_MANAGEMENT/" <> show e
+    KNOWLEDGE_CENTER e -> "KNOWLEDGE_CENTER/" <> show e
+    MEDIA e -> "MEDIA/" <> show e
+    MEDIA_FILE_DOCUMENT e -> "MEDIA_FILE_DOCUMENT/" <> show e
+    MERCHANT e -> "MERCHANT/" <> show e
+    MESSAGE e -> "MESSAGE/" <> show e
+    NAMMA_TAG e -> "NAMMA_TAG/" <> show e
+    PAYOUT e -> "PAYOUT/" <> show e
+    PLAN_MANAGEMENT e -> "PLAN_MANAGEMENT/" <> show e
+    REVENUE e -> "REVENUE/" <> show e
+    RIDE e -> "RIDE/" <> show e
+    SEARCH_TRY e -> "SEARCH_TRY/" <> show e
+    SOS_MEDIA e -> "SOS_MEDIA/" <> show e
+    SPECIAL_ZONE_QUEUE e -> "SPECIAL_ZONE_QUEUE/" <> show e
+    SYSTEM e -> "SYSTEM/" <> show e
+    VEHICLE_DETAILS e -> "VEHICLE_DETAILS/" <> show e
+    VEHICLE_INFO e -> "VEHICLE_INFO/" <> show e
+    VOLUNTEER e -> "VOLUNTEER/" <> show e
+
+instance Text.Read.Read ManagementUserActionType where
+  readsPrec d' =
+    Text.Read.readParen
+      (d' > app_prec)
+      ( \r ->
+          [(ACCOUNT v1, r2) | r1 <- stripPrefix "ACCOUNT/" r, (v1, r2) <- Text.Read.readsPrec (app_prec + 1) r1]
+            ++ [ ( BOOKING v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "BOOKING/" r,
+                   (v1, r2) <- Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( COINS_CONFIG v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "COINS_CONFIG/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( COMMUNICATION v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "COMMUNICATION/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( DOMAIN_DISCOUNT_CONFIG v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "DOMAIN_DISCOUNT_CONFIG/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( DRIVER v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "DRIVER/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( DRIVER_COINS v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "DRIVER_COINS/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( DRIVER_GO_HOME v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "DRIVER_GO_HOME/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( DRIVER_REFERRAL v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "DRIVER_REFERRAL/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( DRIVER_REGISTRATION v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "DRIVER_REGISTRATION/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( DRIVER_VEHICLE_QUALITY v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "DRIVER_VEHICLE_QUALITY/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( ENTITY_INFO v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "ENTITY_INFO/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( FEEDBACK_FORM v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "FEEDBACK_FORM/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( FINANCE_MANAGEMENT v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "FINANCE_MANAGEMENT/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( KNOWLEDGE_CENTER v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "KNOWLEDGE_CENTER/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( MEDIA v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "MEDIA/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( MEDIA_FILE_DOCUMENT v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "MEDIA_FILE_DOCUMENT/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( MERCHANT v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "MERCHANT/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( MESSAGE v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "MESSAGE/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( NAMMA_TAG v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "NAMMA_TAG/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( PAYOUT v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "PAYOUT/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( PLAN_MANAGEMENT v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "PLAN_MANAGEMENT/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( REVENUE v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "REVENUE/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( RIDE v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "RIDE/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( SEARCH_TRY v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "SEARCH_TRY/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( SOS_MEDIA v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "SOS_MEDIA/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( SPECIAL_ZONE_QUEUE v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "SPECIAL_ZONE_QUEUE/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( SYSTEM v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "SYSTEM/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( VEHICLE_DETAILS v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "VEHICLE_DETAILS/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( VEHICLE_INFO v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "VEHICLE_INFO/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+            ++ [ ( VOLUNTEER v1,
+                   r2
+                 )
+                 | r1 <- stripPrefix "VOLUNTEER/" r,
+                   ( v1,
+                     r2
+                     ) <-
+                     Text.Read.readsPrec (app_prec + 1) r1
+               ]
+      )
+    where
+      app_prec = 10
+      stripPrefix pref r = bool [] [Data.List.drop (length pref) r] $ Data.List.isPrefixOf pref r
+
+$(Data.Singletons.TH.genSingletons [(''ManagementUserActionType)])

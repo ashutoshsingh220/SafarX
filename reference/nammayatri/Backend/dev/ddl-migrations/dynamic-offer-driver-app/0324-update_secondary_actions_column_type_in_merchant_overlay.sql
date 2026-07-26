@@ -1,0 +1,1 @@
+ALTER TABLE atlas_driver_offer_bpp.merchant_overlay ALTER COLUMN secondary_actions TYPE text[] using NULLIF(array[secondary_actions], '{null}');

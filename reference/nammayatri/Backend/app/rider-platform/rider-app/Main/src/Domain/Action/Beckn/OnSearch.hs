@@ -1,0 +1,767 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module Domain.Action.Beckn.OnSearch
+  ( DOnSearchReq (..),
+    ProviderInfo (..),
+    EstimateInfo (..),
+    TollChargesInfo (..),
+    DEstimate.FareRange (..),
+    QuoteInfo (..),
+    QuoteDetails (..),
+    OneWayQuoteDetails (..),
+    OneWaySpecialZoneQuoteDetails (..),
+    InterCityQuoteDetails (..),
+    MeterRideQuoteDetails (..),
+    RentalQuoteDetails (..),
+    EasyBookingQuoteDetails (..),
+    QuoteBreakupInfo (..),
+    EstimateBreakupInfo (..),
+    BreakupPriceInfo (..),
+    NightShiftInfo (..),
+    WaitingChargesInfo (..),
+    OnSearchResult (..),
+    onSearch,
+    validateRequest,
+    buildQuoteBreakUp,
+    BusinessDiscountInfo (..),
+    PersonalDiscountInfo (..),
+  )
+where
+
+import qualified API.UI.Select as DSelect
+import qualified Beckn.OnDemand.Utils.Common as Utils
+import qualified BecknV2.OnDemand.Enums as Enums
+import qualified Data.Aeson
+import Data.List (sortBy)
+import Data.Maybe ()
+import Data.Ord (comparing)
+import qualified Domain.Action.UI.Confirm as DConfirm
+import qualified Domain.Action.UI.Quote as DQ (estimateBuildLockKey)
+import qualified Domain.Types as DT
+import Domain.Types.BppDetails
+import qualified Domain.Types.Estimate as DEstimate
+import qualified Domain.Types.EstimateStatus as DEstimate
+import qualified Domain.Types.InterCityDetails as DInterCityDetails
+import qualified Domain.Types.Merchant as DMerchant
+import qualified Domain.Types.MerchantOperatingCity as DMerchantOperatingCity
+import qualified Domain.Types.MerchantPaymentMethod as DMPM
+import qualified Domain.Types.NyRegularInstanceLog as DNyRegularInstanceLog
+import qualified Domain.Types.NyRegularSubscription as NyRegularSubscription
+import qualified Domain.Types.Quote as DQuote
+import qualified Domain.Types.QuoteBreakup as DQuoteBreakup
+import qualified Domain.Types.RentalDetails as DRentalDetails
+import qualified Domain.Types.RiderConfig as DRiderConfig
+import qualified Domain.Types.RiderPreferredOption as DRPO
+import Domain.Types.SearchRequest
+import qualified Domain.Types.SearchRequest as DSearchReq
+import qualified Domain.Types.ServiceTierType as DVST
+import qualified Domain.Types.SpecialZoneQuote as DSpecialZoneQuote
+import Domain.Types.VehicleVariant
+import qualified Domain.Types.VehicleVariant as DV
+import Environment
+import Kernel.External.Maps
+import Kernel.Prelude
+import qualified Kernel.Storage.Hedis as Redis
+import Kernel.Tools.Metrics.CoreMetrics
+import qualified Kernel.Types.Beckn.Domain as Domain
+import Kernel.Types.Common hiding (id)
+import Kernel.Types.Id
+import Kernel.Utils.Common
+-- import qualified Lib.Yudhishthira.Tools.Utils as LYTU
+
+import Lib.ConfigPilot.Interface.Types (getConfig)
+import qualified Lib.Types.SpecialLocation as SL
+import qualified SharedLogic.CallBPPInternal as Est
+import qualified SharedLogic.CreateFareForMultiModal as SLCF
+import qualified SharedLogic.Type as SLT
+import qualified Storage.CachedQueries.BppDetails as CQBppDetails
+import qualified Storage.CachedQueries.Merchant as QMerch
+import qualified Storage.CachedQueries.Merchant.RiderConfig as CQRC
+import qualified Storage.CachedQueries.Person.PersonFlowStatus as QPFS
+import qualified Storage.CachedQueries.ValueAddNP as CQVAN
+import Storage.ConfigPilot.Config.BecknConfig (BecknConfigDimensions (..))
+import Storage.ConfigPilot.Config.InsuranceConfig (InsuranceConfigDimensions (..))
+import Storage.ConfigPilot.Config.RiderConfig (RiderConfigDimensions (..))
+import qualified Storage.Queries.BecknConfig as SQBC
+import qualified Storage.Queries.Estimate as QEstimate
+import qualified Storage.Queries.InsuranceConfig as QIC
+import qualified Storage.Queries.NyRegularInstanceLog as QNyRegularInstanceLog
+import qualified Storage.Queries.NyRegularSubscription as QNyRegularSubscription
+import qualified Storage.Queries.Quote as QQuote
+import qualified Storage.Queries.SearchRequest as QSearchReq
+import Tools.Error
+import Tools.Event
+import qualified Tools.EventTracking as ET
+import qualified Tools.Metrics as Metrics
+
+data DOnSearchReq = DOnSearchReq
+  { requestId :: Id DSearchReq.SearchRequest,
+    providerInfo :: ProviderInfo,
+    estimatesInfo :: [EstimateInfo],
+    quotesInfo :: [QuoteInfo],
+    paymentMethodsInfo :: [DMPM.PaymentMethodInfo]
+  }
+
+data ValidatedOnSearchReq = ValidatedOnSearchReq
+  { requestId :: Id DSearchReq.SearchRequest,
+    providerInfo :: ProviderInfo,
+    estimatesInfo :: [EstimateInfo],
+    quotesInfo :: [QuoteInfo],
+    searchRequest :: SearchRequest,
+    merchant :: DMerchant.Merchant,
+    paymentMethodsInfo :: [DMPM.PaymentMethodInfo]
+  }
+
+-- | In-memory snapshot returned by onSearch so a sync caller can synthesize a
+-- GetQuotesRes without re-reading from DB or re-acquiring the estimate-build
+-- Redis lock. See Search.hs trySyncSearch for the sync path.
+data OnSearchResult = OnSearchResult
+  { searchRequest :: SearchRequest,
+    estimates :: [DEstimate.Estimate],
+    quotes :: [DQuote.Quote],
+    riderConfig :: Maybe DRiderConfig.RiderConfig
+  }
+
+data ProviderInfo = ProviderInfo
+  { providerId :: Text,
+    name :: Text,
+    url :: BaseUrl,
+    mobileNumber :: Text,
+    ridesCompleted :: Int
+  }
+
+data EstimateInfo = EstimateInfo
+  { bppEstimateId :: Id DEstimate.BPPEstimate,
+    vehicleVariant :: VehicleVariant,
+    estimatedFare :: Price,
+    discount :: Maybe Price,
+    estimatedTotalFare :: Price,
+    estimatedPickupDuration :: Maybe Seconds,
+    itemId :: Text,
+    totalFareRange :: DEstimate.FareRange,
+    descriptions :: [Text],
+    estimateBreakupList :: [EstimateBreakupInfo],
+    nightShiftInfo :: Maybe NightShiftInfo,
+    businessDiscountInfo :: Maybe BusinessDiscountInfo,
+    personalDiscountInfo :: Maybe PersonalDiscountInfo,
+    tollChargesInfo :: Maybe TollChargesInfo,
+    waitingCharges :: Maybe WaitingChargesInfo,
+    driversLocation :: [LatLong],
+    specialLocationTag :: Maybe Text,
+    validTill :: UTCTime,
+    serviceTierName :: Maybe Text,
+    serviceTierType :: Maybe DVST.ServiceTierType,
+    serviceTierShortDesc :: Maybe Text,
+    isCustomerPrefferedSearchRoute :: Maybe Bool,
+    isBlockedRoute :: Maybe Bool,
+    vehicleServiceTierAirConditioned :: Maybe Double,
+    isAirConditioned :: Maybe Bool,
+    vehicleServiceTierSeatingCapacity :: Maybe Int,
+    vehicleServiceTierLuggageCapacity :: Maybe Int,
+    specialLocationName :: Maybe Text,
+    fareSettlementType :: Maybe SL.FareSettlementType,
+    tripCategory :: DT.TripCategory,
+    vehicleCategory :: Enums.VehicleCategory,
+    vehicleIconUrl :: Maybe BaseUrl,
+    tipOptions :: Maybe [Int],
+    qar :: Maybe Double,
+    -- petCharges :: Maybe Price,
+    smartTipSuggestion :: Maybe HighPrecMoney,
+    smartTipReason :: Maybe Text,
+    area :: Maybe Text,
+    navigationInstruction :: Maybe Text
+  }
+
+data NightShiftInfo = NightShiftInfo
+  { nightShiftCharge :: Price,
+    oldNightShiftCharge :: Maybe Centesimal,
+    nightShiftStart :: TimeOfDay,
+    nightShiftEnd :: TimeOfDay
+  }
+
+data TollChargesInfo = TollChargesInfo
+  { tollCharges :: Price,
+    tollNames :: [Text]
+  }
+
+data BusinessDiscountInfo = BusinessDiscountInfo
+  { businessDiscount :: Price,
+    businessDiscountPercentage :: Double
+  }
+
+data PersonalDiscountInfo = PersonalDiscountInfo
+  { personalDiscount :: Price,
+    personalDiscountPercentage :: Double
+  }
+
+newtype WaitingChargesInfo = WaitingChargesInfo
+  { waitingChargePerMin :: Maybe Price
+  }
+
+data EstimateBreakupInfo = EstimateBreakupInfo
+  { title :: Text,
+    price :: BreakupPriceInfo
+  }
+
+data QuoteBreakupInfo = QuoteBreakupInfo
+  { title :: Text,
+    price :: BreakupPriceInfo
+  }
+
+newtype BreakupPriceInfo = BreakupPriceInfo
+  { value :: Price
+  }
+
+data QuoteInfo = QuoteInfo
+  { vehicleVariant :: VehicleVariant,
+    estimatedFare :: Price,
+    discount :: Maybe Price,
+    estimatedTotalFare :: Price,
+    estimatedPickupDuration :: Maybe Seconds,
+    quoteDetails :: QuoteDetails,
+    itemId :: Text,
+    descriptions :: [Text],
+    specialLocationTag :: Maybe Text,
+    validTill :: UTCTime,
+    serviceTierName :: Maybe Text,
+    serviceTierType :: Maybe DVST.ServiceTierType,
+    serviceTierShortDesc :: Maybe Text,
+    isCustomerPrefferedSearchRoute :: Maybe Bool,
+    isBlockedRoute :: Maybe Bool,
+    tollChargesInfo :: Maybe TollChargesInfo,
+    vehicleServiceTierAirConditioned :: Maybe Double,
+    isAirConditioned :: Maybe Bool,
+    vehicleServiceTierSeatingCapacity :: Maybe Int,
+    vehicleServiceTierLuggageCapacity :: Maybe Int,
+    specialLocationName :: Maybe Text,
+    specialLocationSupportNumber :: Maybe Text,
+    fareSettlementType :: Maybe SL.FareSettlementType,
+    quoteBreakupList :: [QuoteBreakupInfo],
+    tripCategory :: DT.TripCategory,
+    -- petCharges :: Maybe Price,
+    vehicleCategory :: Enums.VehicleCategory,
+    vehicleIconUrl :: Maybe BaseUrl,
+    area :: Maybe Text,
+    navigationInstruction :: Maybe Text
+  }
+
+data QuoteDetails
+  = OneWayDetails OneWayQuoteDetails
+  | InterCityDetails InterCityQuoteDetails
+  | RentalDetails RentalQuoteDetails
+  | OneWaySpecialZoneDetails OneWaySpecialZoneQuoteDetails
+  | MeterRideDetails MeterRideQuoteDetails
+  | EasyBookingDetails EasyBookingQuoteDetails
+
+data MeterRideQuoteDetails = MeterRideQuoteDetails
+  { quoteId :: Text
+  }
+
+data OneWayQuoteDetails = OneWayQuoteDetails
+  { distanceToNearestDriver :: HighPrecMeters,
+    quoteId :: Text
+  }
+
+newtype OneWaySpecialZoneQuoteDetails = OneWaySpecialZoneQuoteDetails
+  { quoteId :: Text
+  }
+
+data InterCityQuoteDetails = InterCityQuoteDetails
+  { quoteId :: Text,
+    baseFare :: Price,
+    perHourCharge :: Price,
+    perExtraMinRate :: Price,
+    perExtraKmRate :: Price,
+    kmPerPlannedExtraHour :: Kilometers,
+    plannedPerKmRateOneWay :: Price,
+    plannedPerKmRateRoundTrip :: Price,
+    perDayMaxHourAllowance :: Hours,
+    perDayMaxAllowanceInMins :: Maybe Minutes,
+    deadKmFare :: Price,
+    nightShiftInfo :: Maybe NightShiftInfo
+  }
+
+data RentalQuoteDetails = RentalQuoteDetails
+  { id :: Text,
+    baseFare :: Price,
+    perHourCharge :: Price,
+    perExtraMinRate :: Price,
+    includedDistancePerHr :: Kilometers,
+    plannedPerKmRate :: Price,
+    perExtraKmRate :: Price,
+    deadKmFare :: Price,
+    nightShiftInfo :: Maybe NightShiftInfo
+  }
+
+-- Minimal, matching OneWayQuoteDetails/MeterRideQuoteDetails's pattern: just the quote id.
+-- FIX: an earlier "fuller" version carried baseFare/baseDistance/perExtraKmRate fields that
+-- required the driver-app to populate Rental-package-style item tags (perHourCharge,
+-- includedDistancePerHr, etc.) via getPerHourCharge/getIncludedKmPerHr/etc. Those tags are
+-- only ever set for real Rental (package fare) quotes, never for EasyBooking's Progressive
+-- fare policy, so buildRentalQuoteInfo's Maybe-chain always failed, and the rider-app's
+-- /on_search handler rejected every EasyBooking callback with "Missing rental quote details"
+-- (verified in logs: HTTP 400 on-search from driver-app, empty quotes on rider-app searches).
+-- The actual fare total/breakup is already carried generically via quoteBreakupList/
+-- estimatedFare on the Quote itself (same mechanism OneWay's static-offer quotes use), so no
+-- per-category preview fields are needed here at all.
+newtype EasyBookingQuoteDetails = EasyBookingQuoteDetails
+  { quoteId :: Text
+  }
+
+validateRequest :: DOnSearchReq -> DSearchReq.SearchRequest -> Flow ValidatedOnSearchReq
+validateRequest DOnSearchReq {..} searchRequest = do
+  merchant <- QMerch.findById searchRequest.merchantId >>= fromMaybeM (MerchantNotFound searchRequest.merchantId.getId)
+  return $ ValidatedOnSearchReq {..}
+
+onSearch ::
+  Text ->
+  ValidatedOnSearchReq ->
+  Flow (Maybe OnSearchResult)
+onSearch transactionId ValidatedOnSearchReq {..} = do
+  now <- getCurrentTime
+
+  mkBppDetails >>= CQBppDetails.createIfNotPresent
+  riderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = searchRequest.merchantOperatingCityId.getId}) (Just (CQRC.findByMerchantOperatingCityId searchRequest.merchantOperatingCityId))
+  let isReservedSearch = isReservedRideSearch searchRequest
+  mbNySubscription <- getNyRegularSubs isReservedSearch
+  isValueAddNP <- CQVAN.isValueAddNP providerInfo.providerId
+  becknConfig <- (listToMaybe <$> getConfig (BecknConfigDimensions {merchantOperatingCityId = searchRequest.merchantOperatingCityId.getId, merchantId = searchRequest.merchantId.getId, domain = Just (show Domain.MOBILITY), vehicleCategory = Nothing}) (Just (SQBC.findByMerchantIdDomainandMerchantOperatingCityId (Just searchRequest.merchantId) (show Domain.MOBILITY) (Just searchRequest.merchantOperatingCityId)))) >>= fromMaybeM (InvalidRequest $ "BecknConfig not found for merchantId " <> show searchRequest.merchantId.getId <> " merchantOperatingCityId " <> show searchRequest.merchantOperatingCityId.getId)
+  blackListedVehicles <- Utils.getBlackListedVehicles searchRequest.merchantOperatingCityId becknConfig.id providerInfo.providerId
+  if not isValueAddNP && isJust searchRequest.disabilityTag
+    then do
+      logTagError "onSearch" "disability tag enabled search estimates discarded, not supported for OFF-US transactions"
+      Metrics.finishSearchMetrics merchant.name transactionId
+      pure Nothing
+    else do
+      deploymentVersion <- asks (.version)
+      estimates <- traverse (buildEstimate providerInfo now searchRequest deploymentVersion (fromMaybe [] ((Just . (.boostSearchPreSelectionServiceTierConfig)) =<< riderConfig))) (filterEstimtesByPrefference estimatesInfo blackListedVehicles mbNySubscription)
+      quotes <- traverse (buildQuote requestId providerInfo now searchRequest deploymentVersion) (filterQuotesByPrefference quotesInfo blackListedVehicles mbNySubscription)
+      updateRiderPreferredOption quotes
+      let mbRequiredEstimate = listToMaybe $ sortBy (comparing ((DEstimate.minFare . DEstimate.totalFareRange) <&> (.amount)) <> comparing ((DEstimate.maxFare . DEstimate.totalFareRange) <&> (.amount))) estimates
+      fork "triggerEstimateEvents" $
+        forM_ estimates $ \est ->
+          triggerEstimateEvent EstimateEventData {estimate = est, personId = searchRequest.riderId, merchantId = searchRequest.merchantId}
+      unless (null estimates) $
+        fork "event_tracking: user_request_quotes" $
+          ET.trackEvent searchRequest.merchantId searchRequest.merchantOperatingCityId (ET.UserRequestedQuotes (getId searchRequest.riderId) (length estimates))
+      let lockKey = DQ.estimateBuildLockKey searchRequest.id.getId
+      Redis.withLockRedis lockKey 5 $ do
+        QEstimate.createMany estimates
+        QQuote.createMany quotes
+        QPFS.clearCache searchRequest.riderId
+
+      when (searchRequest.isMeterRideSearch == Just True) $ do
+        quoteForMeterRide <- listToMaybe quotes & fromMaybeM (InvalidRequest "Quote for meter ride doesn't exist")
+        void $ DConfirm.confirm searchRequest.riderId quoteForMeterRide.id Nothing Nothing Nothing Nothing False Nothing
+
+      whenJust mbRequiredEstimate $ \requiredEstimate -> do
+        shouldAutoSelect <- SLCF.createFares requestId.getId requiredEstimate.id.getId
+        let shouldAutoSelectForReserved = isReservedSearch && isJust mbNySubscription
+            shouldAutoSelectFinal = shouldAutoSelect || shouldAutoSelectForReserved
+
+        when shouldAutoSelectForReserved $ do
+          logTagInfo "onSearch" $ "Auto-selecting estimate for reserved ride: " <> show searchRequest.id.getId
+          -- Update NyRegularInstanceLog status to AUTO_SELECTED
+          void $
+            fork "Update NyRegularInstanceLog status" $
+              updateNyRegularInstanceLogStatus searchRequest.id.getId
+
+        when shouldAutoSelectFinal $ autoSelectEstimate searchRequest.riderId requiredEstimate.id
+
+      Metrics.finishSearchMetrics merchant.name transactionId
+      pure $ Just OnSearchResult {searchRequest, estimates, quotes, riderConfig}
+  where
+    isReservedRideSearch :: DSearchReq.SearchRequest -> Bool
+    isReservedRideSearch searchReq =
+      case searchReq.searchMode of
+        Just DSearchReq.RESERVE -> True
+        _ -> False
+
+    autoSelectEstimate personId estimateId = do
+      let selectReq =
+            DSelect.DSelectReq
+              { customerExtraFee = Nothing,
+                isPetRide = Nothing,
+                customerExtraFeeWithCurrency = Nothing,
+                autoAssignEnabled = True,
+                autoAssignEnabledV2 = Just True,
+                paymentMethodId = Nothing,
+                paymentInstrument = Nothing,
+                otherSelectedEstimates = Nothing,
+                isAdvancedBookingEnabled = Nothing,
+                deliveryDetails = Nothing,
+                disabilityDisable = Nothing,
+                billingCategory = Nothing,
+                preferSafetyPlus = Nothing,
+                driverPreference = Nothing,
+                selectedOfferId = Nothing
+              }
+      void $ DSelect.select2' (personId, merchant.id) estimateId selectReq Nothing
+    {- Author: Hemant Mangla
+      Rider quotes and estimates are filtered based on their preferences.
+      Currently, riders preferring rentals receive only rental options.
+      Ideally, rental options should also be available for one-way preferences, but frontend limitations prevent this.
+      Once the frontend is updated for compatibility, we can extend this feature.
+    -}
+    filterQuotesByPrefference :: [QuoteInfo] -> [Enums.VehicleCategory] -> Maybe NyRegularSubscription.NyRegularSubscription -> [QuoteInfo]
+    filterQuotesByPrefference _quotesInfo blackListedVehicles mbNySubscription = do
+      let filtersPreferenceQuote = filterQuotesByPrefference' _quotesInfo blackListedVehicles
+      filter (\estOrQ -> maybe True (\nySubs -> maybe False (\metaData -> estOrQ.serviceTierName == metaData.vehicleServiceTierName) $ parseMetaDataFromSubs nySubs.metadata) mbNySubscription) $ filtersPreferenceQuote
+
+    filterQuotesByPrefference' :: [QuoteInfo] -> [Enums.VehicleCategory] -> [QuoteInfo]
+    filterQuotesByPrefference' _quotesInfo blackListedVehicles =
+      case searchRequest.riderPreferredOption of
+        DRPO.Rental -> filter (\qInfo -> not (qInfo.vehicleVariant `elem` ambulanceVariants) && (not $ isNotRental qInfo)) _quotesInfo
+        DRPO.OneWay -> filter (\quote -> isNotRental quote && isNotBlackListed blackListedVehicles quote.vehicleCategory && not (quote.vehicleVariant `elem` ambulanceVariants)) _quotesInfo
+        DRPO.Ambulance -> filter (\qInfo -> qInfo.vehicleVariant `elem` ambulanceVariants) _quotesInfo
+        DRPO.Delivery -> []
+        -- Same result as the catch-all below (isNotRental is True for EasyBookingDetails
+        -- quotes) — added explicitly for clarity/symmetry with the other categories here.
+        DRPO.EasyBooking -> filter isNotRental _quotesInfo
+        _ -> filter isNotRental _quotesInfo
+
+    filterEstimtesByPrefference :: [EstimateInfo] -> [Enums.VehicleCategory] -> Maybe NyRegularSubscription.NyRegularSubscription -> [EstimateInfo]
+    filterEstimtesByPrefference _estimateInfo blackListedVehicles mbNySubscription = do
+      let filtersPreferenceEst = filterEstimtesByPrefference' _estimateInfo blackListedVehicles
+      filter (\estOrQ -> maybe True (\nySubs -> maybe False (\metaData -> estOrQ.serviceTierName == metaData.vehicleServiceTierName) $ parseMetaDataFromSubs nySubs.metadata) mbNySubscription) $ filtersPreferenceEst
+
+    filterEstimtesByPrefference' :: [EstimateInfo] -> [Enums.VehicleCategory] -> [EstimateInfo]
+    filterEstimtesByPrefference' _estimateInfo blackListedVehicles =
+      case searchRequest.riderPreferredOption of
+        DRPO.OneWay -> filter (\eInfo -> not (eInfo.vehicleVariant `elem` ambulanceVariants || isDeliveryEstimate eInfo) && (isNotBlackListed blackListedVehicles eInfo.vehicleCategory)) _estimateInfo
+        DRPO.InterCity -> filter (\eInfo -> not (eInfo.vehicleVariant `elem` ambulanceVariants || isDeliveryEstimate eInfo) && (isNotBlackListed blackListedVehicles eInfo.vehicleCategory)) _estimateInfo
+        DRPO.Ambulance -> filter (\eInfo -> eInfo.vehicleVariant `elem` ambulanceVariants) _estimateInfo
+        DRPO.Delivery -> filter isDeliveryEstimate _estimateInfo
+        DRPO.EasyBooking -> [] -- QuoteBased, never produces estimates
+        _ -> []
+
+    parseMetaDataFromSubs mbMetaData =
+      (\val -> case Data.Aeson.fromJSON val of Data.Aeson.Success (x :: Est.BppEstimate) -> Just x; Data.Aeson.Error _ -> Nothing) =<< mbMetaData
+
+    ambulanceVariants = [AMBULANCE_TAXI, AMBULANCE_TAXI_OXY, AMBULANCE_AC, AMBULANCE_AC_OXY, AMBULANCE_VENTILATOR]
+
+    isDeliveryEstimate :: EstimateInfo -> Bool
+    isDeliveryEstimate einfo = case einfo.tripCategory of
+      DT.Delivery _ -> True
+      _ -> False
+
+    mkBppDetails :: Flow BppDetails
+    mkBppDetails = do
+      id <- generateGUID
+      now <- getCurrentTime
+      return $
+        BppDetails
+          { id,
+            subscriberId = providerInfo.providerId,
+            domain = show Domain.MOBILITY,
+            name = providerInfo.name,
+            supportNumber = Nothing,
+            logoUrl = Nothing, -- TODO: Parse this from on_search req
+            description = Nothing, -- TODO: Parse this from on_search req
+            createdAt = now,
+            updatedAt = now
+          }
+
+    isNotRental :: QuoteInfo -> Bool
+    isNotRental quote = case quote.quoteDetails of RentalDetails _ -> False; _ -> True
+
+    isNotBlackListed :: [Enums.VehicleCategory] -> Enums.VehicleCategory -> Bool
+    isNotBlackListed blackListedVehicles vehicleCategory = vehicleCategory `notElem` blackListedVehicles
+
+    updateRiderPreferredOption quotes = case listToMaybe quotes of
+      Just quote -> do
+        let actualRiderPreferredOption = case quote.quoteDetails of
+              DQuote.InterCityDetails _ -> DRPO.InterCity
+              _ -> DRPO.OneWay
+        when (actualRiderPreferredOption == DRPO.InterCity && searchRequest.riderPreferredOption /= actualRiderPreferredOption) $ QSearchReq.updateRiderPreferredOption DRPO.InterCity quote.requestId
+      _ -> pure ()
+
+    updateNyRegularInstanceLogStatus :: Text -> Flow ()
+    updateNyRegularInstanceLogStatus instanceTransactionId = do
+      logTagInfo "onSearch" $ "Updating NyRegularInstanceLog status to AUTO_SELECTED for instanceTransactionId: " <> instanceTransactionId
+      void $ QNyRegularInstanceLog.updateStatusByInstanceTransactionId DNyRegularInstanceLog.AUTO_SELECTED instanceTransactionId
+
+    getNyRegularSubs :: Bool -> Flow (Maybe NyRegularSubscription.NyRegularSubscription)
+    getNyRegularSubs isReservedSearch = do
+      if isReservedSearch
+        then do
+          nyTransaction <- QNyRegularInstanceLog.findByInstanceTransactionId searchRequest.id.getId
+          maybe (pure Nothing) QNyRegularSubscription.findById $ nyTransaction <&> (.nyRegularSubscriptionId)
+        else pure Nothing
+
+-- TODO(MultiModal): Add one more field in estimate for check if it is done or ongoing
+buildEstimate ::
+  (MonadFlow m, EsqDBFlow m r, CacheFlow m r) =>
+  ProviderInfo ->
+  UTCTime ->
+  SearchRequest ->
+  DeploymentVersion ->
+  [DRiderConfig.VehicleServiceTierOrderConfig] ->
+  EstimateInfo ->
+  m DEstimate.Estimate
+buildEstimate providerInfo now searchRequest deploymentVersion boostSearchPreSelectionServiceTiersConfig EstimateInfo {..} = do
+  uid <- generateGUID
+  let vehicleServiceTierType = fromMaybe (DV.castVariantToServiceTier vehicleVariant) serviceTierType
+  let boostSearchPreSelectionServiceTier = find (\boostSearchConfig -> boostSearchConfig.vehicle == vehicleServiceTierType) boostSearchPreSelectionServiceTiersConfig
+  estimateBreakupList' <- buildEstimateBreakUp estimateBreakupList uid
+  insuranceConfig <-
+    getConfig
+      InsuranceConfigDimensions
+        { merchantOperatingCityId = searchRequest.merchantOperatingCityId.getId,
+          merchantId = searchRequest.merchantId.getId,
+          tripCategory = tripCategory,
+          vehicleCategory = DV.castVehicleVariantToVehicleCategory vehicleVariant
+        }
+      (Just (QIC.findByMerchantIdAndMerchantOperatingCityIdAndTripCategoryAndVehicleCategory searchRequest.merchantId searchRequest.merchantOperatingCityId tripCategory (DV.castVehicleVariantToVehicleCategory vehicleVariant)))
+  let isInsured = maybe False (\inc -> case inc.allowedVehicleServiceTiers of Just allowedTiers -> fromMaybe (DV.castVariantToServiceTier vehicleVariant) serviceTierType `elem` allowedTiers; Nothing -> True) insuranceConfig
+  pure
+    DEstimate.Estimate
+      { id = uid,
+        requestId = searchRequest.id,
+        merchantId = Just searchRequest.merchantId,
+        merchantOperatingCityId = Just searchRequest.merchantOperatingCityId,
+        providerMobileNumber = providerInfo.mobileNumber,
+        providerName = providerInfo.name,
+        providerCompletedRidesCount = providerInfo.ridesCompleted,
+        providerId = providerInfo.providerId,
+        providerUrl = providerInfo.url,
+        estimatedDistance = searchRequest.distance,
+        serviceTierName = serviceTierName,
+        vehicleServiceTierType = vehicleServiceTierType,
+        serviceTierShortDesc = serviceTierShortDesc,
+        estimatedDuration = searchRequest.estimatedRideDuration,
+        estimatedStaticDuration = searchRequest.estimatedRideStaticDuration,
+        device = searchRequest.device,
+        createdAt = now,
+        updatedAt = now,
+        status = DEstimate.NEW,
+        estimateBreakupList = estimateBreakupList',
+        driversLocation = driversLocation,
+        businessDiscountInfo = businessDiscountInfo <&> \businessDiscountInfo' -> DEstimate.BusinessDiscountInfo {businessDiscount = businessDiscountInfo'.businessDiscount, businessDiscountPercentage = businessDiscountInfo'.businessDiscountPercentage},
+        personalDiscountInfo = personalDiscountInfo <&> \personalDiscountInfo' -> DEstimate.PersonalDiscountInfo {personalDiscount = personalDiscountInfo'.personalDiscount, personalDiscountPercentage = personalDiscountInfo'.personalDiscountPercentage},
+        nightShiftInfo =
+          nightShiftInfo <&> \nightShiftInfo' ->
+            DEstimate.NightShiftInfo
+              { nightShiftCharge = nightShiftInfo'.nightShiftCharge,
+                oldNightShiftCharge = nightShiftInfo'.oldNightShiftCharge, -- TODO: Doesn't make sense, to be removed
+                nightShiftStart = nightShiftInfo'.nightShiftStart,
+                nightShiftEnd = nightShiftInfo'.nightShiftEnd
+              },
+        tollChargesInfo =
+          tollChargesInfo <&> \tollChargesInfo' ->
+            DEstimate.TollChargesInfo
+              { tollCharges = tollChargesInfo'.tollCharges,
+                tollNames = tollChargesInfo'.tollNames
+              },
+        waitingCharges =
+          DEstimate.WaitingCharges
+            { waitingChargePerMin = waitingCharges >>= (.waitingChargePerMin)
+            },
+        clientBundleVersion = searchRequest.clientBundleVersion,
+        clientSdkVersion = searchRequest.clientSdkVersion,
+        clientDevice = searchRequest.clientDevice,
+        clientConfigVersion = searchRequest.clientConfigVersion,
+        backendConfigVersion = searchRequest.backendConfigVersion,
+        backendAppVersion = Just deploymentVersion.getDeploymentVersion,
+        distanceUnit = searchRequest.distanceUnit,
+        tripCategory = Just tripCategory,
+        insuredAmount = insuranceConfig >>= (.insuredAmount),
+        isMultimodalSearch = searchRequest.isMultimodalSearch,
+        boostSearchPreSelectionServiceTierConfig = (Just . (.orderArray)) =<< boostSearchPreSelectionServiceTier,
+        vehicleCategory = Just vehicleCategory,
+        qar = qar,
+        selectedOfferId = Nothing,
+        ..
+      }
+
+buildQuote ::
+  MonadFlow m =>
+  Id DSearchReq.SearchRequest ->
+  ProviderInfo ->
+  UTCTime ->
+  SearchRequest ->
+  DeploymentVersion ->
+  QuoteInfo ->
+  m DQuote.Quote
+buildQuote requestId providerInfo now searchRequest deploymentVersion QuoteInfo {..} = do
+  uid <- generateGUID
+  quoteBreakupList' <- buildQuoteBreakUp quoteBreakupList uid searchRequest.merchantId searchRequest.merchantOperatingCityId
+  quoteDetails' <- case quoteDetails of
+    OneWayDetails oneWayDetails ->
+      pure.DQuote.OneWayDetails $ mkOneWayQuoteDetails searchRequest.distanceUnit oneWayDetails
+    RentalDetails rentalDetails -> do
+      DQuote.RentalDetails <$> buildRentalDetails searchRequest.distanceUnit rentalDetails
+    OneWaySpecialZoneDetails details -> do
+      DQuote.OneWaySpecialZoneDetails <$> buildOneWaySpecialZoneQuoteDetails details
+    InterCityDetails details -> do
+      DQuote.InterCityDetails <$> buildInterCityQuoteDetails searchRequest.distanceUnit searchRequest.roundTrip details
+    MeterRideDetails details -> do
+      DQuote.MeterRideDetails <$> buildMeterRideQuoteDetails details
+    -- Parses the wire-level EasyBookingQuoteDetails from on_search into the domain
+    -- QuoteDetails, reusing the Rental builder shape (see buildEasyBookingDetails below).
+    EasyBookingDetails details -> do
+      DQuote.EasyBookingDetails <$> buildEasyBookingDetails searchRequest.distanceUnit details
+  pure
+    DQuote.Quote
+      { id = uid,
+        providerId = providerInfo.providerId,
+        providerUrl = providerInfo.url,
+        createdAt = now,
+        updatedAt = now,
+        quoteDetails = quoteDetails',
+        merchantId = searchRequest.merchantId,
+        merchantOperatingCityId = searchRequest.merchantOperatingCityId,
+        vehicleServiceTierType = fromMaybe (castVariantToServiceTier vehicleVariant) serviceTierType,
+        clientBundleVersion = searchRequest.clientBundleVersion,
+        clientSdkVersion = searchRequest.clientSdkVersion,
+        clientDevice = searchRequest.clientDevice,
+        clientConfigVersion = searchRequest.clientConfigVersion,
+        backendConfigVersion = searchRequest.backendConfigVersion,
+        backendAppVersion = Just deploymentVersion.getDeploymentVersion,
+        quoteBreakupList = quoteBreakupList',
+        tollChargesInfo =
+          tollChargesInfo <&> \tollChargesInfo' ->
+            DQuote.TollChargesInfo
+              { tollCharges = tollChargesInfo'.tollCharges,
+                tollNames = tollChargesInfo'.tollNames
+              },
+        distanceUnit = searchRequest.distanceUnit,
+        tripCategory = Just tripCategory,
+        isSafetyPlus = False,
+        billingCategory = SLT.PERSONAL,
+        selectedOfferId = Nothing,
+        ..
+      }
+
+buildMeterRideQuoteDetails :: MonadFlow m => MeterRideQuoteDetails -> m DQuote.MeterRideQuoteDetails
+buildMeterRideQuoteDetails MeterRideQuoteDetails {..} = do
+  pure DQuote.MeterRideQuoteDetails {..}
+
+mkOneWayQuoteDetails :: DistanceUnit -> OneWayQuoteDetails -> DQuote.OneWayQuoteDetails
+mkOneWayQuoteDetails distanceUnit OneWayQuoteDetails {..} =
+  DQuote.OneWayQuoteDetails {distanceToNearestDriver = convertHighPrecMetersToDistance distanceUnit distanceToNearestDriver, ..}
+
+buildOneWaySpecialZoneQuoteDetails :: MonadFlow m => OneWaySpecialZoneQuoteDetails -> m DSpecialZoneQuote.SpecialZoneQuote
+buildOneWaySpecialZoneQuoteDetails OneWaySpecialZoneQuoteDetails {..} = do
+  id <- generateGUID
+  now <- getCurrentTime
+  let createdAt = now
+      updatedAt = now
+  pure DSpecialZoneQuote.SpecialZoneQuote {..}
+
+buildInterCityQuoteDetails :: MonadFlow m => DistanceUnit -> Maybe Bool -> InterCityQuoteDetails -> m DInterCityDetails.InterCityDetails
+buildInterCityQuoteDetails distanceUnit roundTrip InterCityQuoteDetails {..} = do
+  let id = Id quoteId
+  now <- getCurrentTime
+  let createdAt = now
+      updatedAt = now
+      nightShiftinfo' =
+        ( \nightShiftInfo'' ->
+            DRentalDetails.NightShiftInfo nightShiftInfo''.nightShiftCharge Nothing nightShiftInfo''.nightShiftStart nightShiftInfo''.nightShiftEnd
+        )
+          <$> nightShiftInfo
+  pure
+    DInterCityDetails.InterCityDetails
+      { nightShiftInfo = nightShiftinfo',
+        kmPerPlannedExtraHour = convertMetersToDistance distanceUnit . kilometersToMeters $ kmPerPlannedExtraHour,
+        ..
+      }
+
+buildRentalDetails :: MonadFlow m => DistanceUnit -> RentalQuoteDetails -> m DRentalDetails.RentalDetails
+buildRentalDetails distanceUnit RentalQuoteDetails {..} = do
+  let quoteId = Id id
+      nightShiftinfo' =
+        ( \nightShiftInfo'' ->
+            DRentalDetails.NightShiftInfo nightShiftInfo''.nightShiftCharge Nothing nightShiftInfo''.nightShiftStart nightShiftInfo''.nightShiftEnd
+        )
+          <$> nightShiftInfo
+  pure
+    DRentalDetails.RentalDetails
+      { id = quoteId,
+        nightShiftInfo = nightShiftinfo',
+        includedDistancePerHr = convertMetersToDistance distanceUnit . kilometersToMeters $ includedDistancePerHr,
+        ..
+      }
+
+-- Reuses the RentalDetails domain shape (same table, no new module/migration needed) since
+-- EasyBooking's "details" record is conceptually the same kind of thing (a quote-detail
+-- rate-card breakdown). All the Rental-package-specific fields are zeroed out here — the
+-- actual EasyBooking price is carried generically via the Quote's own quoteBreakupList/
+-- estimatedFare (same mechanism OneWay's static-offer quotes already rely on), not via any
+-- per-category preview field, so there is nothing real to populate them with at this layer.
+buildEasyBookingDetails :: MonadFlow m => DistanceUnit -> EasyBookingQuoteDetails -> m DRentalDetails.RentalDetails
+buildEasyBookingDetails distanceUnit EasyBookingQuoteDetails {..} = do
+  let easyBookingId = Id quoteId
+  pure
+    DRentalDetails.RentalDetails
+      { id = easyBookingId,
+        nightShiftInfo = Nothing,
+        includedDistancePerHr = convertMetersToDistance distanceUnit (Meters 0),
+        baseFare = mkPrice Nothing 0,
+        perExtraKmRate = mkPrice Nothing 0,
+        perHourCharge = mkPrice Nothing 0,
+        perExtraMinRate = mkPrice Nothing 0,
+        plannedPerKmRate = mkPrice Nothing 0,
+        deadKmFare = mkPrice Nothing 0
+      }
+
+buildEstimateBreakUp ::
+  MonadFlow m =>
+  [EstimateBreakupInfo] ->
+  Id DEstimate.Estimate ->
+  m [DEstimate.EstimateBreakup]
+buildEstimateBreakUp estimatesItems estId =
+  estimatesItems
+    `for` \estimateItem -> do
+      id <- generateGUID
+      price' <- mkEstimatePrice estimateItem.price
+      pure
+        DEstimate.EstimateBreakup
+          { title = estimateItem.title,
+            price = price',
+            estimateId = estId,
+            ..
+          }
+
+mkEstimatePrice ::
+  MonadFlow m =>
+  BreakupPriceInfo ->
+  m DEstimate.EstimateBreakupPrice
+mkEstimatePrice BreakupPriceInfo {value} = pure DEstimate.EstimateBreakupPrice {value}
+
+buildQuoteBreakUp ::
+  MonadFlow m =>
+  [QuoteBreakupInfo] ->
+  Id DQuote.Quote ->
+  Id DMerchant.Merchant ->
+  Id DMerchantOperatingCity.MerchantOperatingCity ->
+  m [DQuoteBreakup.QuoteBreakup]
+buildQuoteBreakUp quotesItems quoteId merchantId merchantOperatingCityId =
+  quotesItems
+    `for` \quoteItem -> do
+      id <- generateGUID
+      now <- getCurrentTime
+      pure
+        DQuoteBreakup.QuoteBreakup
+          { id = id,
+            quoteId = quoteId.getId,
+            title = quoteItem.title,
+            price = quoteItem.price.value,
+            merchantId = Just merchantId,
+            merchantOperatingCityId = Just merchantOperatingCityId,
+            createdAt = now,
+            updatedAt = now,
+            ..
+          }

@@ -1,0 +1,181 @@
+imports:
+  Merchant: Domain.Types.Merchant
+  MerchantOperatingCity: Domain.Types.MerchantOperatingCity
+  Person: Domain.Types.Person
+  PassOrganization: Domain.Types.PassOrganization
+  MediaFile: IssueManagement.Domain.Types.MediaFile
+  UTCTime: Data.Time
+  Value: Data.Aeson
+  PassEnum: Domain.Types.PassType
+  Gender: Domain.Types.Person
+  LatLong: Kernel.External.Maps.Types
+  LatLngV2: Kernel.External.Maps.Google.MapsClient.Types
+  EncryptedHashedField: Kernel.External.Encryption
+  DbHash: Kernel.External.Encryption
+
+PassDetails:
+  tableName: pass_details
+
+  types:
+    VerificationStatus:
+      enum: "PENDING, CLG_VERIFIED, MTC_VERIFIED, REJECTED, EXPIRED"
+      derive': "Show, Eq, Ord, Read, Generic, ToJSON, FromJSON, ToSchema, ToParamSchema"
+
+    RoutePair:
+      srcStopName: Text
+      srcStopId: Text
+      destStopName: Text
+      destStopId: Text
+      srcLatLong: LatLong
+      destLatLong: LatLong
+      derive': "Show, Eq, Ord, Read, Generic, ToJSON, FromJSON, ToSchema"
+
+    PassDetailAddress:
+      latLng: LatLngV2
+      placeName: Text
+      derive': "Show, Eq, Generic, ToJSON, FromJSON, ToSchema"
+
+  domainInstance:
+    - Custom Kernel.Beam.Lib.UtilsTH.mkBeamInstancesForEnumAndList <VerificationStatus>
+    - Custom Kernel.Utils.TH.mkHttpInstancesForEnum <VerificationStatus>
+
+  fields:
+    id: Id PassDetails
+    personId: Id Person
+    passOrganizationId: Id PassOrganization
+    name: Text
+    registerNo: Maybe Text
+    department: Maybe Text
+    year: Maybe Text
+    age: Maybe Int
+    gender: Gender
+    guardianName: Maybe Text
+    guardianMobileNumber: Maybe (EncryptedHashedField e Text)
+    address: Maybe PassDetailAddress
+    pincode: Maybe Text
+    idCardPicture: Maybe (Id MediaFile)
+    selfImage: Id MediaFile
+    verificationStatus: VerificationStatus
+    validTill: UTCTime
+    aadharNo: Maybe (EncryptedHashedField e Text)
+    remark: Maybe Text
+    routePairs: "[RoutePair]"
+    academicYearStart: Maybe Day
+    academicYearEnd: Maybe Day
+    numberOfStages: Maybe Int
+    referenceNumber: Maybe Int
+    createdAt: UTCTime
+    updatedAt: UTCTime
+    passEnum: PassEnum
+    applicableRouteIds: "Maybe [Text]"
+    merchantId: Id Merchant
+    merchantOperatingCityId: Id MerchantOperatingCity
+
+  beamType:
+    routePairs: Maybe Value
+    address: Maybe Value
+
+  beamFields:
+    aadharNo:
+      aadharNoEncrypted: Maybe Text
+      aadharNoHash: Maybe DbHash
+    guardianMobileNumber:
+      guardianMobileNumberEncrypted: Maybe Text
+      guardianMobileNumberHash: Maybe DbHash
+
+  fromTType:
+    routePairs: |-
+      fromMaybe [] ((\val -> case Data.Aeson.fromJSON val of Data.Aeson.Success x -> Just x; Data.Aeson.Error _ -> Nothing) =<< routePairs)|E
+    address: |-
+      ((\val -> case Data.Aeson.fromJSON val of Data.Aeson.Success x -> Just x; Data.Aeson.Error _ -> Nothing) =<< address)|E
+    aadharNo: EncryptedHashed <$> (Encrypted <$> aadharNoEncrypted) <*> aadharNoHash|E
+    guardianMobileNumber: EncryptedHashed <$> (Encrypted <$> guardianMobileNumberEncrypted) <*> guardianMobileNumberHash|E
+  toTType:
+    routePairs: Just (Kernel.Prelude.toJSON routePairs)|E
+    address: (Kernel.Prelude.toJSON <$> address)|E
+    aadharNoEncrypted: (aadharNo <&> unEncrypted . (.encrypted))|E
+    aadharNoHash: (aadharNo <&> (.hash))|E
+    guardianMobileNumberEncrypted: (guardianMobileNumber <&> unEncrypted . (.encrypted))|E
+    guardianMobileNumberHash: (guardianMobileNumber <&> (.hash))|E
+
+  constraints:
+    id: PrimaryKey
+    personId: SecondaryKey
+    passOrganizationId: SecondaryKey
+
+  sqlType:
+    address: jsonb
+    routePairs: jsonb
+    aadharNoEncrypted: character varying(255)
+    aadharNoHash: bytea
+    guardianMobileNumberEncrypted: character varying(255)
+    guardianMobileNumberHash: bytea
+
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where:
+        id
+
+    findByPersonId:
+      kvFunction: findOneWithKV
+      where:
+        and: [personId, passEnum]
+
+    findAllByPassOrganizationIdAndVerificationStatus:
+      kvFunction: findAllWithOptionsKV
+      where:
+        and:
+          - passOrganizationId
+          - in:
+            - verificationStatus
+      limit: limit
+      offset: offset
+
+    findAllByPassOrganizationIdsAndVerificationStatus:
+      kvFunction: findAllWithOptionsKV
+      where:
+        and:
+          - in:
+            - passOrganizationId
+            - verificationStatus
+          - merchantOperatingCityId
+      orderBy:
+        field: updatedAt
+        order: asc
+      limit: limit
+      offset: offset
+
+    updateVerificationStatus:
+      kvFunction: updateWithKV
+      params: [verificationStatus, validTill, remark, numberOfStages, academicYearStart, academicYearEnd]
+      where:
+        in: [id]
+
+    updatePassDetails:
+      kvFunction: updateWithKV
+      params: [name, passOrganizationId, idCardPicture, address, age, guardianName, department, year, routePairs, academicYearStart, academicYearEnd, verificationStatus, numberOfStages, applicableRouteIds, updatedAt]
+      where:
+        and: [personId, passEnum]
+
+    findAllByMerchantIdAndMerchantOperatingCityId:
+      kvFunction: findAllWithOptionsKV
+      where:
+        and:
+          - merchantId
+          - merchantOperatingCityId
+          - passEnum
+          - in:
+            - verificationStatus
+      limit: limit
+      offset: offset
+
+  extraIndexes:
+    - columns: [personId, passEnum]
+    - columns: [referenceNumber]
+
+  extraOperations:
+    - GENERATE_INDEXES
+    - EXTRA_QUERY_FILE
+
+  excludedFields: [merchantId, merchantOperatingCityId, createdAt, updatedAt]

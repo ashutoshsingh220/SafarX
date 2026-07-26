@@ -1,0 +1,354 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module Domain.Action.UI.Ride.StartRide
+  ( ServiceHandle (..),
+    DriverStartRideReq (..),
+    DashboardStartRideReq (..),
+    buildStartRideHandle,
+    driverStartRide,
+    dashboardStartRide,
+    makeStartRideIdKey,
+  )
+where
+
+import Data.Maybe (listToMaybe)
+import qualified Data.Text as Text
+import qualified Domain.Action.Internal.StopDetection as StopDetection
+import qualified Domain.Action.UI.Ride.StartRide.Internal as SInternal
+import qualified Domain.Types as DTC
+import qualified Domain.Types.Booking as SRB
+import qualified Domain.Types.DriverInformation as DDI
+import qualified Domain.Types.Extra.MerchantPaymentMethod as DMPM
+import qualified Domain.Types.Merchant as DM
+import qualified Domain.Types.MerchantOperatingCity as DMOC
+import qualified Domain.Types.Person as DP
+import qualified Domain.Types.Ride as DRide
+import qualified Domain.Types.RideRelatedNotificationConfig as DRN
+import qualified Domain.Types.TransporterConfig as DTConf
+import Domain.Types.Trip
+import qualified Domain.Types.VehicleVariant as Veh
+import Environment (Flow)
+import EulerHS.Prelude
+import Kernel.External.Encryption (decrypt)
+import Kernel.External.Maps.HasCoordinates
+import Kernel.External.Maps.Types
+import Kernel.External.Types (SchedulerFlow, ServiceFlow)
+import Kernel.Prelude (roundToIntegral)
+import qualified Kernel.Storage.Clickhouse.Config as CH
+import Kernel.Storage.Esqueleto.Config (EsqDBReplicaFlow)
+import qualified Kernel.Storage.Hedis as Redis
+import Kernel.Tools.Metrics.CoreMetrics
+import qualified Kernel.Types.APISuccess as APISuccess
+import Kernel.Types.Common
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import Kernel.Utils.DatastoreLatencyCalculator
+import Kernel.Utils.SlidingWindowLimiter (checkSlidingWindowLimit)
+import Lib.ConfigPilot.Interface.Types (getConfig, getOneConfig)
+import qualified Lib.Finance.Core.Types as Finance
+import qualified Lib.LocationUpdates as LocUpd
+import qualified Lib.Payment.Domain.Types.Common as DPayment
+import qualified Lib.Payment.Domain.Types.PayoutRequest as DPR
+import qualified Lib.Payment.Payout.Request as PayoutRequest
+import qualified Lib.Payment.Storage.Queries.PayoutRequest as QPR
+import qualified Lib.Scheduler.JobStorageType.SchedulerType as QAllJ
+import qualified Lib.Types.SpecialLocation as SL
+import qualified SharedLogic.ActiveDriversList as ADL
+import qualified SharedLogic.AirportEntryFee as AirportEntryFee
+import SharedLogic.Allocator (AllocatorJobType (..), SpecialZonePayoutJobData (..))
+import SharedLogic.CallBAP (sendRideStartedUpdateToBAP)
+import qualified SharedLogic.External.LocationTrackingService.Flow as LF
+import qualified SharedLogic.External.LocationTrackingService.Types as LT
+import qualified SharedLogic.FareCalculator as FC
+import qualified SharedLogic.FarePolicy as SFP
+import qualified SharedLogic.IffcoTokioInsurance as IffcoInsurance
+import SharedLogic.Ride (calculateEstimatedEndTimeRange, getPayoutDetailsForRide, isKaaliPeeliBooking)
+import qualified SharedLogic.ScheduledNotifications as SN
+import qualified SharedLogic.SpecialZoneDriverDemand as SpecialZoneDriverDemand
+import Storage.Beam.Payment ()
+import qualified Storage.Cac.TransporterConfig as SCTC
+import qualified Storage.CachedQueries.Merchant.MerchantOperatingCity as CQMOC
+import qualified Storage.CachedQueries.RideRelatedNotificationConfig as CRN
+import Storage.ConfigPilot.Config.RideRelatedNotificationConfig (RideRelatedNotificationConfigDimensions (..))
+import Storage.ConfigPilot.Config.TransporterConfig (TransporterConfigDimensions (..))
+import qualified Storage.Queries.Booking as QRB
+import qualified Storage.Queries.DriverInformation as QDI
+import qualified Storage.Queries.Person as QPerson
+import qualified Storage.Queries.Ride as QRide
+import qualified Storage.Queries.ScheduledPayout as QSP
+import Tools.Error
+import qualified Tools.Notifications as Notify
+
+data StartRideReq = DriverReq DriverStartRideReq | DashboardReq DashboardStartRideReq
+
+data DriverStartRideReq = DriverStartRideReq
+  { rideOtp :: Text,
+    point :: LatLong,
+    requestor :: DP.Person,
+    odometer :: Maybe DRide.OdometerReading
+  }
+
+data DashboardStartRideReq = DashboardStartRideReq
+  { point :: Maybe LatLong,
+    merchantId :: Id DM.Merchant,
+    merchantOperatingCityId :: Id DMOC.MerchantOperatingCity,
+    odometer :: Maybe DRide.OdometerReading
+  }
+
+data ServiceHandle m = ServiceHandle
+  { findRideById :: Id DRide.Ride -> m (Maybe DRide.Ride),
+    findBookingById :: Id SRB.Booking -> m (Maybe SRB.Booking),
+    startRideAndUpdateLocation :: Id DP.Person -> DRide.Ride -> Id SRB.Booking -> LatLong -> Id DM.Merchant -> Maybe DRide.OdometerReading -> DTConf.TransporterConfig -> DDI.DriverInformation -> m (),
+    notifyBAPRideStarted :: SRB.Booking -> DRide.Ride -> Maybe LatLong -> m (),
+    rateLimitStartRide :: Id DP.Person -> Id DRide.Ride -> m (),
+    initializeDistanceCalculation :: Id DRide.Ride -> Id DP.Person -> LatLong -> m (),
+    whenWithLocationUpdatesLock :: Id DP.Person -> m () -> m ()
+  }
+
+buildStartRideHandle :: Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> Maybe (Id DRide.Ride) -> Flow (ServiceHandle Flow)
+buildStartRideHandle merchantId merchantOpCityId rideId = do
+  defaultRideInterpolationHandler <- LocUpd.buildRideInterpolationHandler merchantId merchantOpCityId rideId False Nothing
+  pure
+    ServiceHandle
+      { findRideById = QRide.findById,
+        findBookingById = QRB.findById,
+        startRideAndUpdateLocation = SInternal.startRideTransaction,
+        notifyBAPRideStarted = sendRideStartedUpdateToBAP,
+        rateLimitStartRide = \personId' rideId' -> checkSlidingWindowLimit (getId personId' <> "_" <> getId rideId'),
+        initializeDistanceCalculation = LocUpd.initializeDistanceCalculation defaultRideInterpolationHandler,
+        whenWithLocationUpdatesLock = LocUpd.whenWithLocationUpdatesLock
+      }
+
+type StartRideFlow m r = (MonadThrow m, Log m, CacheFlow m r, EsqDBFlow m r, EsqDBReplicaFlow m r, MonadTime m, CoreMetrics m, MonadReader r m, HasField "enableAPILatencyLogging" r Bool, HasField "enableAPIPrometheusMetricLogging" r Bool, LT.HasLocationService m r, ServiceFlow m r, HasFlowEnv m r '["maxNotificationShards" ::: Int], Redis.HedisLTSFlowEnv r)
+
+driverStartRide ::
+  (StartRideFlow m r, SchedulerFlow r, HasShortDurationRetryCfg r c, HasField "serviceClickhouseCfg" r CH.ClickhouseCfg, HasField "serviceClickhouseEnv" r CH.ClickhouseEnv, HasField "blackListedJobs" r [Text], HasField "activeDriversListKeyShards" r Int, Finance.HasActorInfo m r) =>
+  ServiceHandle m ->
+  Id DRide.Ride ->
+  DriverStartRideReq ->
+  m APISuccess.APISuccess
+driverStartRide handle rideId req =
+  withLogTag ("requestorId-" <> req.requestor.id.getId) $ do
+    result <- startRide handle rideId (DriverReq req)
+    pure result
+
+dashboardStartRide ::
+  (StartRideFlow m r, SchedulerFlow r, HasShortDurationRetryCfg r c, HasField "serviceClickhouseCfg" r CH.ClickhouseCfg, HasField "serviceClickhouseEnv" r CH.ClickhouseEnv, HasField "blackListedJobs" r [Text], HasField "activeDriversListKeyShards" r Int, Finance.HasActorInfo m r) =>
+  ServiceHandle m ->
+  Id DRide.Ride ->
+  DashboardStartRideReq ->
+  m APISuccess.APISuccess
+dashboardStartRide handle rideId req =
+  withLogTag ("merchantId-" <> req.merchantId.getId)
+    . startRide handle rideId
+    $ DashboardReq req
+
+startRide ::
+  (StartRideFlow m r, SchedulerFlow r, HasShortDurationRetryCfg r c, Redis.HedisLTSFlowEnv r, HasField "serviceClickhouseCfg" r CH.ClickhouseCfg, HasField "serviceClickhouseEnv" r CH.ClickhouseEnv, HasField "blackListedJobs" r [Text], HasField "activeDriversListKeyShards" r Int, Finance.HasActorInfo m r) =>
+  ServiceHandle m ->
+  Id DRide.Ride ->
+  StartRideReq ->
+  m APISuccess.APISuccess
+startRide handle rideId req = withLogTag ("rideId-" <> rideId.getId) $ do
+  isLocked <- Redis.tryLockRedis mkLockKey 60
+  if isLocked
+    then
+      finally
+        (startRideHandler handle rideId req)
+        ( do
+            Redis.unlockRedis mkLockKey
+            logDebug $ "Start ride for RideId: " <> rideId.getId <> " Unlocked"
+        )
+    else throwError (InvalidRequest "Start ride already in progress, please wait")
+  where
+    mkLockKey = "StartTransaction:RID:-" <> rideId.getId
+
+startRideHandler ::
+  (StartRideFlow m r, SchedulerFlow r, HasShortDurationRetryCfg r c, Redis.HedisLTSFlowEnv r, HasField "serviceClickhouseCfg" r CH.ClickhouseCfg, HasField "serviceClickhouseEnv" r CH.ClickhouseEnv, HasField "blackListedJobs" r [Text], HasField "activeDriversListKeyShards" r Int, Finance.HasActorInfo m r) =>
+  ServiceHandle m ->
+  Id DRide.Ride ->
+  StartRideReq ->
+  m APISuccess.APISuccess
+startRideHandler ServiceHandle {..} rideId req = do
+  ride <- findRideById rideId >>= fromMaybeM (RideDoesNotExist rideId.getId)
+  let driverId = ride.driverId
+  driverInfo <- QDI.findById (cast driverId) >>= fromMaybeM (PersonNotFound driverId.getId)
+  booking <- findBookingById ride.bookingId >>= fromMaybeM (BookingNotFound ride.bookingId.getId)
+  transporterConfig <- getOneConfig (TransporterConfigDimensions {merchantOperatingCityId = ride.merchantOperatingCityId.getId}) (Just (SCTC.findByMerchantOpCityId ride.merchantOperatingCityId Nothing)) >>= fromMaybeM (TransporterConfigNotFound (getId ride.merchantOperatingCityId))
+  when (fromMaybe False transporterConfig.airportEntryFeeCheckAtStartRide) $
+    AirportEntryFee.checkAirportEntryFeeBalanceBeforeStartRide (fromMaybe False transporterConfig.airportEntryFeeEnabled) driverId booking
+  (openMarketAllow, includeDriverCurrentlyOnRide) <-
+    maybe
+      (pure (False, False))
+      ( \_ -> do
+          pure (transporterConfig.openMarketUnBlocked, transporterConfig.includeDriverCurrentlyOnRide)
+      )
+      driverInfo.merchantId
+  when (includeDriverCurrentlyOnRide && driverInfo.hasAdvanceBooking) do throwError $ CurrentRideInprogress driverId.getId
+  let driverKey = makeStartRideIdKey driverId
+  Redis.setExp driverKey ride.id 60
+  rateLimitStartRide driverId ride.id -- do we need it for dashboard?
+  unless (driverInfo.subscribed || openMarketAllow || isKaaliPeeliBooking booking) $ throwError DriverUnsubscribed
+  case req of
+    DriverReq driverReq -> do
+      let requestor = driverReq.requestor
+      case requestor.role of
+        DP.DRIVER -> unless (requestor.id == driverId) $ throwError NotAnExecutor
+        _ -> throwError AccessDenied
+    DashboardReq dashboardReq -> do
+      unless (booking.providerId == dashboardReq.merchantId && booking.merchantOperatingCityId == dashboardReq.merchantOperatingCityId) $ throwError (RideDoesNotExist ride.id.getId)
+
+  if isInProgress ride.status
+    then pure APISuccess.Success
+    else do
+      unless (isValidRideStatus (ride.status)) $ throwError $ RideInvalidStatus ("This ride cannot be started" <> Text.pack (show ride.status))
+      (point, odometer) <- case req of
+        DriverReq driverReq -> do
+          when (DTC.isOdometerReadingsRequired booking.tripCategory && isNothing driverReq.odometer) $ throwError $ OdometerReadingRequired (show booking.tripCategory)
+          when (not (fromMaybe False ride.enableOtpLessRide) && driverReq.rideOtp /= ride.otp) $ throwError IncorrectOTP
+          logTagInfo "driver -> startRide : " ("DriverId " <> getId driverId <> ", RideId " <> getId ride.id)
+          validatedPoint <- validateStartRideCoordinates driverReq.point booking
+          pure (validatedPoint, driverReq.odometer)
+        DashboardReq dashboardReq -> do
+          when (DTC.isOdometerReadingsRequired booking.tripCategory && isNothing dashboardReq.odometer) $ throwError $ OdometerReadingRequired (show booking.tripCategory)
+          logTagInfo "dashboard -> startRide : " ("DriverId " <> getId driverId <> ", RideId " <> getId ride.id)
+          case dashboardReq.point of
+            Just point -> pure (point, dashboardReq.odometer)
+            Nothing -> do
+              driverLocation <- do
+                driverLocations <- LF.driversLocation [driverId]
+                listToMaybe driverLocations & fromMaybeM LocationNotFound
+              pure (getCoordinates driverLocation, dashboardReq.odometer)
+      now <- getCurrentTime
+      -- create first entry of eta here
+      let estimatedEndTimeRange = booking.estimatedDuration >>= \estDuration -> calculateEstimatedEndTimeRange now estDuration transporterConfig.arrivalTimeBufferOfVehicle booking.vehicleServiceTier
+      when (isJust estimatedEndTimeRange) $ QRide.updateEstimatedEndTimeRange estimatedEndTimeRange ride.id
+      updatedRide <-
+        if DTC.isEndOtpRequired booking.tripCategory
+          then do
+            endOtp <- Just <$> generateOTPCode
+            QRide.updateEndRideOtp ride.id endOtp
+            return $ ride {DRide.endOtp = endOtp, DRide.startOdometerReading = odometer, DRide.tripStartTime = Just now, DRide.estimatedEndTimeRange = estimatedEndTimeRange}
+          else pure ride {DRide.tripStartTime = Just now, DRide.estimatedEndTimeRange = estimatedEndTimeRange}
+
+      rideRelatedNotificationConfigList <- getConfig (RideRelatedNotificationConfigDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId, timeDiffEvent = Just DRN.START_TIME}) (Just (CRN.findAllByMerchantOperatingCityIdAndTimeDiffEventInRideFlow booking.merchantOperatingCityId DRN.START_TIME booking.configInExperimentVersions))
+      forM_ rideRelatedNotificationConfigList (SN.pushReminderUpdatesInScheduler booking updatedRide now driverId)
+
+      void $ Redis.del (StopDetection.mkStopCountRedisKey rideId.getId)
+      whenWithLocationUpdatesLock driverId $ do
+        withTimeAPI "startRide" "initializeDistanceCalculation" $ initializeDistanceCalculation updatedRide.id driverId point
+        withTimeAPI "startRide" "startRideAndUpdateLocation" $ startRideAndUpdateLocation driverId updatedRide booking.id point booking.providerId odometer transporterConfig driverInfo
+        when booking.isScheduled $
+          void $ QDI.updateOnRideAndLatestScheduledBookingAndPickup True Nothing Nothing (cast driverId)
+
+      fork "notify customer for ride start" $ notifyBAPRideStarted booking updatedRide (Just point)
+      fork "startRide - Notify driver" $ Notify.notifyOnRideStarted ride booking
+      fork "startRide - Complete pickup zone request and add driver to active list" $ do
+        ADL.addDriverToActiveList driverId (secondsToNominalDiffTime transporterConfig.timeDiffFromUtc)
+      fork "startRide - Complete pickup zone request" $
+        SpecialZoneDriverDemand.completePickupZoneRequestsForDriver driverId booking.id.getId booking.pickupGateId (show $ Veh.castServiceTierToVariant booking.vehicleServiceTier)
+      if isInterCityTrip booking.tripCategory || isRentalTrip booking.tripCategory
+        then logTagInfo "IffcoTokio driver insurance skipped" ("tripCategory=" <> show booking.tripCategory <> ", rideId=" <> ride.id.getId)
+        else fork "IffcoTokio driver insurance" $ IffcoInsurance.triggerIffcoTokioInsurance driverId booking.providerId ride.merchantOperatingCityId
+
+      fork "Push Start Ride Metric" $ incrementRideStartCounter "startRide"
+      -- Schedule payout for special zone rides if enabled
+      let paymentInstrument = fromMaybe DMPM.Cash booking.paymentInstrument
+      when
+        ( booking.isDashboardRequest
+            && isRideOtpTrip booking.tripCategory
+            && fromMaybe False transporterConfig.payoutRideMoneyToDriver
+            && booking.fareSettlementType /= Just SL.CommissionOnly
+        )
+        $ do
+          -- Checking iff duplicate is there.
+          whenJust transporterConfig.payoutRideScheduleTimeBuffer $ \buffer -> do
+            existingPayout <- QPR.findByEntity ride.id.getId (Just DPayment.SPECIAL_ZONE_PAYOUT)
+            existingScheduledPayout <- QSP.findByRideId ride.id.getId
+            when (isNothing existingPayout && isNothing existingScheduledPayout) $ do
+              mbFarePolicy <- SFP.getFarePolicyByEstOrQuoteIdWithoutFallback booking.quoteId
+              commission <- FC.calculateCommission booking.fareParams mbFarePolicy
+              cancellationCommission <- FC.calculateCancellationCommission booking.fareParams mbFarePolicy
+              -- The payout base is the fare minus every commission the platform takes: ride AND cancellation.
+              let totalCommission = fromMaybe 0 commission + fromMaybe 0 cancellationCommission
+                  payoutAmountBase = if totalCommission > 0 then booking.estimatedFare - totalCommission else booking.estimatedFare
+                  payoutAmount =
+                    toHighPrecMoney
+                      (roundToIntegral (getHighPrecMoney payoutAmountBase) :: Integer)
+              payoutRequestId <- Id <$> generateGUID
+              let scheduledTime = addUTCTime (secondsToNominalDiffTime buffer) now
+              (payoutVpa, netPayoutAmount, mbAdjustVehicleBalance) <- getPayoutDetailsForRide ride.id payoutAmount
+              let payoutStatus =
+                    if ( paymentInstrument `elem` (fromMaybe [] transporterConfig.allowedPaymentInstrumentForPayout)
+                           && isJust payoutVpa
+                       )
+                      then DPR.INITIATED
+                      else DPR.CASH_PENDING
+              person <- QPerson.findById (cast driverId) >>= fromMaybeM (PersonNotFound driverId.getId)
+              phoneNo <- mapM decrypt person.mobileNumber
+              merchantOperatingCity <- CQMOC.findById ride.merchantOperatingCityId >>= fromMaybeM (MerchantOperatingCityNotFound ride.merchantOperatingCityId.getId)
+              let payoutRequest =
+                    DPR.PayoutRequest
+                      { id = payoutRequestId,
+                        entityName = Just DPayment.SPECIAL_ZONE_PAYOUT,
+                        entityId = ride.id.getId,
+                        entityRefId = Just booking.id.getId,
+                        beneficiaryId = driverId.getId,
+                        amount = Just netPayoutAmount,
+                        status = payoutStatus,
+                        retryCount = Nothing,
+                        failureReason = Nothing,
+                        payoutTransactionId = Nothing,
+                        cashMarkedById = Nothing,
+                        cashMarkedByName = Nothing,
+                        cashMarkedAt = Nothing,
+                        expectedCreditTime = if payoutStatus == DPR.INITIATED then Just scheduledTime else Nothing,
+                        scheduledAt = if payoutStatus == DPR.INITIATED then Just scheduledTime else Nothing,
+                        customerVpa = payoutVpa,
+                        customerPhone = phoneNo,
+                        customerEmail = person.email,
+                        customerName = Just person.firstName,
+                        remark = Just "Payout for Airport Ride",
+                        orderType = Just "FULFILL_ONLY",
+                        city = Just (show merchantOperatingCity.city),
+                        createdAt = now,
+                        updatedAt = now,
+                        merchantId = booking.providerId.getId,
+                        merchantOperatingCityId = ride.merchantOperatingCityId.getId,
+                        payoutFee = mbAdjustVehicleBalance,
+                        coverageFrom = Nothing,
+                        coverageTo = Nothing,
+                        payoutType = Nothing,
+                        ledgerEntryIds = Nothing
+                      }
+              PayoutRequest.createPayoutRequest payoutRequest
+              when (payoutStatus == DPR.INITIATED) $ do
+                let jobData = SpecialZonePayoutJobData {payoutRequestId = Just payoutRequestId, scheduledPayoutId = Nothing}
+                QAllJ.createJobByTime @_ @'SpecialZonePayout (Just booking.providerId) (Just ride.merchantOperatingCityId) scheduledTime jobData
+
+      pure APISuccess.Success
+  where
+    isValidRideStatus status = status `elem` [DRide.NEW, DRide.UPCOMING]
+    isInProgress status = (status == DRide.INPROGRESS)
+
+    validateStartRideCoordinates point booking =
+      if point.lat == 0.0 && point.lon == 0.0
+        then do
+          logWarning "Invalid GPS coordinates (0.0, 0.0) received for ride start, using booking location as fallback"
+          pure $ getCoordinates booking.fromLocation
+        else pure point
+
+makeStartRideIdKey :: Id DP.Person -> Text
+makeStartRideIdKey driverId = "StartRideKey:PersonId-" <> driverId.getId

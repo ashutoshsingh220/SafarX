@@ -1,0 +1,74 @@
+{-# LANGUAGE ApplicativeDo #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
+module Lib.Payment.Domain.Types.PayoutRequest where
+
+import Data.Aeson
+import qualified Kernel.Beam.Lib.UtilsTH
+import Kernel.Prelude
+import qualified Kernel.Types.Common
+import qualified Kernel.Types.Id
+import Kernel.Utils.TH
+import qualified Lib.Payment.Domain.Types.Common
+import qualified Tools.Beam.UtilsTH
+
+data PayoutRequest = PayoutRequest
+  { amount :: Kernel.Prelude.Maybe Kernel.Types.Common.HighPrecMoney,
+    beneficiaryId :: Kernel.Prelude.Text,
+    cashMarkedAt :: Kernel.Prelude.Maybe Kernel.Prelude.UTCTime,
+    cashMarkedById :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    cashMarkedByName :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    city :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    coverageFrom :: Kernel.Prelude.Maybe Kernel.Prelude.UTCTime,
+    coverageTo :: Kernel.Prelude.Maybe Kernel.Prelude.UTCTime,
+    createdAt :: Kernel.Prelude.UTCTime,
+    customerEmail :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    customerName :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    customerPhone :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    customerVpa :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    entityId :: Kernel.Prelude.Text,
+    entityName :: Kernel.Prelude.Maybe Lib.Payment.Domain.Types.Common.EntityName,
+    entityRefId :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    expectedCreditTime :: Kernel.Prelude.Maybe Kernel.Prelude.UTCTime,
+    failureReason :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    id :: Kernel.Types.Id.Id Lib.Payment.Domain.Types.PayoutRequest.PayoutRequest,
+    ledgerEntryIds :: Kernel.Prelude.Maybe [Kernel.Prelude.Text],
+    merchantId :: Kernel.Prelude.Text,
+    merchantOperatingCityId :: Kernel.Prelude.Text,
+    orderType :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    payoutFee :: Kernel.Prelude.Maybe Kernel.Types.Common.HighPrecMoney,
+    payoutTransactionId :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    payoutType :: Kernel.Prelude.Maybe Lib.Payment.Domain.Types.PayoutRequest.PayoutType,
+    remark :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    retryCount :: Kernel.Prelude.Maybe Kernel.Prelude.Int,
+    scheduledAt :: Kernel.Prelude.Maybe Kernel.Prelude.UTCTime,
+    status :: Lib.Payment.Domain.Types.PayoutRequest.PayoutRequestStatus,
+    updatedAt :: Kernel.Prelude.UTCTime
+  }
+  deriving (Generic)
+
+data PayoutRequestStatus
+  = INITIATED
+  | PROCESSING
+  | CREDITED
+  | AUTO_PAY_FAILED
+  | RETRYING
+  | FAILED
+  | CANCELLED
+  | CASH_PAID
+  | CASH_PENDING
+  deriving (Eq, Ord, Show, Read, Generic, ToJSON, FromJSON, ToSchema, ToParamSchema)
+
+data PayoutType = INSTANT | SCHEDULED deriving (Eq, Ord, Show, Read, Generic, ToJSON, FromJSON, ToSchema, ToParamSchema)
+
+$(Tools.Beam.UtilsTH.mkBeamInstancesForEnumAndList ''PayoutRequestStatus)
+
+$(mkHttpInstancesForEnum ''PayoutRequestStatus)
+
+$(Tools.Beam.UtilsTH.mkBeamInstancesForEnumAndList ''PayoutType)
+
+$(mkHttpInstancesForEnum ''PayoutType)
+
+$(Kernel.Utils.TH.mkHttpInstancesForListOfEnums ''PayoutRequestStatus)
+
+$(Kernel.Utils.TH.mkHttpInstancesForListOfEnums ''PayoutType)

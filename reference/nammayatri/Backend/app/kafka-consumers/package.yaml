@@ -1,0 +1,176 @@
+name: kafka-consumers
+version: 0.1.0.0
+github: "nammayatri/nammayatri"
+license: AllRightsReserved
+author: "nammayatri"
+maintainer: "nammayatri"
+copyright: "2023 Juspay Technologies Private Limited"
+
+flags:
+  Local:
+    description: Enable this flag for faster compile times
+    manual: true
+    default: false
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description: Please see the README on GitHub at <https://github.com/nammayatri/nammayatri#readme>
+
+default-extensions:
+  - ConstraintKinds
+  - DataKinds
+  - DefaultSignatures
+  - DeriveAnyClass
+  - DeriveFunctor
+  - DeriveGeneric
+  - DerivingStrategies
+  - DuplicateRecordFields
+  - ExplicitNamespaces
+  - FlexibleContexts
+  - FlexibleInstances
+  - FunctionalDependencies
+  - GADTs
+  - LambdaCase
+  - MultiParamTypeClasses
+  - MultiWayIf
+  - NamedFieldPuns
+  - NoImplicitPrelude
+  - OverloadedLabels
+  - OverloadedStrings
+  - PackageImports
+  - PatternSynonyms
+  - PolyKinds
+  - RankNTypes
+  - RecordWildCards
+  - ScopedTypeVariables
+  - StandaloneDeriving
+  - TemplateHaskell
+  - TupleSections
+  - TypeApplications
+  - TypeFamilies
+  - TypeOperators
+  - ViewPatterns
+  - BlockArguments
+  - TypeSynonymInstances
+  - UndecidableInstances
+
+dependencies:
+  - aeson
+  - base >= 4.7 && < 5
+  - mobility-core
+  - bytestring
+  - euler-hs
+  - record-dot-preprocessor
+  - record-hasfield
+  - text
+  - containers
+  - time
+  - errors
+  - servant-server
+  - bytestring
+  - streamly
+  - openapi3
+  - servant-openapi3
+  - hw-kafka-client
+  - monad-control
+  - persistent
+  - persistent-postgresql
+  - hedis
+  - esqueleto
+  - template-haskell
+  - sessionizer-metrics
+  - unordered-containers
+  - cereal
+  - beam-core
+  - beam-mysql
+  - beam-postgres
+  - postgresql-simple
+  - sequelize
+  - warp
+  - uuid
+  - beckn-spec
+  - config-pilot
+  - passetto-client
+  - passetto-lib
+  - behavior-engine
+  - behavior-tracker
+  - location-updates
+  - scheduler
+  - special-zone-a
+  - yudhishthira
+  - async
+  - unliftio
+  - utils
+  - finance-kernel
+
+ghc-options:
+  - -Wall
+  - -Werror
+  - -Wcompat
+  - -Widentities
+  - -Wunused-imports
+  - -fwrite-ide-info
+  - -hiedir=.hie
+  - -fplugin=RecordDotPreprocessor
+
+library:
+  source-dirs: src
+  ghc-options:
+    - -Wincomplete-uni-patterns
+    - -Wwarn=ambiguous-fields
+  when:
+    - condition: flag(Local)
+      then:
+        ghc-options:
+          - -Wno-ambiguous-fields
+          - -Wno-incomplete-uni-patterns
+          - -Wno-incomplete-record-updates
+          - -O0
+          - -funfolding-use-threshold20
+          - -fno-cse
+          - -fmax-simplifier-iterations1
+          - -fno-specialise-aggressively
+          - -j4
+      else:
+        ghc-options:
+          - -O2
+          - -j4
+  dependencies:
+    - dynamic-offer-driver-app
+    - rider-app
+
+executables:
+  kafka-consumers-exe:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - '"-with-rtsopts=-N -T"'
+      - -Wincomplete-uni-patterns
+    when:
+    - condition: flag(Local)
+      then:
+        ghc-options:
+          - -Wno-ambiguous-fields
+          - -Wno-incomplete-uni-patterns
+          - -Wno-incomplete-record-updates
+          - -O0
+          - -funfolding-use-threshold20
+          - -fno-cse
+          - -fmax-simplifier-iterations1
+          - -fno-specialise-aggressively
+          - -j4
+      else:
+        ghc-options:
+          - -O2
+          - -j4
+    dependencies:
+      - kafka-consumers
+      - mobility-core
+      - beckn-spec

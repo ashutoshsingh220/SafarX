@@ -1,0 +1,75 @@
+imports:
+  Id: Kernel.Types.Id
+  UTCTime: Data.Time
+  HighPrecMoney: Kernel.Types.Common
+  InvoiceType: Domain.Types.Invoice
+  Value: Data.Aeson
+  DateOrTime: Lib.Finance.Invoice.PdfService
+
+importPackageOverrides:
+  Domain.Types.Invoice: "beckn-spec"
+
+module: FinanceInvoice
+types:
+  FinanceInvoiceItem:
+    invoiceNumber: Text
+    invoiceType: InvoiceType
+    invoiceDate: UTCTime
+    taxAmount: HighPrecMoney
+    taxableValue: HighPrecMoney
+    totalAmountPayable: HighPrecMoney
+    gstRate: Maybe Double
+    cgstRate: Maybe Double
+    sgstRate: Maybe Double
+    igstRate: Maybe Double
+    sgstAmount: Maybe HighPrecMoney
+    cgstAmount: Maybe HighPrecMoney
+    igstAmount: Maybe HighPrecMoney
+    totalGstAmount: Maybe HighPrecMoney
+    paymentMethod: Maybe Text
+    issuedToName: Maybe Text
+    issuedToAddress: Maybe Text
+    issuedByName: Maybe Text
+    issuedByAddress: Maybe Text
+    supplierAddress: Maybe Text
+    supplierName: Maybe Text
+    supplierGSTIN: Maybe Text
+    supplierTaxNo: Maybe Text
+    merchantGstin: Maybe Text
+    gstinOfParty: Maybe Text
+    sacCode: Maybe Text
+    lineItems: Maybe Value
+    totalCredit: Maybe HighPrecMoney
+    taxRate: Maybe Double
+    issuedToTaxNo: Maybe Text
+    issuedByTaxNo: Maybe Text
+  FinanceInvoiceListRes:
+    invoices: "[FinanceInvoiceItem]"
+    totalItems: Int
+  FinanceInvoicePdfResp:
+    pdfBase64: Text
+    invoiceNumber: Text
+apis:
+  - GET:
+      endpoint: /subscription/invoices
+      query:
+        invoiceType: InvoiceType
+        fromDate: UTCTime
+        toDate: UTCTime
+        limit: Int
+        offset: Int
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: FinanceInvoiceListRes
+  - GET:
+      endpoint: /finance/invoice/pdf
+      query:
+        referenceId: Text
+        invoiceType: InvoiceType
+        from: DateOrTime
+        to: DateOrTime
+        limit: Int
+        offset: Int
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: FinanceInvoicePdfResp

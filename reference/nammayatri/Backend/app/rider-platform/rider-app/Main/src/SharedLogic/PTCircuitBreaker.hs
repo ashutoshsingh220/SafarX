@@ -1,0 +1,479 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+{-# OPTIONS_GHC -Wno-deprecations #-}
+
+module SharedLogic.PTCircuitBreaker
+  ( PTMode (..),
+    APIType (..),
+    CircuitState (..),
+    ThresholdConfig (..),
+    CircuitBreakerConfig (..),
+    APICircuitBreakerConfig (..),
+    recordFailure,
+    recordSuccess,
+    isCircuitOpen,
+    tryAcquireCanarySlot,
+    tryAcquireOrCheckCanarySlot,
+    checkAndDisableIfNeeded,
+    reEnableCircuit,
+    parseCircuitBreakerConfig,
+    vehicleCategoryToPTMode,
+    defaultCircuitBreakerConfig,
+    checkObservingFailures,
+    -- New exports for top-level caching
+    makeFareCacheKey,
+    clearFareCache,
+    getFailureCountInWindow,
+    getProbeCounter,
+    incrementProbeCounter,
+    resetProbeCounter,
+    getFirstThresholdFailureCount,
+  )
+where
+
+import qualified BecknV2.FRFS.Enums as Spec
+import Data.Aeson
+import Data.Aeson.Types (parseMaybe)
+import qualified Data.Text as T
+import Domain.Types.MerchantOperatingCity (MerchantOperatingCity)
+import Domain.Types.PTCircuitBreakerHistory
+import qualified Domain.Types.RiderConfig as DRC
+import Kernel.Prelude
+import qualified Kernel.Storage.Hedis as Hedis
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import Lib.ConfigPilot.Interface.Types (getConfig)
+import qualified Storage.CachedQueries.Merchant.RiderConfig as QRiderConfig
+import Storage.ConfigPilot.Config.RiderConfig (RiderConfigDimensions (..))
+import qualified Storage.Queries.PTCircuitBreakerHistory as QPTCBH
+
+-- | Threshold configuration for triggering circuit breaker
+data ThresholdConfig = ThresholdConfig
+  { failureCount :: Int,
+    windowSeconds :: Int,
+    warningFailureCount :: Maybe Int -- Optional warning threshold, below failureCount, for surfacing degraded service
+  }
+  deriving (Show, Eq, Generic, ToJSON, FromJSON)
+
+-- | Circuit breaker configuration for a specific API type
+data APICircuitBreakerConfig = APICircuitBreakerConfig
+  { thresholds :: [ThresholdConfig],
+    canaryAllowedPerWindow :: Int,
+    canaryWindowSeconds :: Int
+  }
+  deriving (Show, Eq, Generic, ToJSON, FromJSON)
+
+-- | Full circuit breaker configuration
+data CircuitBreakerConfig = CircuitBreakerConfig
+  { fare :: Maybe APICircuitBreakerConfig,
+    booking :: Maybe APICircuitBreakerConfig
+  }
+  deriving (Show, Eq, Generic, ToJSON, FromJSON)
+
+-- | Default configuration if none is provided
+defaultCircuitBreakerConfig :: CircuitBreakerConfig
+defaultCircuitBreakerConfig =
+  CircuitBreakerConfig
+    { fare =
+        Just
+          APICircuitBreakerConfig
+            { thresholds = [ThresholdConfig 120 60 Nothing],
+              canaryAllowedPerWindow = 120,
+              canaryWindowSeconds = 60
+            },
+      booking =
+        Just
+          APICircuitBreakerConfig
+            { thresholds = [ThresholdConfig 120 60 Nothing],
+              canaryAllowedPerWindow = 120,
+              canaryWindowSeconds = 60
+            }
+    }
+
+-- | Parse circuit breaker config from JSON Value
+parseCircuitBreakerConfig :: Maybe Value -> CircuitBreakerConfig
+parseCircuitBreakerConfig Nothing = defaultCircuitBreakerConfig
+parseCircuitBreakerConfig (Just val) =
+  fromMaybe defaultCircuitBreakerConfig $ parseMaybe parseJSON val
+
+-- | Convert vehicle category to PT mode
+vehicleCategoryToPTMode :: Spec.VehicleCategory -> PTMode
+vehicleCategoryToPTMode Spec.METRO = Metro
+vehicleCategoryToPTMode Spec.BUS = Bus
+vehicleCategoryToPTMode Spec.SUBWAY = Subway
+
+-- | Redis key for failure tracking (sorted set)
+mkFailureKey :: Id MerchantOperatingCity -> PTMode -> APIType -> Text
+mkFailureKey mocId mode apiType =
+  "pt:failures:" <> mocId.getId <> ":" <> T.pack (show mode) <> ":" <> T.pack (show apiType)
+
+-- | Redis key for canary counter
+mkCanaryKey :: Id MerchantOperatingCity -> PTMode -> APIType -> Text
+mkCanaryKey mocId mode apiType =
+  "pt:canary:" <> mocId.getId <> ":" <> T.pack (show mode) <> ":" <> T.pack (show apiType)
+
+-- | Record a failure in the sliding window
+recordFailure ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  m ()
+recordFailure mode apiType mocId = do
+  now <- getCurrentTime
+  let key = mkFailureKey mocId mode apiType
+      score = round (utcToMilliseconds now) :: Integer
+      member = show now -- Use timestamp as member for uniqueness
+  void $ Hedis.zAddExp key member score 600 -- 10 min TTL for cleanup
+
+-- | Record a success (clears recent failures to prevent false positives)
+recordSuccess ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  m ()
+recordSuccess mode apiType mocId = do
+  let key = mkFailureKey mocId mode apiType
+  -- On success, we can optionally remove some failures or just let them expire
+  -- For now, we'll remove all failures to reset the circuit
+  void $ Hedis.del key
+
+-- | Check if circuit is open based on RiderConfig flags
+isCircuitOpen ::
+  PTMode ->
+  APIType ->
+  Maybe DRC.RiderConfig ->
+  Bool
+isCircuitOpen mode FareAPI mRiderConfig =
+  case mode of
+    Metro -> not $ fromMaybe True (mRiderConfig >>= (.metroFareCachingAllowed))
+    Bus -> not $ fromMaybe True (mRiderConfig >>= (.busFareCachingAllowed))
+    Subway -> not $ fromMaybe True (mRiderConfig >>= (.suburbanFareCachingAllowed))
+isCircuitOpen mode BookingAPI mRiderConfig =
+  case mode of
+    Metro -> not $ fromMaybe True (mRiderConfig >>= (.metroTicketAllowed))
+    Bus -> not $ fromMaybe True (mRiderConfig >>= (.busTicketAllowed))
+    Subway -> not $ fromMaybe True (mRiderConfig >>= (.suburbanTicketAllowed))
+
+-- | Try to acquire a canary slot (returns True if allowed to proceed)
+tryAcquireCanarySlot ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  Int -> -- Max canary requests allowed
+  Int -> -- Window in seconds
+  m Bool
+tryAcquireCanarySlot mode apiType mocId maxAllowed windowSeconds = do
+  let key = mkCanaryKey mocId mode apiType
+  count <- Hedis.incr key
+  when (count == 1) $ void $ Hedis.expire key windowSeconds
+  return $ count <= fromIntegral maxAllowed
+
+-- | Redis key for per-search canary grant flag
+mkCanaryGrantedKey :: Text -> PTMode -> APIType -> Text
+mkCanaryGrantedKey searchId mode apiType =
+  "pt:canaryGranted:" <> searchId <> ":" <> T.pack (show mode) <> ":" <> T.pack (show apiType)
+
+-- | Try to acquire a canary slot for a specific search.
+-- If already granted for this search, returns True without incrementing the counter.
+-- This prevents exhausting the canary count on repeated polling calls.
+tryAcquireOrCheckCanarySlot ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  Text -> -- searchId to tie the canary grant to
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  Int -> -- Max canary requests allowed
+  Int -> -- Window in seconds
+  m Bool
+tryAcquireOrCheckCanarySlot searchId mode apiType mocId maxAllowed windowSeconds = do
+  let grantedKey = mkCanaryGrantedKey searchId mode apiType
+  -- Check if canary was already granted for this search
+  alreadyGranted <- Hedis.get grantedKey
+  case alreadyGranted of
+    Just True -> return True
+    _ -> do
+      -- Try to acquire a new slot
+      acquired <- tryAcquireCanarySlot mode apiType mocId maxAllowed windowSeconds
+      when acquired $ do
+        -- Mark this search as having been granted canary status
+        void $ Hedis.setExp grantedKey True (windowSeconds + 60) -- TTL slightly longer than canary window
+      return acquired
+
+-- | Check if threshold is exceeded and disable if needed
+checkAndDisableIfNeeded ::
+  (MonadFlow m, Hedis.HedisFlow m r, EsqDBFlow m r, CacheFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  CircuitBreakerConfig ->
+  m ()
+checkAndDisableIfNeeded mode apiType mocId config = do
+  let apiConfig = case apiType of
+        FareAPI -> config.fare
+        BookingAPI -> config.booking
+  case apiConfig of
+    Nothing -> return ()
+    Just cfg -> do
+      (shouldDisable, failureCount) <- checkThresholdsWithCount mocId mode apiType cfg.thresholds
+      when shouldDisable $ disableCircuit mode apiType mocId failureCount
+
+-- | Check if any threshold is exceeded and return the failure count
+checkThresholdsWithCount ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  Id MerchantOperatingCity ->
+  PTMode ->
+  APIType ->
+  [ThresholdConfig] ->
+  m (Bool, Int)
+checkThresholdsWithCount mocId mode apiType thresholds = do
+  now <- getCurrentTime
+  let key = mkFailureKey mocId mode apiType
+  results <- forM thresholds $ \threshold -> do
+    let windowStart = addUTCTime (fromIntegral (negate threshold.windowSeconds)) now
+        minScore = utcToMilliseconds windowStart
+        maxScore = utcToMilliseconds now
+    count <- Hedis.zCount key minScore maxScore
+    return (count >= fromIntegral threshold.failureCount, fromIntegral count)
+  let exceeded = or (map fst results)
+  let maxCount = if null results then 0 else maximum (map snd results)
+  return (exceeded, maxCount)
+
+-- | Disable the circuit by updating RiderConfig
+disableCircuit ::
+  (MonadFlow m, EsqDBFlow m r, CacheFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  Int -> -- failureCount
+  m ()
+disableCircuit mode apiType mocId failureCount = do
+  logWarning $ "PT Circuit Breaker: Disabling " <> T.pack (show mode) <> " " <> T.pack (show apiType) <> " for city " <> mocId.getId
+  -- Record state change in history (forked) - get time before fork for accuracy
+  now <- getCurrentTime
+  fork "record-circuit-open" $ recordStateChange mode apiType mocId Closed Open (Just failureCount) (Just "Failure threshold exceeded") now
+  case apiType of
+    FareAPI -> updateFareCachingFlag mode mocId False
+    BookingAPI -> updateBookingFlag mode mocId False
+
+-- | Re-enable the circuit after successful canary request
+reEnableCircuit ::
+  (MonadFlow m, EsqDBFlow m r, CacheFlow m r, Hedis.HedisFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  m ()
+reEnableCircuit mode apiType mocId = do
+  logInfo $ "PT Circuit Breaker: Re-enabling " <> T.pack (show mode) <> " " <> T.pack (show apiType) <> " for city " <> mocId.getId <> " after successful canary"
+  -- Record state change in history (forked) - get time before fork for accuracy
+  now <- getCurrentTime
+  fork "record-circuit-close" $ recordStateChange mode apiType mocId Open Closed Nothing (Just "Canary request succeeded") now
+  -- Clear failure history
+  let failureKey = mkFailureKey mocId mode apiType
+  void $ Hedis.del failureKey
+  -- Re-enable the flag
+  case apiType of
+    FareAPI -> updateFareCachingFlag mode mocId True
+    BookingAPI -> updateBookingFlag mode mocId True
+
+-- | Update fare caching flag in RiderConfig
+updateFareCachingFlag ::
+  (MonadFlow m, EsqDBFlow m r, CacheFlow m r) =>
+  PTMode ->
+  Id MerchantOperatingCity ->
+  Bool ->
+  m ()
+updateFareCachingFlag mode mocId enabled = do
+  mRiderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = mocId.getId}) (Just (QRiderConfig.findByMerchantOperatingCityId mocId))
+  case mRiderConfig of
+    Nothing -> logError $ "RiderConfig not found for mocId: " <> mocId.getId
+    Just riderConfig -> do
+      let updatedConfig = case mode of
+            Metro -> riderConfig {DRC.metroFareCachingAllowed = Just enabled}
+            Bus -> riderConfig {DRC.busFareCachingAllowed = Just enabled}
+            Subway -> riderConfig {DRC.suburbanFareCachingAllowed = Just enabled}
+      QRiderConfig.updateByPrimaryKey updatedConfig
+
+-- | Update booking flag in RiderConfig
+updateBookingFlag ::
+  (MonadFlow m, EsqDBFlow m r, CacheFlow m r) =>
+  PTMode ->
+  Id MerchantOperatingCity ->
+  Bool ->
+  m ()
+updateBookingFlag mode mocId enabled = do
+  mRiderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = mocId.getId}) (Just (QRiderConfig.findByMerchantOperatingCityId mocId))
+  case mRiderConfig of
+    Nothing -> logError $ "RiderConfig not found for mocId: " <> mocId.getId
+    Just riderConfig -> do
+      let updatedConfig = case mode of
+            Metro -> riderConfig {DRC.metroTicketAllowed = Just enabled}
+            Bus -> riderConfig {DRC.busTicketAllowed = Just enabled}
+            Subway -> riderConfig {DRC.suburbanTicketAllowed = Just enabled}
+      QRiderConfig.updateByPrimaryKey updatedConfig
+
+-- | Record circuit breaker state change in history
+recordStateChange ::
+  (MonadFlow m, EsqDBFlow m r, CacheFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  CircuitState ->
+  CircuitState ->
+  Maybe Int ->
+  Maybe Text ->
+  UTCTime ->
+  m ()
+recordStateChange mode apiType mocId previousState newState failureCount reason timestamp = do
+  historyId <- generateGUID
+  let history =
+        PTCircuitBreakerHistory
+          { id = historyId,
+            ptMode = mode,
+            apiType = apiType,
+            merchantOperatingCityId = mocId,
+            previousState = previousState,
+            newState = newState,
+            failureCount = failureCount,
+            reason = reason,
+            merchantId = Nothing,
+            createdAt = timestamp,
+            updatedAt = timestamp
+          }
+  QPTCBH.create history
+
+-- ============================================================================
+-- New functions for top-level fare caching and probing strategy
+-- ============================================================================
+
+-- | Redis key for top-level fare caching
+makeFareCacheKey :: Id MerchantOperatingCity -> PTMode -> Text -> Text -> Text -> Maybe Spec.ServiceTierType -> Text
+makeFareCacheKey mocId mode routeCode startStop endStop mbServiceTier =
+  "pt:fareCache:" <> mocId.getId <> ":" <> T.pack (show mode) <> ":" <> routeCode <> ":" <> startStop <> ":" <> endStop <> maybe "" (\serviceTier -> ":" <> show serviceTier) mbServiceTier
+
+-- | Redis key for probe counter
+mkProbeCounterKey :: Id MerchantOperatingCity -> PTMode -> APIType -> Text
+mkProbeCounterKey mocId mode apiType =
+  "pt:probeCounter:" <> mocId.getId <> ":" <> T.pack (show mode) <> ":" <> T.pack (show apiType)
+
+-- | Clear fare cache for specific cache keys
+clearFareCache ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  Text ->
+  m ()
+clearFareCache key = do
+  logInfo $ "PT Circuit Breaker: Clearing cached fares for key: " <> key
+  void $ Hedis.del key
+
+-- | Get failure count within a specific window
+getFailureCountInWindow ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  Int -> -- Window in seconds
+  m Int
+getFailureCountInWindow mode apiType mocId windowSeconds = do
+  now <- getCurrentTime
+  let key = mkFailureKey mocId mode apiType
+      windowStart = addUTCTime (fromIntegral (negate windowSeconds)) now
+      minScore = utcToMilliseconds windowStart
+      maxScore = utcToMilliseconds now
+  fromIntegral <$> Hedis.zCount key minScore maxScore
+
+-- | Get current probe counter value
+getProbeCounter ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  m Int
+getProbeCounter mode apiType mocId = do
+  let key = mkProbeCounterKey mocId mode apiType
+  mbVal <- Hedis.get key
+  return $ fromMaybe 0 mbVal
+
+-- | Increment probe counter and set expiry (returns new value)
+incrementProbeCounter ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  Int -> -- Window in seconds for reset
+  m Int
+incrementProbeCounter mode apiType mocId windowSeconds = do
+  let key = mkProbeCounterKey mocId mode apiType
+  count <- Hedis.incr key
+  when (count == 1) $ void $ Hedis.expire key windowSeconds
+  return $ fromIntegral count
+
+-- | Reset probe counter
+resetProbeCounter ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  m ()
+resetProbeCounter mode apiType mocId = do
+  let key = mkProbeCounterKey mocId mode apiType
+  void $ Hedis.del key
+
+-- | Check if failure count has crossed the warning threshold (but not yet the full circuit-open threshold).
+-- Returns True when service degradation should be surfaced to the user (observingFailures).
+checkObservingFailures ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  PTMode ->
+  APIType ->
+  Id MerchantOperatingCity ->
+  CircuitBreakerConfig ->
+  m Bool
+checkObservingFailures mode apiType mocId config = do
+  let apiConfig = case apiType of
+        FareAPI -> config.fare
+        BookingAPI -> config.booking
+  case apiConfig of
+    Nothing -> return False
+    Just cfg -> checkWarningThresholds mocId mode apiType cfg.thresholds
+
+-- | Internal helper: check warning threshold for each configured threshold window
+checkWarningThresholds ::
+  (MonadFlow m, Hedis.HedisFlow m r) =>
+  Id MerchantOperatingCity ->
+  PTMode ->
+  APIType ->
+  [ThresholdConfig] ->
+  m Bool
+checkWarningThresholds mocId mode apiType thresholds = do
+  now <- getCurrentTime
+  let key = mkFailureKey mocId mode apiType
+  results <- forM thresholds $ \threshold ->
+    case threshold.warningFailureCount of
+      Nothing -> return False
+      Just warningCount -> do
+        let windowStart = addUTCTime (fromIntegral (negate threshold.windowSeconds)) now
+            minScore = utcToMilliseconds windowStart
+            maxScore = utcToMilliseconds now
+        count <- Hedis.zCount key minScore maxScore
+        return (fromIntegral count >= warningCount)
+  return $ or results
+
+-- | Get the first threshold's failure count from config (used for 2x probing)
+getFirstThresholdFailureCount :: Maybe APICircuitBreakerConfig -> Int
+getFirstThresholdFailureCount Nothing = 5 -- default
+getFirstThresholdFailureCount (Just cfg) =
+  case cfg.thresholds of
+    [] -> 5
+    (t : _) -> t.failureCount

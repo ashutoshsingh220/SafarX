@@ -1,0 +1,69 @@
+imports:
+  Merchant: Domain.Types.Merchant
+  MerchantOperatingCity: Domain.Types.MerchantOperatingCity
+  Person: Domain.Types.Person
+  UTCTime: Data.Time
+  PassEnum: Domain.Types.PassType
+
+PassOrganization:
+  tableName: pass_organization
+
+  fields:
+    id: Id PassOrganization
+    name: Text
+    personId: Id Person
+    address: Maybe Text
+    merchantId: Id Merchant
+    merchantOperatingCityId: Id MerchantOperatingCity
+    createdAt: UTCTime
+    updatedAt: UTCTime
+    passEnum: PassEnum
+    depotPersonId: Maybe (Id Person)
+    depotId: Maybe Text
+
+  constraints:
+    id: PrimaryKey
+    personId: SecondaryKey
+    depotPersonId: SecondaryKey
+
+  sqlType:
+    name: text
+    address: text
+
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
+
+    findByPersonId:
+      kvFunction: findOneWithKV
+      where: personId
+
+    findByDepotPersonId:
+      kvFunction: findAllWithKV
+      where: depotPersonId
+
+    findByMerchantOperatingCityIdAndPassEnum:
+      kvFunction: findAllWithKV
+      where:
+        and: [merchantOperatingCityId, passEnum]
+
+    updatePassOrganization:
+      kvFunction: updateWithKV
+      params: [name, address, updatedAt]
+      where: id
+
+    updateDepotAssignment:
+      kvFunction: updateWithKV
+      params: [depotPersonId, depotId, updatedAt]
+      where:
+        in: [id]
+
+  extraIndexes:
+    - columns: [merchantOperatingCityId, name, passEnum]
+      unique: true
+
+  extraOperations:
+    - GENERATE_INDEXES
+
+  excludedFields: [merchantOperatingCityId, merchantId, createdAt, updatedAt]

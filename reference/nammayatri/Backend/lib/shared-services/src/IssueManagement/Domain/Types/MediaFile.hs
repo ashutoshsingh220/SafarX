@@ -1,0 +1,40 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module IssueManagement.Domain.Types.MediaFile where
+
+import AWS.S3 (FileType (..))
+import Kernel.Prelude
+import Kernel.Types.Id
+
+data MediaFileUploadStatus = PENDING | DELETED | FAILED | CONFIRMED | COMPLETED
+  deriving (Eq, Ord, Show, Read, Generic, ToJSON, FromJSON, ToSchema)
+
+data MediaFile = MediaFile
+  { id :: Id MediaFile,
+    _type :: FileType,
+    url :: Text,
+    s3FilePath :: Maybe Text,
+    status :: Maybe MediaFileUploadStatus,
+    fileHash :: Maybe Text,
+    -- | Original filename as supplied by the source (e.g. a Xyne attachment's
+    -- @name@). Absent for uploads that never carried one — callers fall back to
+    -- deriving a label from the url/s3 key.
+    name :: Maybe Text,
+    -- | Size in bytes, when the source reported it.
+    size :: Maybe Int,
+    createdAt :: UTCTime,
+    updatedAt :: Maybe UTCTime
+  }
+  deriving (Generic, FromJSON, Eq, ToJSON, ToSchema, Show)

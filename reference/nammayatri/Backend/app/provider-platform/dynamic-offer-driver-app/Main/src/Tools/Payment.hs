@@ -1,0 +1,228 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module Tools.Payment where
+
+import qualified Domain.Types.Extra.MerchantPaymentMethod as DMPM
+import qualified Domain.Types.Merchant as DM
+import qualified Domain.Types.MerchantOperatingCity as DMOC
+import qualified Domain.Types.MerchantServiceConfig as DMSC
+import qualified Domain.Types.MerchantServiceUsageConfig as DMSUC
+import qualified Domain.Types.Person as DP
+import qualified Domain.Types.Plan as DPlan
+import qualified Kernel.External.Payment.Interface as Payment
+import Kernel.External.Types (ServiceFlow)
+import Kernel.Prelude
+import Kernel.Types.Error
+import Kernel.Types.Id
+import Kernel.Types.Version
+import Kernel.Utils.Common
+import Kernel.Utils.Version
+import Lib.ConfigPilot.Interface.Types (getOneConfig)
+import qualified Storage.Cac.MerchantServiceUsageConfig as CMSUC
+import qualified Storage.Cac.TransporterConfig as SCTC
+import qualified Storage.CachedQueries.Merchant.MerchantServiceConfig as CQMSC
+import Storage.ConfigPilot.Config.MerchantServiceConfig (MerchantServiceConfigDimensions (..))
+import Storage.ConfigPilot.Config.MerchantServiceUsageConfig (MerchantServiceUsageConfigDimensions (..))
+import Storage.ConfigPilot.Config.TransporterConfig (TransporterConfigDimensions (..))
+import qualified Storage.Queries.DriverPlan as QDPlan
+
+createOrder :: ServiceFlow m r => Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> DMSC.ServiceName -> Maybe Text -> m (Payment.CreateOrderReq -> m Payment.CreateOrderResp, Maybe Text)
+createOrder = runWithServiceConfigAndName Payment.createOrder
+
+orderStatus :: ServiceFlow m r => Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> DMSC.ServiceName -> Maybe Text -> Payment.OrderStatusReq -> m Payment.OrderStatusResp
+orderStatus = runWithUnWrap Payment.orderStatus
+
+offerList :: ServiceFlow m r => Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> DMSC.ServiceName -> Maybe Text -> Payment.OfferListReq -> m Payment.OfferListResp
+offerList = runWithUnWrap Payment.offerList
+
+offerApply :: ServiceFlow m r => Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> DMSC.ServiceName -> Maybe Text -> Payment.OfferApplyReq -> m Payment.OfferApplyResp
+offerApply = runWithUnWrap Payment.offerApply
+
+mandateRevoke :: ServiceFlow m r => Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> DMSC.ServiceName -> Maybe Text -> Payment.MandateRevokeReq -> m Payment.MandateRevokeRes
+mandateRevoke = runWithUnWrap Payment.mandateRevoke
+
+mandateNotification :: (ServiceFlow m r) => Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> DMSC.ServiceName -> Maybe Text -> Payment.MandateNotificationReq -> m Payment.MandateNotificationRes
+mandateNotification = runWithUnWrap Payment.mandateNotification
+
+mandateNotificationStatus :: (ServiceFlow m r) => Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> DMSC.ServiceName -> Maybe Text -> Payment.NotificationStatusReq -> m Payment.NotificationStatusResp
+mandateNotificationStatus = runWithUnWrap Payment.mandateNotificationStatus
+
+mandateExecution :: ServiceFlow m r => Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> DMSC.ServiceName -> Maybe Text -> Payment.MandateExecutionReq -> m Payment.MandateExecutionRes
+mandateExecution = runWithUnWrap Payment.mandateExecution
+
+verifyVpa :: ServiceFlow m r => Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> DMSC.ServiceName -> Maybe Text -> Payment.VerifyVPAReq -> m Payment.VerifyVPAResp
+verifyVpa = runWithUnWrap Payment.verifyVPA
+
+runWithServiceConfigAndName ::
+  ServiceFlow m r =>
+  (Payment.PaymentServiceConfig -> Maybe Text -> req -> m resp) ->
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  DMSC.ServiceName ->
+  Maybe Text ->
+  m (req -> m resp, Maybe Text)
+runWithServiceConfigAndName func merchantId merchantOperatingCity serviceName mRoutingId = do
+  merchantServiceConfig <-
+    getOneConfig (MerchantServiceConfigDimensions {merchantOperatingCityId = merchantOperatingCity.getId, merchantId = Nothing, serviceName = Just serviceName}) (Just (maybeToList <$> CQMSC.findByServiceAndCity serviceName merchantOperatingCity))
+      >>= fromMaybeM (MerchantServiceConfigNotFound merchantId.getId "Payment" (show serviceName))
+  logDebug $ "runWithServiceConfigAndName: getRoutingId " <> show getRoutingId
+  logDebug $ "runWithServiceConfigAndName: serviceConfig " <> show merchantServiceConfig.serviceConfig
+  case merchantServiceConfig.serviceConfig of
+    DMSC.PaymentServiceConfig vsc -> return (func vsc getRoutingId, getPclient vsc)
+    DMSC.RentalPaymentServiceConfig vsc -> return (func vsc getRoutingId, getPclient vsc)
+    DMSC.CautioPaymentServiceConfig vsc -> return (func vsc getRoutingId, getPclient vsc)
+    DMSC.MembershipPaymentServiceConfig vsc -> return (func vsc getRoutingId, getPclient vsc)
+    DMSC.AirportReachargeServiceConfig vsc -> return (func vsc getRoutingId, getPclient vsc)
+    _ -> throwError $ InternalError "Unknown Service Config"
+  where
+    getPclient vsc = do
+      case vsc of
+        Payment.JuspayConfig config -> config.pseudoClientId
+        _ -> Nothing
+
+    getRoutingId = do
+      case serviceName of
+        DMSC.PaymentService Payment.AAJuspay -> mRoutingId
+        _ -> Nothing
+
+-- | Fetch the offer SKU productId configured on the merchant's payment service config (if any).
+fetchOfferSKUConfig ::
+  (MonadFlow m, CacheFlow m r, EsqDBFlow m r) =>
+  Id DMOC.MerchantOperatingCity ->
+  DMSC.ServiceName ->
+  m (Maybe Text)
+fetchOfferSKUConfig merchantOperatingCity serviceName = do
+  mbMerchantServiceConfig <-
+    getOneConfig
+      (MerchantServiceConfigDimensions {merchantOperatingCityId = merchantOperatingCity.getId, merchantId = Nothing, serviceName = Just serviceName})
+      (Just (maybeToList <$> CQMSC.findByServiceAndCity serviceName merchantOperatingCity))
+  pure $ case mbMerchantServiceConfig <&> (.serviceConfig) of
+    Just (DMSC.PaymentServiceConfig vsc) -> Payment.offerSKUConfig vsc
+    Just (DMSC.RentalPaymentServiceConfig vsc) -> Payment.offerSKUConfig vsc
+    Just (DMSC.CautioPaymentServiceConfig vsc) -> Payment.offerSKUConfig vsc
+    Just (DMSC.MembershipPaymentServiceConfig vsc) -> Payment.offerSKUConfig vsc
+    Just (DMSC.AirportReachargeServiceConfig vsc) -> Payment.offerSKUConfig vsc
+    _ -> Nothing
+
+-- | Build a single-item payment basket keyed by the configured offer SKU productId.
+--   Quantity defaults to 1. Falls back to a dummy basket when the service name is
+--   unknown or no SKU productId is configured.
+mkOfferBasket ::
+  (MonadFlow m, CacheFlow m r, EsqDBFlow m r) =>
+  Id DMOC.MerchantOperatingCity ->
+  Maybe DMSC.ServiceName ->
+  HighPrecMoney ->
+  m [Payment.Basket]
+mkOfferBasket merchantOperatingCity mbServiceName amount = do
+  mbProductId <- maybe (pure Nothing) (fetchOfferSKUConfig merchantOperatingCity) mbServiceName
+  pure $ maybe (dummyBasket amount) (\productId -> [Payment.Basket {Payment.id = productId, Payment.unitPrice = amount, Payment.quantity = 1}]) mbProductId
+
+-- | Dummy basket used when no offer SKU productId is configured.
+dummyBasket :: HighPrecMoney -> [Payment.Basket]
+dummyBasket amount = [Payment.Basket {Payment.id = "no_basket", Payment.unitPrice = amount, Payment.quantity = 1}]
+
+createConnectAccount ::
+  ServiceFlow m r =>
+  Id DMOC.MerchantOperatingCity ->
+  Maybe DMPM.PaymentMode ->
+  Payment.ConnectAccountReq ->
+  m Payment.ConnectAccountLinkResp
+createConnectAccount = runWithServiceConfig Payment.createConnectAccount (.createBankAccount)
+
+retryAccountLink ::
+  ServiceFlow m r =>
+  Id DMOC.MerchantOperatingCity ->
+  Maybe DMPM.PaymentMode ->
+  Payment.AccountId ->
+  m Payment.RetryAccountLink
+retryAccountLink = runWithServiceConfig Payment.retryAccountLink (.retryBankAccountLink)
+
+getAccount ::
+  ServiceFlow m r =>
+  Id DMOC.MerchantOperatingCity ->
+  Maybe DMPM.PaymentMode ->
+  Payment.AccountId ->
+  m Payment.ConnectAccountStatusResp
+getAccount = runWithServiceConfig Payment.getAccount (.getBankAccount)
+
+modifyPaymentServiceByMode :: Payment.PaymentService -> DMPM.PaymentMode -> Payment.PaymentService
+modifyPaymentServiceByMode Payment.Stripe DMPM.LIVE = Payment.Stripe
+modifyPaymentServiceByMode Payment.Stripe DMPM.TEST = Payment.StripeTest
+modifyPaymentServiceByMode Payment.StripeTest _ = Payment.StripeTest
+modifyPaymentServiceByMode Payment.Juspay _ = Payment.Juspay
+modifyPaymentServiceByMode Payment.AAJuspay _ = Payment.AAJuspay
+modifyPaymentServiceByMode Payment.PaytmEDC _ = Payment.PaytmEDC
+
+runWithServiceConfig ::
+  ServiceFlow m r =>
+  (Payment.PaymentServiceConfig -> req -> m resp) ->
+  (DMSUC.MerchantServiceUsageConfig -> Payment.PaymentService) ->
+  Id DMOC.MerchantOperatingCity ->
+  Maybe DMPM.PaymentMode ->
+  req ->
+  m resp
+runWithServiceConfig func getCfg merchantOpCityId paymentMode req = do
+  orgPaymentsConfig <- getOneConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (CMSUC.findByMerchantOpCityId merchantOpCityId Nothing)) >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOpCityId.getId)
+  let paymentService = modifyPaymentServiceByMode (getCfg orgPaymentsConfig) (fromMaybe DMPM.LIVE paymentMode)
+  orgPaymentServiceConfig <-
+    getOneConfig (MerchantServiceConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId, merchantId = Nothing, serviceName = Just (DMSC.PaymentService paymentService)}) (Just (maybeToList <$> CQMSC.findByServiceAndCity (DMSC.PaymentService paymentService) merchantOpCityId))
+      >>= fromMaybeM (MerchantServiceConfigNotFound merchantOpCityId.getId "Payments" (show paymentService))
+  case orgPaymentServiceConfig.serviceConfig of
+    DMSC.PaymentServiceConfig msc -> func msc req
+    _ -> throwError $ InternalError "Unknown Service Config"
+
+runWithUnWrap ::
+  ServiceFlow m r =>
+  (Payment.PaymentServiceConfig -> Maybe Text -> req -> m resp) ->
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  DMSC.ServiceName ->
+  Maybe Text ->
+  req ->
+  m resp
+runWithUnWrap func merchantId merchantOperatingCity serviceName mRoutingId req = do
+  (call, _) <- runWithServiceConfigAndName func merchantId merchantOperatingCity serviceName mRoutingId
+  call req
+
+decidePaymentService :: (ServiceFlow m r) => DMSC.ServiceName -> Maybe Version -> Id DMOC.MerchantOperatingCity -> m DMSC.ServiceName
+decidePaymentService paymentServiceName clientSdkVersion merchantOpCityId = do
+  transporterConfig <- getOneConfig (TransporterConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (SCTC.findByMerchantOpCityId merchantOpCityId Nothing)) >>= fromMaybeM (TransporterConfigNotFound merchantOpCityId.getId)
+  let paymentService = case clientSdkVersion of
+        Just v
+          | v >= textToVersionDefault transporterConfig.aaEnabledClientSdkVersion -> DMSC.PaymentService Payment.AAJuspay
+        _ -> paymentServiceName
+  logDebug $ "decidePaymentService: clientSdkVersion " <> show clientSdkVersion
+  logDebug $ "decidePaymentService: transporterConfig.aaEnabledClientSdkVersion " <> show (textToVersionDefault transporterConfig.aaEnabledClientSdkVersion)
+  logDebug $ "decidePaymentService: PaymentServiceName" <> show paymentService
+  return paymentService
+
+decidePaymentServiceForRecurring :: (ServiceFlow m r) => DMSC.ServiceName -> Id DP.Person -> Id DMOC.MerchantOperatingCity -> DPlan.ServiceNames -> m DMSC.ServiceName
+decidePaymentServiceForRecurring paymentServiceName driverId merchantOpCityId serviceName = do
+  transporterConfig <- getOneConfig (TransporterConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (SCTC.findByMerchantOpCityId merchantOpCityId Nothing)) >>= fromMaybeM (TransporterConfigNotFound merchantOpCityId.getId)
+  case transporterConfig.isAAEnabledForRecurring of
+    Just True -> do
+      mDriverPlan <- QDPlan.findByDriverIdWithServiceName driverId serviceName
+      case mDriverPlan of
+        Just driverPlan -> do
+          now <- getCurrentTime
+          let mandateSetupTime = fromMaybe now driverPlan.mandateSetupDate
+              elapsed = diffUTCTime now mandateSetupTime
+              sixHours = 6 * 60 * 60
+          pure $
+            if elapsed > sixHours
+              then DMSC.PaymentService Payment.AAJuspay
+              else paymentServiceName
+        Nothing -> pure paymentServiceName
+    _ -> pure paymentServiceName

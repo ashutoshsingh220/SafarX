@@ -1,0 +1,238 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.2.
+--
+-- see: https://github.com/sol/hpack
+
+name:           kafka-consumers
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/nammayatri/nammayatri#readme>
+homepage:       https://github.com/nammayatri/nammayatri#readme
+bug-reports:    https://github.com/nammayatri/nammayatri/issues
+author:         nammayatri
+maintainer:     nammayatri
+copyright:      2023 Juspay Technologies Private Limited
+license:        AllRightsReserved
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/nammayatri/nammayatri
+
+flag Local
+  description: Enable this flag for faster compile times
+  manual: True
+  default: False
+
+library
+  exposed-modules:
+      App
+      DriverTrackingHealthCheck.API
+      DriverTrackingHealthCheck.Service.Runner
+      Environment
+      Processor.BroadcastMessage.Processor
+      Processor.FleetCommunication.Processor
+      Processor.LocationUpdate.Processor
+      Processor.LocationUpdate.Types
+      Processor.RideEvents.Handlers
+      Processor.RideEvents.Idempotency
+      Processor.RideEvents.InternalHelpers
+      Processor.RideEvents.Processor
+      SystemConfigsOverride
+      Transporter.Kafka.Flow
+      Transporter.RedisStream.Flow
+      Transporter.RedisStream.Types
+  other-modules:
+      Paths_kafka_consumers
+  hs-source-dirs:
+      src
+  default-extensions:
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DerivingStrategies
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      NoImplicitPrelude
+      OverloadedLabels
+      OverloadedStrings
+      PackageImports
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      StandaloneDeriving
+      TemplateHaskell
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      BlockArguments
+      TypeSynonymInstances
+      UndecidableInstances
+  ghc-options: -Wall -Werror -Wcompat -Widentities -Wunused-imports -fwrite-ide-info -hiedir=.hie -fplugin=RecordDotPreprocessor -Wincomplete-uni-patterns -Wwarn=ambiguous-fields
+  build-depends:
+      aeson
+    , async
+    , base >=4.7 && <5
+    , beam-core
+    , beam-mysql
+    , beam-postgres
+    , beckn-spec
+    , behavior-engine
+    , behavior-tracker
+    , bytestring
+    , cereal
+    , config-pilot
+    , containers
+    , dynamic-offer-driver-app
+    , errors
+    , esqueleto
+    , euler-hs
+    , finance-kernel
+    , hedis
+    , hw-kafka-client
+    , location-updates
+    , mobility-core
+    , monad-control
+    , openapi3
+    , passetto-client
+    , passetto-lib
+    , persistent
+    , persistent-postgresql
+    , postgresql-simple
+    , record-dot-preprocessor
+    , record-hasfield
+    , rider-app
+    , scheduler
+    , sequelize
+    , servant-openapi3
+    , servant-server
+    , sessionizer-metrics
+    , special-zone-a
+    , streamly
+    , template-haskell
+    , text
+    , time
+    , unliftio
+    , unordered-containers
+    , utils
+    , uuid
+    , warp
+    , yudhishthira
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4
+
+executable kafka-consumers-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_kafka_consumers
+  hs-source-dirs:
+      app
+  default-extensions:
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DerivingStrategies
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      NoImplicitPrelude
+      OverloadedLabels
+      OverloadedStrings
+      PackageImports
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      StandaloneDeriving
+      TemplateHaskell
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      BlockArguments
+      TypeSynonymInstances
+      UndecidableInstances
+  ghc-options: -Wall -Werror -Wcompat -Widentities -Wunused-imports -fwrite-ide-info -hiedir=.hie -fplugin=RecordDotPreprocessor -threaded -rtsopts "-with-rtsopts=-N -T" -Wincomplete-uni-patterns
+  build-depends:
+      aeson
+    , async
+    , base >=4.7 && <5
+    , beam-core
+    , beam-mysql
+    , beam-postgres
+    , beckn-spec
+    , behavior-engine
+    , behavior-tracker
+    , bytestring
+    , cereal
+    , config-pilot
+    , containers
+    , errors
+    , esqueleto
+    , euler-hs
+    , finance-kernel
+    , hedis
+    , hw-kafka-client
+    , kafka-consumers
+    , location-updates
+    , mobility-core
+    , monad-control
+    , openapi3
+    , passetto-client
+    , passetto-lib
+    , persistent
+    , persistent-postgresql
+    , postgresql-simple
+    , record-dot-preprocessor
+    , record-hasfield
+    , scheduler
+    , sequelize
+    , servant-openapi3
+    , servant-server
+    , sessionizer-metrics
+    , special-zone-a
+    , streamly
+    , template-haskell
+    , text
+    , time
+    , unliftio
+    , unordered-containers
+    , utils
+    , uuid
+    , warp
+    , yudhishthira
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4

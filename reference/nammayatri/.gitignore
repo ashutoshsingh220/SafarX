@@ -1,0 +1,57 @@
+.vscode/tasks.json
+
+/.DS_Store
+
+# Nix
+result
+result-*
+.direnv
+/.pre-commit-config.yaml
+.envrc
+## Data directory used by services
+/data
+
+# Backend ignores
+dist-newstyle
+Backend/dev/config-sync/assets/environments.json
+Backend/dev/config-sync/assets/patches.json
+Backend/dev/config-sync/assets/data/*
+!Backend/dev/config-sync/assets/data/.gitkeep
+Backend/dev/config-sync/master_to_local_sql/
+Backend/dev/config-sync/*_import*.sql
+Backend/dev/config-sync/__pycache__/
+Backend/dev/integration-tests/reports/
+Backend/dev/integration-tests/Master.postman_environment.json
+.venv/
+__pycache__ 
+# process-compose log files
+*.log
+
+# Frontend ignores
+Frontend/.DS_Store
+Frontend/.psc-ide-port
+Frontend/package-lock.json
+Frontend/android-native/app/driverProd/debug/output-metadata.json
+Frontend/android-native/app/driverProd/release/output-metadata.json
+Frontend/android-native/package-lock.json
+# Ignore all files in the app directory
+.idea
+.claude/settings.local.json
+Backend/.claude/settings.local.json
+
+# Non-nix bans
+Makefile
+docker-compose.yml
+docker-compose.yaml
+stack.yaml
+
+shared-kernel/
+.claude/worktrees/gifted-fermi
+control-center/
+
+
+# Devbox auto-assignment identity (per-checkout, minted by the test dashboard)
+/.devbox-id.json
+
+# Deploy/start bookkeeping (workspace fingerprint + last-started commit)
+/.stack-state.json

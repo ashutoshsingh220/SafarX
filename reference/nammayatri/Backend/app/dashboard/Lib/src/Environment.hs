@@ -1,0 +1,227 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module Environment where
+
+import qualified Data.HashMap.Strict as HM
+import qualified Data.Map.Strict as M
+import Data.Text (unpack)
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Domain.Types.ServerName
+import Kernel.External.Encryption (EncTools)
+import Kernel.Prelude
+import Kernel.Storage.Esqueleto.Config
+import Kernel.Storage.Hedis (HedisCfg, HedisEnv, connectHedis, connectHedisCluster, disconnectHedis)
+import qualified Kernel.Storage.InMem as IM
+import qualified Kernel.Tools.Metrics.CoreMetrics as Metrics
+import Kernel.Tools.Slack.Internal
+import Kernel.Types.CacheFlow
+import Kernel.Types.Common
+import Kernel.Types.Flow
+import Kernel.Types.SlidingWindowLimiter
+import Kernel.Utils.App (getPodName, lookupDeploymentVersion)
+import Kernel.Utils.Dhall (FromDhall)
+import Kernel.Utils.IOLogging
+import Kernel.Utils.Servant.Client
+import Kernel.Utils.Shutdown
+import Passetto.Client
+import Passetto.Lib (mkPassettoContextAuto)
+import System.Environment
+import Tools.Metrics
+import Tools.Streaming.Kafka
+
+data AppCfg = AppCfg
+  { esqDBCfg :: EsqDBConfig,
+    esqDBReplicaCfg :: EsqDBConfig,
+    hedisCfg :: HedisCfg,
+    hedisClusterCfg :: HedisCfg,
+    hedisSecondaryClusterCfg :: HedisCfg,
+    hedisNonCriticalCfg :: HedisCfg,
+    hedisNonCriticalClusterCfg :: HedisCfg,
+    hedisMigrationStage :: Bool,
+    cutOffHedisCluster :: Bool,
+    port :: Int,
+    migrationPath :: [FilePath],
+    autoMigrate :: Bool,
+    loggerConfig :: LoggerConfig,
+    graceTerminationPeriod :: Seconds,
+    apiRateLimitOptions :: APIRateLimitOptions,
+    shareRideApiRateLimitOptions :: APIRateLimitOptions,
+    httpClientOptions :: HttpClientOptions,
+    shortDurationRetryCfg :: RetryCfg,
+    longDurationRetryCfg :: RetryCfg,
+    authTokenCacheExpiry :: Seconds,
+    internalAuthAPIKey :: Text,
+    registrationTokenExpiry :: Days,
+    registrationTokenInactivityTimeout :: Maybe Seconds,
+    updateRestrictedBppRoles :: [Text],
+    loginRateLimitOptions :: APIRateLimitOptions,
+    encTools :: EncTools,
+    exotelToken :: Text,
+    dataServers :: [DataServer],
+    merchantUserAccountNumber :: Int,
+    enableRedisLatencyLogging :: Bool,
+    enablePrometheusMetricLogging :: Bool,
+    slackToken :: Text,
+    slackChannel :: Text,
+    internalEndPointMap :: M.Map BaseUrl BaseUrl,
+    cacheConfig :: CacheConfig,
+    cacConfig :: CacConfig,
+    kafkaProducerCfg :: KafkaProducerCfg,
+    secondaryKafkaProducerCfg :: Maybe KafkaProducerCfg,
+    kvConfigUpdateFrequency :: Int,
+    passwordExpiryDays :: Maybe Int,
+    enforceStrongPasswordPolicy :: Bool,
+    inMemConfig :: InMemConfig,
+    metricsPort :: Int,
+    incomingAPIResponseTimeout :: Int,
+    is2faMandatory :: Bool,
+    twoFaEnforcementDeadlineText :: Maybe Text, -- ISO 8601 string, parsed to UTCTime at env build time
+    twoFaOtpTTLInSecs :: Maybe Int,
+    twoFaMaxOtpVerifyAttempts :: Maybe Int,
+    totpStepSize :: Maybe Int,
+    totpClockSkew :: Maybe Int,
+    twoFaIssuerName :: Text, -- Shown as the account name in Google Authenticator / Authy etc.
+    twoFaExemptRoles :: [Text] -- DashboardAccessType names whose users skip 2FA even when is2faMandatory=True
+  }
+  deriving (Generic, FromDhall)
+
+data AppEnv = AppEnv
+  { esqDBEnv :: EsqDBEnv,
+    esqDBReplicaEnv :: EsqDBEnv,
+    hedisEnv :: HedisEnv,
+    hedisNonCriticalEnv :: HedisEnv,
+    hedisNonCriticalClusterEnv :: HedisEnv,
+    hedisClusterEnv :: HedisEnv,
+    secondaryHedisClusterEnv :: Maybe HedisEnv,
+    hedisMigrationStage :: Bool,
+    cutOffHedisCluster :: Bool,
+    port :: Int,
+    loggerConfig :: LoggerConfig,
+    loggerEnv :: LoggerEnv,
+    graceTerminationPeriod :: Seconds,
+    apiRateLimitOptions :: APIRateLimitOptions,
+    shareRideApiRateLimitOptions :: APIRateLimitOptions,
+    httpClientOptions :: HttpClientOptions,
+    shortDurationRetryCfg :: RetryCfg,
+    longDurationRetryCfg :: RetryCfg,
+    authTokenCacheExpiry :: Seconds,
+    internalAuthAPIKey :: Text,
+    registrationTokenExpiry :: Days,
+    registrationTokenInactivityTimeout :: Maybe Seconds,
+    updateRestrictedBppRoles :: [Text],
+    loginRateLimitOptions :: APIRateLimitOptions,
+    encTools :: EncTools,
+    coreMetrics :: Metrics.CoreMetricsContainer,
+    isShuttingDown :: Shutdown,
+    authTokenCacheKeyPrefix :: Text,
+    exotelToken :: Text,
+    dataServers :: [DataServer],
+    merchantUserAccountNumber :: Int,
+    version :: DeploymentVersion,
+    enableRedisLatencyLogging :: Bool,
+    enablePrometheusMetricLogging :: Bool,
+    slackEnv :: SlackEnv,
+    internalEndPointHashMap :: HM.HashMap BaseUrl BaseUrl,
+    cacheConfig :: CacheConfig,
+    cacConfig :: CacConfig,
+    kafkaProducerTools :: KafkaProducerTools,
+    cacAclMap :: [(String, [(String, String)])],
+    requestId :: Maybe Text,
+    shouldLogRequestId :: Bool,
+    sessionId :: Maybe Text,
+    kafkaProducerForART :: Maybe KafkaProducerTools,
+    passettoContext :: PassettoContext,
+    passwordExpiryDays :: Maybe Int,
+    enforceStrongPasswordPolicy :: Bool,
+    inMemEnv :: InMemEnv,
+    url :: Maybe Text,
+    is2faMandatory :: Bool,
+    twoFaEnforcementDeadline :: Maybe UTCTime,
+    twoFaOtpTTLInSecs :: Maybe Int,
+    twoFaMaxOtpVerifyAttempts :: Maybe Int,
+    totpStepSize :: Maybe Int,
+    totpClockSkew :: Maybe Int,
+    twoFaIssuerName :: Text,
+    twoFaExemptRoles :: [Text]
+  }
+  deriving (Generic)
+
+buildAppEnv :: Text -> AppCfg -> IO AppEnv
+buildAppEnv authTokenCacheKeyPrefix AppCfg {..} = do
+  podName <- getPodName
+  version <- lookupDeploymentVersion
+  loggerEnv <- prepareLoggerEnv loggerConfig podName
+  passettoContext <- (uncurry mkPassettoContextAuto) encTools.service
+  esqDBEnv <- prepareEsqDBEnv esqDBCfg loggerEnv
+  esqDBReplicaEnv <- prepareEsqDBEnv esqDBReplicaCfg loggerEnv
+  coreMetrics <- registerCoreMetricsContainer
+  slackEnv <- createSlackConfig slackToken slackChannel
+  kafkaProducerTools <- buildKafkaProducerTools kafkaProducerCfg secondaryKafkaProducerCfg
+  let modifierFunc = ("dashboard:" <>)
+  let nonCriticalModifierFunc = ("dashboard:non-critical:" <>)
+  let requestId = Nothing
+  shouldLogRequestId <- fromMaybe False . (>>= readMaybe) <$> lookupEnv "SHOULD_LOG_REQUEST_ID"
+  let sessionId = Nothing
+  let kafkaProducerForART = Just kafkaProducerTools
+  hedisEnv <- connectHedis hedisCfg modifierFunc
+  hedisNonCriticalEnv <- connectHedis hedisNonCriticalCfg nonCriticalModifierFunc
+  hedisClusterEnv <-
+    if cutOffHedisCluster
+      then pure hedisEnv
+      else connectHedisCluster hedisClusterCfg modifierFunc
+  hedisNonCriticalClusterEnv <-
+    if cutOffHedisCluster
+      then pure hedisNonCriticalEnv
+      else connectHedisCluster hedisNonCriticalClusterCfg modifierFunc
+  secondaryHedisClusterEnv <-
+    Kernel.Prelude.try (connectHedisCluster hedisSecondaryClusterCfg modifierFunc) >>= \case
+      Left (e :: SomeException) -> do
+        putStrLn $ "ERROR: Failed to connect to secondary hedis cluster: " ++ show e
+        pure Nothing
+      Right env -> pure (Just env)
+  isShuttingDown <- mkShutdown
+  let internalEndPointHashMap = HM.fromList $ M.toList internalEndPointMap
+  cacAclMapRaw <- fromMaybe (error "AUTH_MAP not found in Env !!!!") <$> lookupEnv "AUTH_MAP"
+  let cacAclMap = fromMaybe (error "Unable to Parse AUTH_MAP of CAC") (readMaybe cacAclMapRaw :: Maybe [(String, [(String, String)])])
+  inMemEnv <- IM.setupInMemEnv inMemConfig (Just hedisClusterEnv)
+  let url = Nothing
+  let twoFaEnforcementDeadline = twoFaEnforcementDeadlineText >>= parseIso8601UTC
+  return $ AppEnv {..}
+  where
+    parseIso8601UTC :: Text -> Maybe UTCTime
+    parseIso8601UTC t =
+      let s = unpack t
+          tryFormats [] = Nothing
+          tryFormats (f : fs) = case parseTimeM True defaultTimeLocale f s of
+            Just v -> Just v
+            Nothing -> tryFormats fs
+       in tryFormats
+            [ "%Y-%m-%dT%H:%M:%SZ",
+              "%Y-%m-%dT%H:%M:%S%QZ",
+              "%Y-%m-%d %H:%M:%S%z"
+            ]
+
+releaseAppEnv :: AppEnv -> IO ()
+releaseAppEnv AppEnv {..} = do
+  releaseLoggerEnv loggerEnv
+  disconnectHedis hedisEnv
+  disconnectHedis hedisClusterEnv
+  maybe (pure ()) disconnectHedis secondaryHedisClusterEnv
+
+type FlowHandler = FlowHandlerR AppEnv
+
+type FlowServer api = FlowServerR AppEnv api
+
+type Flow = FlowR AppEnv

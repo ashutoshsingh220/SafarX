@@ -1,0 +1,95 @@
+imports:
+  Booking: Domain.Types.Booking
+  BookingStatus: Domain.Types.BookingStatus
+  Person: Domain.Types.Person
+  BookingAPIEntity: Domain.Types.Booking.API
+  BookingListRes: Domain.Action.UI.Booking
+  Integer: EulerHS.Prelude
+
+importPackageOverrides:
+  Domain.Types.Booking: "rider-app"
+  Domain.Types.Person: "rider-app"
+  Domain.Types.Booking.API: "rider-app"
+  Domain.Action.UI.Booking: "rider-app"
+
+module: Booking
+
+apis:
+  - POST:  # CustomerBookingStatusAPI
+      endpoint:  /ridebooking/{rideBookingId}/{customerId}
+      name: PostBookingStatus
+      auth: ApiAuthV2
+      params:
+        rideBookingId: Id Booking
+        customerId: Id Person
+      response:
+        type: BookingAPIEntity
+      migrate:
+        endpoint: RBooking RideStatusEndPoint
+        userActionType: ApiAuth APP_BACKEND CUSTOMERS BOOKING_STATUS
+  - GET: # BookingInfoAPI (search by display-id, phone, or pickup OTP)
+      endpoint: /{searchValue}/booking
+      auth: NoAuth
+      params:
+        searchValue: Text
+      query:
+        - searchType: BookingSearchType
+        - mobileCountryCode: Text
+      response:
+        type: BookingAPIEntity
+  - GET: # CustomerBookingListAPI
+      endpoint: /list/{customerId}
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+      query:
+        - limit: Integer
+        - offset: Integer
+        - onlyActive: Bool
+        - status: BookingStatus
+      response:
+        type: BookingListRes
+      migrate:
+        userActionType: ApiAuth APP_BACKEND CUSTOMERS BOOKINGLIST
+  - GET: # AgentBookingListAPI
+      endpoint: /agentL1/list
+      auth: ApiAuthV2
+      query:
+        - limit: Integer
+        - offset: Integer
+        - status: BookingStatus
+        - customerPhoneNo: Text
+        - fromDate: UTCTime
+        - toDate: UTCTime
+      response:
+        type: BookingListRes
+      helperApi:
+        - GET:
+            endpoint: /agentL1/list
+            query:
+              - agentId: Text
+              - limit: Integer
+              - offset: Integer
+              - status: BookingStatus
+              - customerPhoneNo: Text
+              - fromDate: UTCTime
+              - toDate: UTCTime
+            auth: ApiAuthV2 # TODO remove
+            response:
+              type: BookingListRes
+  - GET: # AgentBookingListAPI
+      endpoint: /agentL2/list
+      auth: ApiAuthV2
+      query:
+        - limit: Integer
+        - offset: Integer
+        - status: BookingStatus
+        - customerPhoneNo: Text
+        - fromDate: UTCTime
+        - toDate: UTCTime
+      response:
+        type: BookingListRes
+types:
+  BookingSearchType:
+    - enum: "BOOKING_ID, PHONE, OTP"
+    - derive: "HttpInstance"

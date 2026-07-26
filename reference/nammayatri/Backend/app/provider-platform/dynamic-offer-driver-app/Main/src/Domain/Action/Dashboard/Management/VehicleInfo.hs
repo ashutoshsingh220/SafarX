@@ -1,0 +1,65 @@
+module Domain.Action.Dashboard.Management.VehicleInfo
+  ( getVehicleInfoList,
+    postVehicleInfoUpdate,
+  )
+where
+
+import qualified API.Types.ProviderPlatform.Management.VehicleInfo as Common
+import qualified Data.List as DL
+import qualified Domain.Types.DocumentReminderHistory as DRH
+import qualified Domain.Types.Merchant
+import qualified Domain.Types.VehicleInfo as DVI
+import qualified Environment
+import EulerHS.Prelude hiding (id)
+import qualified Kernel.Types.APISuccess
+import qualified Kernel.Types.Beckn.Context
+import qualified Kernel.Types.Id as ID
+import Kernel.Utils.Common
+import SharedLogic.Merchant (findMerchantByShortId)
+import qualified Storage.Queries.EntityInfo as QEI
+import Storage.Queries.VehicleInfo (create, deleteAllByRcId)
+import Storage.Queries.VehicleRegistrationCertificateExtra (findLastVehicleRCWrapper)
+import Tools.Error
+
+getVehicleInfoList ::
+  ID.ShortId Domain.Types.Merchant.Merchant ->
+  Kernel.Types.Beckn.Context.City ->
+  Text ->
+  Environment.Flow Common.VehicleExtraInformation
+getVehicleInfoList merchantShortId _opCity vrcNo = do
+  merchant <- findMerchantByShortId merchantShortId
+  rc <- findLastVehicleRCWrapper vrcNo >>= fromMaybeM (VehicleDoesNotExist vrcNo)
+  entityInfos <- QEI.findAllByEntityIdAndType rc.id.getId DRH.RC merchant.id
+  let vehicleInfo = map convertEntityInfoToVehicleInfoAPIEntity entityInfos
+      mediaUploaded = any (isJust . (.mediaFileId)) entityInfos
+  pure $ Common.VehicleExtraInformation {rcNo = vrcNo, vehicleInfo = vehicleInfo, mediaUploaded = mediaUploaded}
+  where
+    convertEntityInfoToVehicleInfoAPIEntity ei =
+      Common.VehicleInfoAPIEntity
+        { questionId = ei.questionId,
+          question = ei.question,
+          answer = ei.answer,
+          mediaFileId = ei.mediaFileId
+        }
+
+postVehicleInfoUpdate ::
+  ID.ShortId Domain.Types.Merchant.Merchant ->
+  Kernel.Types.Beckn.Context.City ->
+  Common.UpdateVehicleInfoReq ->
+  Environment.Flow Kernel.Types.APISuccess.APISuccess
+postVehicleInfoUpdate _merchantShortId _opCity req = do
+  let questionIds = req.newInfo <&> (.questionId)
+  unless (length (DL.nub questionIds) == length questionIds) $
+    throwError (InvalidRequest "questionId should be unique")
+  rc <- findLastVehicleRCWrapper req.rcNo >>= fromMaybeM (VehicleDoesNotExist req.rcNo)
+  unless (null req.newInfo) $ do
+    deleteAllByRcId rc.id
+    forM_ req.newInfo $ updatedVehicleInfo rc.id
+  pure Kernel.Types.APISuccess.Success
+  where
+    updatedVehicleInfo rcId Common.VehicleInfoPostData {..} =
+      create $
+        DVI.VehicleInfo
+          { rcId = rcId,
+            ..
+          }

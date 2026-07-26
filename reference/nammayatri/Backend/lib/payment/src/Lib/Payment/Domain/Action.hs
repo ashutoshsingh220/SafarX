@@ -1,0 +1,2693 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+{-# OPTIONS_GHC -Wwarn=ambiguous-fields #-}
+{-# OPTIONS_GHC -Wwarn=incomplete-record-updates #-}
+
+module Lib.Payment.Domain.Action
+  ( PaymentStatusResp (..),
+    createOrderService,
+    orderStatusService,
+    juspayWebhookService,
+    stripeWebhookService,
+    mkStripeWebhookData,
+    StripeWebhookData (..),
+    stripePayoutWebhookService,
+    mkPayoutStripeWebhookData,
+    PayoutStripeWebhookData (..),
+    createNotificationService,
+    createExecutionService,
+    buildSDKPayload,
+    createRefundService,
+    chargePaymentIntentService,
+    createPayoutService,
+    PayoutStatusServiceReq (..),
+    mkPayoutOrderStatusReq,
+    CreatePayoutServiceReq (..),
+    mkCreatePayoutOrderReq,
+    payoutStatusService,
+    payoutStatusUpdates,
+    cancelPaymentIntentService,
+    verifyVPAService,
+    mkCreatePayoutServiceReq,
+    buildPaymentOrder,
+    upsertRefundStatus,
+    buildOrderOffer,
+    getOrderShortId,
+    getTransactionStatus,
+    offerListService,
+    invalidateOfferListCacheService,
+    invalidateOfferListCacheServiceForAllServiceTypes,
+    listDomainOffers,
+    listDomainOffersWithBasket,
+    splitOfferRespByProduct,
+    createWalletService,
+    walletPostingService,
+    walletBalanceService,
+    walletReversalService,
+    walletVerifyTxnService,
+    -- Unified payment service (replaces createPaymentIntentService + createOrderService for new callers)
+    CreatePaymentServiceReq (..),
+    CreatePaymentServiceResp (..),
+    createPaymentService,
+    -- Unified refund service (replaces initiateStripeRefundService + createRefundService for new callers)
+    RefundPaymentServiceReq (..),
+    refundPaymentService,
+    -- Unified refund status check
+    getRefundStatusService,
+    -- Legacy types kept for internal compatibility
+    CreatePaymentIntentServiceResp (..),
+    CreatePaymentIntentServiceReq (..),
+    -- Offer computation and application
+    ComputedOfferAmount (..),
+    computeOfferAmount,
+    OfferStatsInput (..),
+    applyOfferService,
+    applyOfferWithoutPaymentService,
+    updateShortId,
+  )
+where
+
+import Control.Applicative ((<|>))
+import qualified Data.Aeson as A
+import Data.List (sortBy)
+import qualified Data.Map.Strict as Map
+import Data.Ord (comparing)
+import qualified Data.Text as T
+import qualified Data.Time as Time
+import Data.Time.Clock (utctDay)
+import Data.Time.Clock.POSIX hiding (getCurrentTime)
+import Kernel.External.Encryption
+import qualified Kernel.External.Payment.Interface as Payment
+import qualified Kernel.External.Payment.Interface.Events.Types as PEInterface
+import qualified Kernel.External.Payment.Interface.Types as PInterface
+import qualified Kernel.External.Payment.Juspay.Types as Juspay
+import qualified Kernel.External.Payout.Interface as PT
+import qualified Kernel.External.Payout.Interface.Events.Types as PayoutEvents
+import qualified Kernel.External.Payout.Interface.Stripe as IPayoutStripe
+import qualified Kernel.External.Payout.Interface.Types as Payout
+import qualified Kernel.External.Payout.Juspay.Types as Juspay
+import qualified Kernel.External.Payout.Juspay.Types.Payout as JuspayPayout
+import qualified Kernel.External.Payout.Types as Payout
+import qualified Kernel.External.Wallet as Wallet
+-- import qualified Tools.Wallet as TWallet
+
+import Kernel.Prelude
+import Kernel.Storage.Esqueleto as Esq hiding (Value, isNothing)
+import qualified Kernel.Storage.Hedis as Redis
+import Kernel.Types.Error
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import qualified Kernel.Utils.Text as TU
+import qualified Lib.Finance.Core.Types as Finance
+import qualified Lib.Finance.Storage.Beam.BeamFlow as FinanceBeamFlow
+import Lib.Payment.Domain.Types.Common
+import qualified Lib.Payment.Domain.Types.Offer as DOffer
+import qualified Lib.Payment.Domain.Types.OfferStats as DOfferStats
+import qualified Lib.Payment.Domain.Types.OfflineOffer as DOfflineOffer
+import qualified Lib.Payment.Domain.Types.PaymentOrder as DOrder
+import qualified Lib.Payment.Domain.Types.PaymentOrderOffer as DPaymentOrderOffer
+import qualified Lib.Payment.Domain.Types.PaymentOrderSplit as DPaymentOrderSplit
+import qualified Lib.Payment.Domain.Types.PaymentTransaction as DTransaction
+import qualified Lib.Payment.Domain.Types.PayoutOrder as Payment
+import qualified Lib.Payment.Domain.Types.PayoutRequest as DPayoutRequest
+import qualified Lib.Payment.Domain.Types.PayoutTransaction as PT
+import qualified Lib.Payment.Domain.Types.PersonDailyOfferStats as DPersonDailyOfferStats
+import Lib.Payment.Domain.Types.Refunds (Refunds (..))
+import qualified Lib.Payment.Domain.Types.WalletRewardPosting as DWalletRewardPosting
+import Lib.Payment.PGFee (PGFeeConfig (..), PGFeeType (..), recordPGFeeLedgerEntries)
+import qualified Lib.Payment.Payout.RequestStatus as RequestStatus
+import qualified Lib.Payment.Storage.Beam.BeamFlow as PaymentBeamFlow
+import qualified Lib.Payment.Storage.HistoryQueries.PaymentTransaction as HQTransaction
+import qualified Lib.Payment.Storage.HistoryQueries.Refunds as HQRefunds
+import qualified Lib.Payment.Storage.Queries.Offer as QOffer
+import qualified Lib.Payment.Storage.Queries.OfferStats as QOfferStats
+import qualified Lib.Payment.Storage.Queries.OfflineOffer as QOfflineOffer
+import qualified Lib.Payment.Storage.Queries.PaymentOrder as QOrder
+import qualified Lib.Payment.Storage.Queries.PaymentOrderOffer as QPaymentOrderOffer
+import qualified Lib.Payment.Storage.Queries.PaymentOrderSplit as QPaymentOrderSplit
+import qualified Lib.Payment.Storage.Queries.PayoutOrder as QPayoutOrder
+import qualified Lib.Payment.Storage.Queries.PayoutRequest as QPayoutRequest
+import qualified Lib.Payment.Storage.Queries.PayoutTransaction as QPayoutTransaction
+import qualified Lib.Payment.Storage.Queries.PersonDailyOfferStats as QPersonDailyOfferStats
+import qualified Lib.Yudhishthira.Tools.Utils as LYUtils
+
+data PaymentStatusResp
+  = PaymentStatus
+      { orderId :: Id DOrder.PaymentOrder,
+        orderShortId :: ShortId DOrder.PaymentOrder,
+        status :: Payment.TransactionStatus,
+        bankErrorMessage :: Maybe Text,
+        bankErrorCode :: Maybe Text,
+        isRetried :: Maybe Bool,
+        isRetargeted :: Maybe Bool,
+        retargetLink :: Maybe Text,
+        refunds :: [Payment.RefundsData],
+        payerVpa :: Maybe Text,
+        card :: Maybe Payment.CardInfo,
+        paymentMethodType :: Maybe Text,
+        authIdCode :: Maybe Text,
+        txnUUID :: Maybe Text,
+        txnId :: Maybe Text, -- <mid>-<shortId>-<attemptNo>
+        effectAmount :: Maybe HighPrecMoney,
+        offers :: Maybe [Payment.Offer],
+        paymentServiceType :: Maybe DOrder.PaymentServiceType,
+        paymentFulfillmentStatus :: Maybe PaymentFulfillmentStatus,
+        domainEntityId :: Maybe Text,
+        amount :: HighPrecMoney,
+        validTill :: Maybe UTCTime,
+        orderLoyaltyInfo :: Maybe Payment.LoyaltyInfo
+      }
+  | MandatePaymentStatus
+      { status :: Payment.TransactionStatus,
+        mandateStatus :: Payment.MandateStatus,
+        mandateStartDate :: UTCTime,
+        mandateEndDate :: UTCTime,
+        mandateId :: Text,
+        mandateMaxAmount :: HighPrecMoney,
+        payerVpa :: Maybe Text,
+        bankErrorMessage :: Maybe Text,
+        bankErrorCode :: Maybe Text,
+        upi :: Maybe Payment.Upi
+      }
+  | PDNNotificationStatusResp
+      { eventName :: Maybe Payment.PaymentStatus,
+        notificationStatus :: Payment.NotificationStatus,
+        sourceObject :: Maybe Text,
+        sourceInfo :: Payment.SourceInfo,
+        notificationType :: Maybe Text,
+        juspayProviedId :: Text,
+        responseCode :: Maybe Text,
+        responseMessage :: Maybe Text,
+        notificationId :: Text
+      }
+  | WalletPaymentStatusResp
+      { walletStatus :: Maybe DWalletRewardPosting.WalletPostingStatus,
+        walletPostingId :: Maybe (Id DWalletRewardPosting.WalletRewardPosting)
+      }
+  deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
+
+data PayoutPaymentStatus = PayoutPaymentStatus
+  { status :: Payout.PayoutOrderStatus,
+    transferStatus :: Maybe Payout.TransferStatus,
+    orderId :: Text,
+    accountDetailsType :: Maybe Text
+  }
+  deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
+
+-- Legacy types kept for callers that still construct these
+data CreatePaymentIntentServiceResp = CreatePaymentIntentServiceResp
+  { paymentIntentId :: Text,
+    orderId :: Id DOrder.PaymentOrder
+  }
+  deriving (Show, Eq, Generic)
+
+data CreatePaymentIntentServiceReq = CreatePaymentIntentServiceReq
+  { amount :: HighPrecMoney,
+    applicationFeeAmount :: HighPrecMoney,
+    discountAmount :: HighPrecMoney,
+    offerId :: Maybe (Id DOffer.Offer),
+    currency :: Currency,
+    customer :: Payment.CustomerId,
+    paymentMethod :: Payment.PaymentMethodId,
+    receiptEmail :: Maybe Text,
+    driverAccountId :: Payment.AccountId
+  }
+  deriving (Show, Eq, Generic)
+
+type BeamFlow m r = (FinanceBeamFlow.BeamFlow m r, PaymentBeamFlow.BeamFlow m r)
+
+cancelPaymentIntentService ::
+  ( EncFlow m r,
+    BeamFlow m r,
+    HasShortDurationRetryCfg r c,
+    Finance.HasActorInfo m r
+  ) =>
+  Id MerchantOperatingCity ->
+  Id Ride ->
+  (Payment.PaymentIntentId -> m Payment.CreatePaymentIntentResp) ->
+  m ()
+cancelPaymentIntentService merchantOpCityId rideId cancelPaymentIntentCall = do
+  orders <- QOrder.findAllByDomainEntityId rideId.getId
+  let cancelableOrders =
+        filter (\o -> o.status `notElem` [Payment.CHARGED, Payment.CANCELLED]) orders
+  case cancelableOrders of
+    [] ->
+      if null orders
+        then logError $ "In cancel Payment Intent no order found for rideId : " <> rideId.getId
+        else
+          logDebug $
+            "cancelPaymentIntentService: no cancelable orders for rideId "
+              <> rideId.getId
+              <> " (all "
+              <> show (length orders)
+              <> " order(s) already CHARGED or CANCELLED)"
+    _ -> forM_ cancelableOrders $ \existingOrder -> do
+      resp <- withTryCatch "cancelPaymentIntentCall:cancelPaymentIntent" $ cancelPaymentIntentCall existingOrder.paymentServiceOrderId
+      case resp of
+        Left exec -> do
+          let err = fromException @Payment.StripeError exec
+              errorCode = err <&> toErrorCode
+              errorMessage = err >>= toMessage
+          logError $ "Error while cancelling payment intent : " <> show err <> "error code : " <> show errorCode <> "error message : " <> show errorMessage <> " orderId: " <> existingOrder.id.getId
+        Right paymentIntentResp -> do
+          transaction <- HQTransaction.findByTxnId existingOrder.paymentServiceOrderId >>= fromMaybeM (InternalError $ "No transaction found while cancel payment intent: " <> existingOrder.paymentServiceOrderId)
+          let updStatus = Payment.castToTransactionStatus paymentIntentResp.status
+          QOrder.updateStatus existingOrder.id existingOrder.paymentServiceOrderId updStatus
+          HQTransaction.updateStatusAndError merchantOpCityId transaction updStatus Nothing Nothing (Just "cancel payment intent service")
+
+chargePaymentIntentService ::
+  forall m r c.
+  ( EncFlow m r,
+    BeamFlow m r,
+    HasShortDurationRetryCfg r c,
+    Finance.HasActorInfo m r
+  ) =>
+  Id MerchantOperatingCity ->
+  DOrder.PaymentServiceType ->
+  Payment.PaymentIntentId ->
+  (Payment.PaymentIntentId -> HighPrecMoney -> HighPrecMoney -> m ()) ->
+  (Payment.PaymentIntentId -> m Payment.CreatePaymentIntentResp) ->
+  OfferStatsInput ->
+  Bool -> -- useDomainOffers
+  (PInterface.OfferApplyReq -> m PInterface.OfferApplyResp) ->
+  UTCTime ->
+  m Bool
+chargePaymentIntentService merchantOpCityId _paymentServiceType paymentIntentId capturePaymentIntentCall getPaymentIntentCall offerStatsInput useDomainOffers applyOfferCall rideCreatedAt = do
+  transaction <- HQTransaction.findByTxnId paymentIntentId >>= fromMaybeM (InternalError $ "No transaction found while charge payment intent: " <> paymentIntentId)
+  if transaction.status `notElem` [Payment.CHARGED, Payment.CANCELLED, Payment.AUTO_REFUNDED]
+    then do
+      resp <- withTryCatch "capturePaymentIntentCall:chargePaymentIntentService" $ withShortRetry $ capturePaymentIntentCall paymentIntentId transaction.amount transaction.applicationFeeAmount
+      case resp of
+        Left exec -> do
+          let err = fromException @Payment.StripeError exec
+              errorCode = err <&> toErrorCode
+              errorMessage = err >>= toMessage
+          logError $ "Error while charging payment intent: " <> show err
+          if transaction.retryCount >= 2
+            then do
+              logError "Max retries reached, cancelling payment intent"
+              HQTransaction.updateStatusAndError merchantOpCityId transaction Payment.CANCELLED errorCode errorMessage (Just "max retries reached in charge payment intent service")
+            else do
+              HQTransaction.incrementRetryCountAndError merchantOpCityId transaction errorCode errorMessage (Just "retry in charge payment intent service")
+          pure False
+        Right () -> do
+          paymentIntentResp <- getPaymentIntentCall paymentIntentId
+          let updStatus = Payment.castToTransactionStatus paymentIntentResp.status
+          HQTransaction.updateStatusAndError merchantOpCityId transaction updStatus Nothing Nothing (Just "charge payment intent service")
+          QOrder.updateStatus transaction.orderId paymentIntentId updStatus
+          applyOfferService transaction.orderId offerStatsInput useDomainOffers applyOfferCall rideCreatedAt
+          pure True
+    else pure False
+
+-- unified payment service ------------------------------------------
+
+-- | Request for the unified createPaymentService.
+data CreatePaymentServiceReq = CreatePaymentServiceReq
+  { amount :: HighPrecMoney,
+    currency :: Currency,
+    customerId :: Text,
+    customerEmail :: Text,
+    customerPhone :: Text,
+    customerFirstName :: Maybe Text,
+    customerLastName :: Maybe Text,
+    -- Stripe-specific (optional)
+    paymentMethodId :: Maybe Payment.PaymentMethodId,
+    driverAccountId :: Maybe Payment.AccountId,
+    applicationFeeAmount :: Maybe HighPrecMoney,
+    receiptEmail :: Maybe Text,
+    -- Juspay-specific (optional)
+    splitSettlementDetails :: Maybe Payment.SplitSettlementDetails,
+    createMandate :: Maybe Payment.MandateType,
+    mandateMaxAmount :: Maybe HighPrecMoney,
+    mandateFrequency :: Maybe Payment.MandateFrequency,
+    mandateStartDate :: Maybe Text,
+    mandateEndDate :: Maybe Text,
+    metadataGatewayReferenceId :: Maybe Text,
+    optionsGetUpiDeepLinks :: Maybe Bool,
+    metadataExpiryInMins :: Maybe Int,
+    basket :: Maybe [Payment.Basket],
+    paymentRules :: Maybe Payment.PaymentRules,
+    webhookUrl :: Maybe BaseUrl,
+    udf1 :: Maybe Text,
+    -- Offer-specific
+    offerId :: Maybe Text,
+    discountAmount :: Maybe HighPrecMoney,
+    payoutAmount :: Maybe HighPrecMoney,
+    -- Domain linkage
+    domainEntityId :: Maybe Text -- rideId or bookingId for later lookups
+  }
+  deriving (Show, Eq, Generic)
+
+-- | Response from the unified createPaymentService.
+data CreatePaymentServiceResp = CreatePaymentServiceResp
+  { orderId :: Id DOrder.PaymentOrder,
+    orderShortId :: ShortId DOrder.PaymentOrder,
+    paymentServiceOrderId :: Text,
+    clientSecret :: Text,
+    status :: Payment.TransactionStatus
+  }
+  deriving (Show, Eq, Generic)
+
+-- | Request for the unified refundPaymentService.
+data RefundPaymentServiceReq = RefundPaymentServiceReq
+  { orderId :: Id DOrder.PaymentOrder,
+    merchantOpCityId :: Id MerchantOperatingCity,
+    -- Stripe-specific (optional)
+    driverAccountId :: Maybe Payment.AccountId,
+    email :: Maybe Text,
+    amount :: Maybe HighPrecMoney,
+    retryIfFailed :: Bool,
+    -- Nothing = fresh attempt; Just rid = retry that specific Refunds row (only when FAILED).
+    refundsId :: Maybe (Id Refunds)
+  }
+  deriving (Show, Eq, Generic)
+
+-- | Unified payment creation service. Routes internally based on the callback
+--   provided by the caller. Replaces both createOrderService and createPaymentIntentService.
+--
+--   Generates orderId and orderShortId internally.
+--   Creates PaymentOrder + PaymentTransaction records.
+createPaymentService ::
+  forall m r c.
+  ( EncFlow m r,
+    BeamFlow m r,
+    HasShortDurationRetryCfg r c,
+    Finance.HasActorInfo m r
+  ) =>
+  Id Merchant ->
+  Maybe (Id MerchantOperatingCity) ->
+  Id Person ->
+  Maybe (Id DOrder.PaymentOrder) -> -- existing order ID for retry
+  Maybe Seconds -> -- payment order validity
+  DOrder.PaymentServiceType ->
+  CreatePaymentServiceReq ->
+  (PInterface.CreatePaymentReq -> m PInterface.CreatePaymentResp) ->
+  (Payment.PaymentIntentId -> m PInterface.CreatePaymentResp) -> -- cancel callback for retry
+  Maybe (Payment.PaymentIntentId -> HighPrecMoney -> HighPrecMoney -> m ()) -> -- incremental auth callback (optional)
+  m (Maybe CreatePaymentServiceResp)
+createPaymentService merchantId mbMerchantOpCityId personId mbExistingOrderId mbValidity paymentServiceType req createPaymentCall cancelPaymentCall mbIncrementAuthCall = do
+  mbExistingOrder <- case mbExistingOrderId of
+    Just existingId -> QOrder.findById existingId
+    Nothing -> pure Nothing
+  case mbExistingOrder of
+    Nothing -> createNewPayment Nothing
+    Just existingOrder -> do
+      orderExpired <- checkOrderExpired existingOrder
+      if orderExpired
+        then do
+          QOrder.updateStatusToExpired existingOrder.id
+          pure Nothing
+        else handleExistingOrder existingOrder
+  where
+    isInProgress status = status `elem` [Payment.NEW, Payment.PENDING_VBV, Payment.STARTED, Payment.AUTHORIZING]
+
+    roundToCents :: HighPrecMoney -> Integer
+    roundToCents = round . (* 100)
+
+    handleExistingOrder :: DOrder.PaymentOrder -> m (Maybe CreatePaymentServiceResp)
+    handleExistingOrder existingOrder = do
+      transactions <- HQTransaction.findAllByOrderId existingOrder.id
+      let mbInProgressTxn = find (isInProgress . (.status)) transactions
+      case mbInProgressTxn of
+        Nothing -> createNewPayment (Just existingOrder) -- all previous intents charged/cancelled, create new
+        Just existingTxn -> do
+          let paymentIntentId = fromMaybe existingOrder.paymentServiceOrderId existingTxn.txnId
+          if roundToCents req.amount > roundToCents existingTxn.amount
+            then do
+              -- Amount increased: try incremental authorization first, fall back to cancel+create
+              case mbIncrementAuthCall of
+                Just incrementAuthCall -> do
+                  let newAppFee = fromMaybe 0 req.applicationFeeAmount
+                  incrementResult <- withTryCatch "incrementAuth:handleExistingOrder" $ withShortRetry $ incrementAuthCall paymentIntentId req.amount newAppFee
+                  case incrementResult of
+                    Right _ -> do
+                      logInfo $ "Incremental authorization succeeded for: " <> paymentIntentId <> "; new amount: " <> show req.amount
+                      updateExistingTransaction paymentIntentId existingOrder existingTxn
+                    Left err -> do
+                      logWarning $ "Incremental authorization failed for: " <> paymentIntentId <> "; error: " <> show err <> "; falling back to cancel+create"
+                      cancelOldTransaction existingTxn paymentIntentId
+                      createNewPayment (Just existingOrder)
+                Nothing -> do
+                  logInfo $ "No incremental auth callback, cancelling old payment intent: " <> paymentIntentId <> " and creating new one"
+                  cancelOldTransaction existingTxn paymentIntentId
+                  createNewPayment (Just existingOrder)
+            else do
+              -- Amount same or decreased: update existing transaction
+              updateExistingTransaction paymentIntentId existingOrder existingTxn
+
+    cancelOldTransaction :: DTransaction.PaymentTransaction -> Payment.PaymentIntentId -> m ()
+    cancelOldTransaction transaction paymentIntentId = do
+      let mbMocId = cast <$> mbMerchantOpCityId
+      resp <- withTryCatch "cancelPaymentCall:cancelOldTransaction" $ withShortRetry $ cancelPaymentCall paymentIntentId
+      (errorCode', errorMessage') <- case resp of
+        Left exec -> do
+          let err = fromException @Payment.StripeError exec
+              errorCode = err <&> toErrorCode
+              errorMessage = err >>= toMessage
+          logError $ "Error cancelling payment intent: " <> paymentIntentId <> "; err: " <> show errorCode
+          pure (errorCode, errorMessage)
+        Right paymentIntentResp -> do
+          unless (paymentIntentResp.status == Payment.CANCELLED) $
+            logError $ "Unexpected status after cancel: " <> show paymentIntentResp.status <> "; paymentIntentId: " <> paymentIntentId
+          pure (Nothing, Nothing)
+      whenJust mbMocId $ \mocId ->
+        HQTransaction.updateStatusAndError mocId transaction Payment.CANCELLED errorCode' errorMessage' (Just "cancel old transaction in createPaymentService")
+
+    updateExistingTransaction :: Payment.PaymentIntentId -> DOrder.PaymentOrder -> DTransaction.PaymentTransaction -> m (Maybe CreatePaymentServiceResp)
+    updateExistingTransaction paymentIntentId existingOrder existingTxn = do
+      let newAmount = req.amount
+          newAppFee = fromMaybe 0 req.applicationFeeAmount
+      when (newAmount /= existingOrder.amount || paymentIntentId /= existingOrder.paymentServiceOrderId) $ do
+        logInfo $ "Updating order amount: " <> paymentIntentId <> "; amount: " <> show newAmount
+        QOrder.updateAmountAndPaymentIntentId existingOrder.id newAmount paymentIntentId
+      when (newAmount /= existingTxn.amount || newAppFee /= existingTxn.applicationFeeAmount) $ do
+        logInfo $ "Updating transaction amount: " <> paymentIntentId <> "; amount: " <> show newAmount
+        whenJust (cast <$> mbMerchantOpCityId) $ \mocId ->
+          HQTransaction.updateAmount mocId existingTxn newAmount newAppFee (Just "update existing transaction in createPaymentService")
+      pure $
+        Just
+          CreatePaymentServiceResp
+            { orderId = existingOrder.id,
+              orderShortId = existingOrder.shortId,
+              paymentServiceOrderId = existingOrder.paymentServiceOrderId,
+              clientSecret = "",
+              status = existingOrder.status
+            }
+
+    createNewPayment :: Maybe DOrder.PaymentOrder -> m (Maybe CreatePaymentServiceResp)
+    createNewPayment mbExistingOrder = do
+      (newOrderId, newOrderShortId) <- case mbExistingOrder of
+        Just existingOrder -> pure (existingOrder.id, existingOrder.shortId)
+        Nothing -> (,) <$> (Id <$> generateGUID) <*> generateShortId
+      let paymentReq =
+            PInterface.CreatePaymentReq
+              { amount = req.amount,
+                currency = req.currency,
+                customerId = req.customerId,
+                customerEmail = req.customerEmail,
+                customerPhone = req.customerPhone,
+                customerFirstName = req.customerFirstName,
+                customerLastName = req.customerLastName,
+                orderShortId = newOrderShortId.getShortId,
+                paymentMethodId = req.paymentMethodId,
+                driverAccountId = req.driverAccountId,
+                applicationFeeAmount = req.applicationFeeAmount,
+                receiptEmail = req.receiptEmail,
+                splitSettlementDetails = req.splitSettlementDetails,
+                createMandate = req.createMandate,
+                mandateMaxAmount = req.mandateMaxAmount,
+                PInterface.mandateFrequency = req.mandateFrequency,
+                mandateStartDate = req.mandateStartDate,
+                mandateEndDate = req.mandateEndDate,
+                metadataGatewayReferenceId = req.metadataGatewayReferenceId,
+                optionsGetUpiDeepLinks = req.optionsGetUpiDeepLinks,
+                metadataExpiryInMins = req.metadataExpiryInMins,
+                basket = req.basket,
+                paymentRules = req.paymentRules,
+                autoRefundPostSuccess = Nothing,
+                webhookUrl = req.webhookUrl,
+                paymentFilter = Nothing,
+                udf1 = req.udf1
+              }
+      resp <- createPaymentCall paymentReq
+      now <- getCurrentTime
+      clientAuthToken <- encrypt resp.clientSecret
+      let validTill = flip addUTCTime now . secondsToNominalDiffTime <$> mbValidity
+          clientAuthTokenExpiry = fromMaybe (Time.UTCTime (Time.fromGregorian 2099 1 1) 0) validTill
+      let paymentOrder =
+            DOrder.PaymentOrder
+              { id = newOrderId,
+                shortId = newOrderShortId,
+                paymentServiceOrderId = resp.paymentServiceOrderId,
+                requestId = Nothing,
+                service = Nothing,
+                clientId = Nothing,
+                description = Nothing,
+                returnUrl = Nothing,
+                action = Nothing,
+                personId = personId,
+                merchantId = merchantId,
+                merchantOperatingCityId = cast <$> mbMerchantOpCityId,
+                entityName = Nothing,
+                paymentMerchantId = Nothing,
+                amount = req.amount,
+                currency = req.currency,
+                status = resp.status,
+                paymentLinks = Payment.PaymentLinks {web = Nothing, iframe = Nothing, mobile = Nothing, deep_link = Nothing},
+                clientAuthToken = Just clientAuthToken,
+                clientAuthTokenExpiry = Just clientAuthTokenExpiry,
+                getUpiDeepLinksOption = Nothing,
+                environment = Nothing,
+                createMandate = Nothing,
+                mandateMaxAmount = Nothing,
+                mandateStartDate = Nothing,
+                mandateEndDate = Nothing,
+                bankErrorMessage = Nothing,
+                bankErrorCode = Nothing,
+                isRetried = False,
+                isRetargeted = False,
+                retargetLink = Nothing,
+                serviceProvider = Payment.Stripe,
+                paymentServiceType = Just paymentServiceType,
+                paymentFulfillmentStatus = Just FulfillmentPending,
+                sdkPayloadDump = Nothing,
+                domainEntityId = req.domainEntityId,
+                domainTransactionId = Nothing,
+                isMockPayment = Just False,
+                effectAmount = Nothing,
+                pgBaseFee = Nothing,
+                pgGst = Nothing,
+                validTill = validTill,
+                groupId = Nothing,
+                vpa = Nothing,
+                paytmTid = Nothing,
+                createdAt = now,
+                updatedAt = now
+              }
+      case mbExistingOrder of
+        Just _ -> do
+          QOrder.updateAmountAndPaymentIntentId newOrderId req.amount resp.paymentServiceOrderId
+          logInfo $ "Updated existing order with new payment intent: " <> newOrderId.getId <> "; paymentServiceOrderId: " <> resp.paymentServiceOrderId
+        Nothing -> do
+          QOrder.create paymentOrder
+          logInfo $ "Created new payment order: " <> newOrderId.getId <> "; paymentServiceOrderId: " <> resp.paymentServiceOrderId
+      whenJust req.offerId $ \_ ->
+        void $ withTryCatch "buildPaymentOffer:createPaymentService" $ buildPaymentOffer newOrderId (Id <$> req.offerId) req.discountAmount req.payoutAmount merchantId mbMerchantOpCityId
+      -- Create transaction record for the new payment intent
+      whenJust (cast <$> mbMerchantOpCityId) $ \mocId -> do
+        transaction <- buildPaymentTransaction paymentOrder (mkDefaultOrderTxnFromResp resp) Nothing
+        HQTransaction.create mocId transaction (Just "createPaymentService new transaction")
+      pure $
+        Just
+          CreatePaymentServiceResp
+            { orderId = newOrderId,
+              orderShortId = newOrderShortId,
+              paymentServiceOrderId = resp.paymentServiceOrderId,
+              clientSecret = resp.clientSecret,
+              status = resp.status
+            }
+
+    checkOrderExpired :: DOrder.PaymentOrder -> m Bool
+    checkOrderExpired order = do
+      case order.clientAuthTokenExpiry of
+        Nothing -> pure True
+        Just expiry -> do
+          now <- getCurrentTime
+          let buffer = secondsToNominalDiffTime 150
+          pure (order.status `notElem` [Payment.CHARGED, Payment.AUTO_REFUNDED] && expiry < addUTCTime buffer now)
+
+    mkDefaultOrderTxnFromResp :: PInterface.CreatePaymentResp -> OrderTxn
+    mkDefaultOrderTxnFromResp gatewayResp =
+      let baseTxn = mkDefaultStripeOrderTxn gatewayResp.status req.amount req.currency
+       in baseTxn
+            { transactionUUID = Just gatewayResp.paymentServiceOrderId,
+              txnId = Just gatewayResp.paymentServiceOrderId,
+              applicationFeeAmount = req.applicationFeeAmount
+            }
+
+-- | Unified refund service. Replaces both createRefundService and initiateStripeRefundService.
+-- Caller must enforce any refund_request-level invariants (e.g. single-in-flight) before calling;
+-- this service only discriminates Stripe attempts via req.refundsId.
+refundPaymentService ::
+  forall m r.
+  ( EncFlow m r,
+    BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  RefundPaymentServiceReq ->
+  (PInterface.RefundPaymentReq -> m PInterface.RefundPaymentResp) ->
+  m (Maybe PInterface.RefundPaymentResp)
+refundPaymentService req refundCall = do
+  order <- QOrder.findById req.orderId >>= fromMaybeM (PaymentOrderDoesNotExist req.orderId.getId)
+  unless (order.status == Payment.CHARGED) $
+    throwError (InvalidRequest $ "Order status for refund should be CHARGED, but got: " <> show order.status)
+  Redis.whenWithLockRedisAndReturnValue (refundProccessingKey order.shortId.getShortId) 60 (processRefund order) >>= \case
+    Left _ -> return Nothing
+    Right response -> return response
+  where
+    processRefund :: DOrder.PaymentOrder -> m (Maybe PInterface.RefundPaymentResp)
+    processRefund order = do
+      mbExistingForThisAttempt <- case req.refundsId of
+        Nothing -> pure Nothing
+        Just rid -> HQRefunds.findById rid
+      case mbExistingForThisAttempt of
+        Nothing -> initiateNewRefund order
+        Just thisRefunds ->
+          -- Skip retry when Stripe accepted the prior attempt: the FAILED status is then a DB-side
+          -- anomaly (lost race with Stripe's response) and a fresh call would double-charge. Webhook
+          -- will reconcile.
+          if req.retryIfFailed
+            && thisRefunds.status == PInterface.REFUND_FAILURE
+            && isNothing thisRefunds.idAssignedByServiceProvider
+            then initiateNewRefund order
+            else pure Nothing
+    initiateNewRefund :: DOrder.PaymentOrder -> m (Maybe PInterface.RefundPaymentResp)
+    initiateNewRefund order = do
+      let refundAmount = fromMaybe order.amount req.amount
+      refundId <- generateGUID
+      refundsEntry <- mkRefundsEntry order.merchantId refundId order.shortId refundAmount PInterface.REFUND_PENDING
+      let mbAction = Just "unified refund payment service"
+      HQRefunds.create req.merchantOpCityId refundsEntry mbAction
+      let refundReq =
+            PInterface.RefundPaymentReq
+              { orderId = order.id.getId,
+                orderShortId = order.shortId.getShortId,
+                refundsId = refundId,
+                amount = req.amount,
+                paymentIntentId = Just order.paymentServiceOrderId,
+                driverAccountId = req.driverAccountId,
+                email = req.email,
+                splitSettlementDetails = Nothing -- TODO: build from PaymentOrderSplit if needed
+              }
+      resp <- withTryCatch "refundCall:refundPaymentService" (refundCall refundReq)
+      case resp of
+        Right response -> do
+          now <- getCurrentTime
+          let newCompletedAt = calculateCompletedAt response.status now
+          HQRefunds.updateRefundsEntryByStripeResponse req.merchantOpCityId (Just response.refundId) response.errorCode response.status response.reference response.referenceType (Just True) newCompletedAt response.amount refundsEntry mbAction
+          -- Return the internal refunds.id (not Stripe's) so the caller links refund_request.refunds_id —
+          -- the same id the Stripe webhook looks up via metadata.
+          pure $ Just response {PInterface.refundId = refundId}
+        Left exec -> do
+          -- surface the gateway's rejection reason (persisted on the row + returned to the caller)
+          let stripeErr = fromException @Payment.StripeError exec
+              gwErrorCode = stripeErr <&> toErrorCode
+              gwErrorMessage = (stripeErr >>= toMessage) <|> Just (T.pack (show exec))
+          logError $ "Refund API Call Failure with Error: " <> show exec
+          HQRefunds.updateIsApiCallSuccess req.merchantOpCityId (Just False) refundsEntry mbAction
+          -- Flip status to REFUND_FAILURE so retry works (else the row is stuck at REFUND_PENDING forever).
+          HQRefunds.updateRefundsEntryByResponse req.merchantOpCityId Nothing Nothing gwErrorMessage gwErrorCode PInterface.REFUND_FAILURE Nothing Nothing Nothing refundsEntry mbAction
+          -- Surface the failed attempt so the caller links refund_request.refunds_id — the
+          -- dashboard reads status/errorCode off that link, and a retry targets this row via it.
+          pure $
+            Just
+              PInterface.RefundPaymentResp
+                { refundId = refundId,
+                  status = PInterface.REFUND_FAILURE,
+                  amount = Nothing,
+                  errorCode = gwErrorCode,
+                  errorMessage = gwErrorMessage,
+                  reference = Nothing,
+                  referenceType = Nothing
+                }
+
+-- | Refresh status from the payment gateway for a specific Stripe attempt.
+--   Caller passes the Refunds row id; Nothing means no attempt yet → no refresh.
+getRefundStatusService ::
+  forall m r.
+  ( EncFlow m r,
+    BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id DOrder.PaymentOrder ->
+  Maybe (Id Refunds) ->
+  Id MerchantOperatingCity ->
+  (Payment.GetRefundReq -> m PInterface.RefundPaymentResp) ->
+  m (Maybe PInterface.RefundPaymentResp)
+getRefundStatusService orderId mbRefundsId merchantOpCityId getRefundStatusCall = do
+  case mbRefundsId of
+    Nothing -> pure Nothing
+    Just rid -> do
+      _ <- QOrder.findById orderId >>= fromMaybeM (PaymentOrderDoesNotExist orderId.getId)
+      HQRefunds.findById rid >>= \case
+        Nothing -> pure Nothing
+        Just refund -> case refund.idAssignedByServiceProvider of
+          Nothing -> pure $ Just $ mkRespFromRefund refund
+          Just serviceProviderId -> do
+            let getReq = Payment.GetRefundReq {id = Payment.RefundId serviceProviderId, driverAccountId = ""}
+            resp <- withTryCatch "getRefundStatusCall" (getRefundStatusCall getReq)
+            case resp of
+              Right result -> do
+                now <- getCurrentTime
+                let newCompletedAt = calculateCompletedAt result.status now
+                HQRefunds.updateRefundsEntryByStripeResponse merchantOpCityId (Just serviceProviderId) result.errorCode result.status (result.reference <|> refund.arn) (result.referenceType <|> refund.referenceType) refund.isApiCallSuccess newCompletedAt result.amount refund (Just "get refund status service")
+                -- Return the internal refunds.id (matches refundPaymentService).
+                pure $ Just result {PInterface.refundId = refund.id.getId}
+              Left err -> do
+                logError $ "Get refund status failed: " <> show err
+                pure $ Just $ mkRespFromRefund refund
+  where
+    mkRespFromRefund refund =
+      PInterface.RefundPaymentResp
+        { refundId = refund.id.getId,
+          status = refund.status,
+          amount = refund.actualRefundedAmount,
+          errorCode = refund.errorCode,
+          errorMessage = refund.errorMessage,
+          reference = refund.arn,
+          referenceType = refund.referenceType
+        }
+
+-- create order -----------------------------------------------------
+
+updateShortId :: Maybe DOrder.PaymentServiceType -> Bool -> Text -> Text
+updateShortId mbPaymentServiceType isTestTransaction shortId =
+  let shortId' = if mbPaymentServiceType == Just DOrder.FRFSPassPurchase then "P-" <> shortId else shortId
+      shortId'' = if isTestTransaction then "test-" <> shortId' else shortId'
+   in shortId''
+
+createOrderService ::
+  ( EncFlow m r,
+    BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id Merchant ->
+  Maybe (Id MerchantOperatingCity) ->
+  Id Person ->
+  Maybe Seconds ->
+  Maybe EntityName ->
+  DOrder.PaymentServiceType ->
+  Bool ->
+  Payment.CreateOrderReq ->
+  (Payment.CreateOrderReq -> m Payment.CreateOrderResp) ->
+  Maybe (Wallet.CreateWalletReq -> m Wallet.CreateWalletResp) ->
+  Bool ->
+  Maybe Text ->
+  m (Maybe Payment.CreateOrderResp)
+createOrderService merchantId mbMerchantOpCityId personId mbPaymentOrderValidity mbEntityName paymentServiceType isTestTransaction createOrderRequest createOrderCall _mbCreateWalletCall _isMockPayment mbGroupId = do
+  logInfo $ "CreateOrderService: "
+  let updatedOrderShortId = updateShortId (Just paymentServiceType) isTestTransaction createOrderRequest.orderShortId
+      createOrderReq = (createOrderRequest :: Payment.CreateOrderReq) {Payment.orderShortId = updatedOrderShortId}
+  mbExistingOrder <- QOrder.findById (Id createOrderReq.orderId)
+  case mbExistingOrder of
+    Nothing -> do
+      createOrderResp <- createOrderCall createOrderReq -- api call
+      paymentOrder <- buildPaymentOrder merchantId mbMerchantOpCityId personId mbPaymentOrderValidity mbEntityName paymentServiceType createOrderReq createOrderResp _isMockPayment mbGroupId Nothing
+      QOrder.create paymentOrder
+      return $ Just createOrderResp
+    Just existingOrder -> do
+      isOrderExpired <- maybe (pure True) (checkIfExpired existingOrder) existingOrder.clientAuthTokenExpiry
+      if isOrderExpired
+        then do
+          QOrder.updateStatusToExpired existingOrder.id
+          return Nothing
+        else do
+          sdkPayload <- buildSDKPayload createOrderReq existingOrder
+          case sdkPayload of
+            Just sdk_payload -> do
+              return $
+                Just $
+                  Payment.CreateOrderResp
+                    { status = existingOrder.status,
+                      id = existingOrder.paymentServiceOrderId,
+                      order_id = existingOrder.shortId.getShortId,
+                      payment_links = Just existingOrder.paymentLinks,
+                      sdk_payload,
+                      sdk_payload_json = existingOrder.sdkPayloadDump
+                    }
+            Nothing -> return Nothing
+  where
+    checkIfExpired order expiry = do
+      now <- getCurrentTime
+      let buffer = secondsToNominalDiffTime 150 -- 2.5 mins of buffer
+      return (order.status `notElem` [Payment.CHARGED, Payment.AUTO_REFUNDED] && expiry < addUTCTime buffer now)
+
+buildSDKPayload :: EncFlow m r => Payment.CreateOrderReq -> DOrder.PaymentOrder -> m (Maybe Juspay.SDKPayload)
+buildSDKPayload req order = do
+  payload <- buildSDKPayloadDetails req order
+  case payload of
+    Just sdkPayload -> do
+      return $
+        Just
+          Juspay.SDKPayload
+            { requestId = order.requestId,
+              service = order.service,
+              payload = sdkPayload
+            }
+    Nothing -> return Nothing
+
+buildSDKPayloadDetails :: EncFlow m r => Payment.CreateOrderReq -> DOrder.PaymentOrder -> m (Maybe Juspay.SDKPayloadDetails)
+buildSDKPayloadDetails req order = do
+  logDebug $ "CreateOrderReq called for order: " <> show req
+  case (order.clientAuthToken, order.clientAuthTokenExpiry) of
+    (Just token, Just clientAuthTokenExpiry) -> do
+      clientAuthToken <- decrypt token
+      return $
+        Just
+          Juspay.SDKPayloadDetails
+            { clientId = order.clientId,
+              amount = show order.amount,
+              merchantId = order.paymentMerchantId,
+              clientAuthToken,
+              clientAuthTokenExpiry = clientAuthTokenExpiry,
+              environment = order.environment,
+              options_getUpiDeepLinks = order.getUpiDeepLinksOption,
+              lastName = req.customerLastName,
+              action = order.action,
+              customerId = Just order.personId.getId,
+              returnUrl = order.returnUrl,
+              currency = order.currency,
+              firstName = req.customerFirstName,
+              customerPhone = Just req.customerPhone,
+              customerEmail = Just req.customerEmail,
+              orderId = Just order.shortId.getShortId,
+              description = order.description,
+              createMandate = order.createMandate,
+              mandateMaxAmount = show <$> order.mandateMaxAmount,
+              mandateStartDate = show . utcTimeToPOSIXSeconds <$> (order.mandateStartDate),
+              mandateEndDate = show . utcTimeToPOSIXSeconds <$> order.mandateEndDate,
+              basket = Just $ TU.encodeToText req.basket
+            }
+    (_, _) -> return Nothing
+
+buildPaymentOrder ::
+  ( EncFlow m r,
+    BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id Merchant ->
+  Maybe (Id MerchantOperatingCity) ->
+  Id Person ->
+  Maybe Seconds ->
+  Maybe EntityName ->
+  DOrder.PaymentServiceType ->
+  Payment.CreateOrderReq ->
+  Payment.CreateOrderResp ->
+  Bool ->
+  Maybe Text ->
+  Maybe PGFeeConfig -> -- fee config from JuspayConfig (if configured)
+  m DOrder.PaymentOrder
+buildPaymentOrder merchantId mbMerchantOpCityId personId mbPaymentOrderValidity mbEntityName paymentServiceType req resp isMockPayment mbGroupId mbPGFeeConfig = do
+  now <- getCurrentTime
+  clientAuthToken <- encrypt resp.sdk_payload.payload.clientAuthToken
+  -- Record PG fee ledger entries if configured
+  mbFeeResult <- case mbPGFeeConfig of
+    Just feeConfig -> do
+      let merchantOpCityId = maybe (merchantId.getId) getId mbMerchantOpCityId
+      result <- recordPGFeeLedgerEntries PGPayment feeConfig merchantId.getId merchantOpCityId req.orderId
+      case result of
+        Right feeResult -> pure $ Just feeResult
+        Left _err -> pure Nothing
+    Nothing -> pure Nothing
+  let paymentOrderValidTill = mbPaymentOrderValidity <&> (\validity -> addUTCTime (intToNominalDiffTime validity.getSeconds) now)
+      mkPaymentOrder =
+        DOrder.PaymentOrder
+          { id = Id req.orderId,
+            shortId = ShortId req.orderShortId,
+            paymentServiceOrderId = resp.id,
+            requestId = resp.sdk_payload.requestId,
+            service = resp.sdk_payload.service,
+            clientId = resp.sdk_payload.payload.clientId,
+            description = resp.sdk_payload.payload.description,
+            returnUrl = resp.sdk_payload.payload.returnUrl,
+            action = resp.sdk_payload.payload.action,
+            personId,
+            merchantId,
+            entityName = mbEntityName,
+            paymentServiceType = Just paymentServiceType,
+            paymentMerchantId = resp.sdk_payload.payload.merchantId,
+            amount = req.amount,
+            currency = resp.sdk_payload.payload.currency,
+            status = resp.status,
+            paymentLinks = fromMaybe (Payment.PaymentLinks Nothing Nothing Nothing Nothing) resp.payment_links,
+            clientAuthToken = Just clientAuthToken,
+            clientAuthTokenExpiry = Just resp.sdk_payload.payload.clientAuthTokenExpiry,
+            getUpiDeepLinksOption = resp.sdk_payload.payload.options_getUpiDeepLinks,
+            environment = resp.sdk_payload.payload.environment,
+            createMandate = resp.sdk_payload.payload.createMandate,
+            mandateMaxAmount = read . T.unpack <$> resp.sdk_payload.payload.mandateMaxAmount,
+            mandateStartDate = posixSecondsToUTCTime . read . T.unpack <$> (resp.sdk_payload.payload.mandateStartDate),
+            mandateEndDate = posixSecondsToUTCTime . read . T.unpack <$> resp.sdk_payload.payload.mandateEndDate,
+            serviceProvider = Payment.Juspay, -- fix it later
+            bankErrorCode = Nothing,
+            bankErrorMessage = Nothing,
+            isRetried = False,
+            isRetargeted = False,
+            retargetLink = Nothing,
+            sdkPayloadDump = resp.sdk_payload_json,
+            validTill = paymentOrderValidTill,
+            createdAt = now,
+            updatedAt = now,
+            merchantOperatingCityId = mbMerchantOpCityId,
+            paymentFulfillmentStatus = Just FulfillmentPending,
+            domainEntityId = Nothing,
+            domainTransactionId = Nothing,
+            effectAmount = Nothing,
+            isMockPayment = Just isMockPayment,
+            paytmTid = Nothing,
+            groupId = mbGroupId,
+            vpa = Nothing,
+            pgBaseFee = (.pgBaseFee) <$> mbFeeResult,
+            pgGst = (.pgGst) <$> mbFeeResult
+          }
+  buildPaymentSplit req.orderId mkPaymentOrder req.splitSettlementDetails merchantId mbMerchantOpCityId
+  pure mkPaymentOrder
+
+mkPaymentOrderSplit :: (EncFlow m r, PaymentBeamFlow.BeamFlow m r) => Text -> HighPrecMoney -> PInterface.MBY -> HighPrecMoney -> Maybe Text -> Text -> Id Merchant -> Maybe (Id MerchantOperatingCity) -> m DPaymentOrderSplit.PaymentOrderSplit
+mkPaymentOrderSplit vendorId amount mdrBorneBy merchantCommission transactionId paymentOrderId merchantId merchantOperatingCityId = do
+  id <- generateGUID
+  now <- getCurrentTime
+  return $
+    DPaymentOrderSplit.PaymentOrderSplit
+      { id = id,
+        vendorId = vendorId,
+        transactionId = transactionId,
+        merchantId = merchantId.getId,
+        amount = mkPrice Nothing amount,
+        mdrBorneBy = mdrBorneBy,
+        merchantCommission = mkPrice Nothing merchantCommission,
+        merchantOperatingCityId = merchantOperatingCityId <&> (.getId),
+        paymentOrderId = Id paymentOrderId,
+        createdAt = now,
+        updatedAt = now
+      }
+
+buildPaymentSplit :: (EncFlow m r, PaymentBeamFlow.BeamFlow m r) => Text -> DOrder.PaymentOrder -> Maybe PInterface.SplitSettlementDetails -> Id Merchant -> Maybe (Id MerchantOperatingCity) -> m ()
+buildPaymentSplit paymentOrderId paymentOrder mbSplitSettlementDetails merchantId merchantOperatingCityId = do
+  case mbSplitSettlementDetails of
+    Just (PInterface.AmountBased splitSettlementDetails) ->
+      createSplits splitSettlementDetails.marketplace.amount splitSettlementDetails.mdrBorneBy splitSettlementDetails.vendor.split
+    Just (PInterface.PercentageBased splitSettlementDetails) -> do
+      let totalAmount = paymentOrder.amount
+          marketplaceAmount = (realToFrac splitSettlementDetails.marketplace.amountPercentage / 100.0) * totalAmount
+          convertedVendorSplits =
+            map
+              ( \v ->
+                  PInterface.Split
+                    { amount = (realToFrac v.amountPercentage / 100.0) * totalAmount,
+                      merchantCommission = (realToFrac v.merchantCommissionPercentage / 100.0) * totalAmount,
+                      subMid = v.subMid,
+                      uniqueSplitId = v.uniqueSplitId
+                    }
+              )
+              splitSettlementDetails.vendor.split
+      createSplits marketplaceAmount splitSettlementDetails.mdrBorneBy convertedVendorSplits
+    Nothing -> pure ()
+  where
+    createSplits marketplaceAmount mdrBorneBy vendorSplits = do
+      marketPlaceSplit <- mkPaymentOrderSplit "marketPlace" marketplaceAmount mdrBorneBy 0 Nothing paymentOrderId merchantId merchantOperatingCityId
+      vendorSplitEntries <- mapM (\vendor -> mkPaymentOrderSplit vendor.subMid vendor.amount mdrBorneBy vendor.merchantCommission (Just vendor.uniqueSplitId) paymentOrderId merchantId merchantOperatingCityId) vendorSplits
+      let splits = marketPlaceSplit : vendorSplitEntries
+      QPaymentOrderSplit.createMany splits
+
+-- offer list with caching ------------------------------------------------
+
+offerListService ::
+  (MonadFlow m, CacheFlow m r) =>
+  Text ->
+  Text ->
+  DOrder.PaymentServiceType ->
+  Int ->
+  Bool ->
+  (PInterface.OfferListReq -> m PInterface.OfferListResp) ->
+  PInterface.OfferListReq ->
+  m PInterface.OfferListResp
+offerListService customerId version paymentServiceType ttlSeconds cacheOffers apiCall req = do
+  let key = makeOfferListCacheKey version paymentServiceType customerId
+  if cacheOffers
+    then do
+      Redis.withCrossAppRedis (Redis.get key) >>= \case
+        Just cached -> return cached
+        Nothing -> do
+          resp <- apiCall req
+          Redis.withCrossAppRedis $ Redis.setExp key resp ttlSeconds
+          return resp
+    else do
+      resp <- apiCall req
+      return resp
+
+invalidateOfferListCacheService ::
+  (MonadFlow m, CacheFlow m r) =>
+  Text ->
+  Text ->
+  DOrder.PaymentServiceType ->
+  m ()
+invalidateOfferListCacheService customerId version paymentServiceType = do
+  let key = makeOfferListCacheKey version paymentServiceType customerId
+  Redis.withCrossAppRedis $ Redis.del key
+
+invalidateOfferListCacheServiceForAllServiceTypes ::
+  (MonadFlow m, CacheFlow m r) =>
+  Text ->
+  Text ->
+  m ()
+invalidateOfferListCacheServiceForAllServiceTypes customerId version =
+  mapM_ (invalidateOfferListCacheService customerId version) [minBound .. maxBound]
+
+makeOfferListCacheKey :: Text -> DOrder.PaymentServiceType -> Text -> Text
+makeOfferListCacheKey version serviceType customerId =
+  "OfferList:CId" <> customerId <> ":V-" <> version <> ":ST-" <> show serviceType
+
+-- domain offer functions --------------------------------------------------
+
+listDomainOffers ::
+  (EncFlow m r, PaymentBeamFlow.BeamFlow m r) =>
+  Text ->
+  Text ->
+  HighPrecMoney ->
+  Currency ->
+  Maybe Value ->
+  m PInterface.OfferListResp
+listDomainOffers merchantId merchantOperatingCityId orderAmount _currency mbDomainContext = do
+  now <- getCurrentTime
+  allActiveOffers <- QOffer.findAllActiveByMerchant merchantId merchantOperatingCityId True
+  let activeOffers = filter (\offer -> maybe True (> now) offer.validTill) allActiveOffers
+  -- Filter by eligibility using offersEligibilityFlow
+  eligibleResults <- forM activeOffers $ \offer -> do
+    isOfferEligible <- offersEligibilityFlow offer.id.getId mbDomainContext
+    pure (offer, isOfferEligible)
+  let eligibleOffers = filter (\(_, isOfferEligible) -> isOfferEligible) eligibleResults
+      offerResps = map (\(offer, _) -> buildOfferResp orderAmount offer) eligibleOffers
+      offers = map fst eligibleOffers
+      bestCombo = buildBestOfferCombination orderAmount offerResps offers
+  return $
+    PInterface.OfferListResp
+      { bestOfferCombination = bestCombo,
+        offerResp = offerResps
+      }
+  where
+    buildOfferResp amt offer =
+      let computedOfferAmount = computeOfferAmount offer amt
+       in PInterface.OfferResp
+            { offerId = offer.id.getId,
+              status = PInterface.ELIGIBLE,
+              offerDescription =
+                PInterface.OfferDescription
+                  { sponsoredBy = offer.sponsoredBy,
+                    title = offer.title,
+                    description = offer.description,
+                    tnc = offer.tnc
+                  },
+              orderAmount = amt,
+              finalOrderAmount = computedOfferAmount.postOfferAmount,
+              discountAmount = computedOfferAmount.discountAmount,
+              cashbackAmount = computedOfferAmount.payoutAmount,
+              benefitType = show offer.offerType,
+              offerCode = offer.offerCode,
+              uiConfigs = Nothing,
+              productDiscounts = Nothing
+            }
+
+    buildBestOfferCombination amt resps offers =
+      case resps of
+        [] -> Nothing
+        _ ->
+          let discountOffers = filter (\(r, o) -> o.offerType == DOffer.DISCOUNT && r.discountAmount > 0) (zip resps offers)
+              cashbackOffers = filter (\(r, o) -> o.offerType == DOffer.CASHBACK && r.discountAmount > 0) (zip resps offers)
+              bestDiscount = if null discountOffers then Nothing else Just $ maximumBy (comparing ((.discountAmount) . fst)) discountOffers
+              totalDiscountAmt = maybe 0 ((.discountAmount) . fst) bestDiscount
+              totalCashbackAmt = sum $ map ((.discountAmount) . fst) cashbackOffers
+              comboOffers = maybe [] (: []) bestDiscount <> cashbackOffers
+           in if null comboOffers
+                then Nothing
+                else
+                  Just $
+                    PInterface.BestOfferCombination
+                      { offers =
+                          map
+                            ( \(r, o) ->
+                                PInterface.BestOfferCombinationOffer
+                                  { offerId = r.offerId,
+                                    cashbackAmount = if o.offerType == DOffer.CASHBACK then r.discountAmount else 0,
+                                    discountAmount = if o.offerType == DOffer.DISCOUNT then r.discountAmount else 0,
+                                    merchantDiscountAmount = 0,
+                                    totalOfferedAmount = r.discountAmount
+                                  }
+                            )
+                            comboOffers,
+                        orderBreakup =
+                          PInterface.OrderBreakup
+                            { orderAmount = amt,
+                              finalOrderAmount = max 0 (amt - totalDiscountAmt),
+                              discountAmount = totalDiscountAmt,
+                              merchantDiscountAmount = 0,
+                              cashbackAmount = totalCashbackAmt,
+                              offerAmount = totalDiscountAmt + totalCashbackAmt
+                            }
+                      }
+
+-- | Basket-based domain offer listing: runs listDomainOffers per product, returns [(productId, OfferListResp)].
+--   bestOfferCombination is set to Nothing for basket case.
+listDomainOffersWithBasket ::
+  (EncFlow m r, PaymentBeamFlow.BeamFlow m r) =>
+  Text ->
+  Text ->
+  [(Text, HighPrecMoney)] -> -- [(productId, amount)]
+  Currency ->
+  Maybe Value ->
+  m [(Text, PInterface.OfferListResp)]
+listDomainOffersWithBasket merchantId merchantOperatingCityId products currency mbDomainContext = do
+  forM products $ \(productId, amount) -> do
+    resp <- listDomainOffers merchantId merchantOperatingCityId amount currency mbDomainContext
+    pure (productId, resp {PInterface.bestOfferCombination = Nothing})
+
+-- | Split a PG basket OfferListResp into per-product responses using productDiscounts.
+--   For PRODUCT-level offers (productDiscounts present): creates per-product entries with product amounts.
+--   For ORDER-level offers (productDiscounts absent): every product gets the same offer.
+--   bestOfferCombination is set to Nothing for all products.
+splitOfferRespByProduct ::
+  [(Text, HighPrecMoney)] -> -- [(productId, amount)]
+  PInterface.OfferListResp ->
+  [(Text, PInterface.OfferListResp)]
+splitOfferRespByProduct products resp =
+  let productIds = map fst products
+      productMap = Map.fromList products
+      perProductOffers = Map.fromListWith (<>) $ concatMap (offerToProductEntries productIds productMap) resp.offerResp
+   in map (\pid -> (pid, mkProductOfferListResp (Map.findWithDefault [] pid perProductOffers))) productIds
+  where
+    offerToProductEntries :: [Text] -> Map.Map Text HighPrecMoney -> PInterface.OfferResp -> [(Text, [PInterface.OfferResp])]
+    offerToProductEntries allProductIds amountMap offer = case offer.productDiscounts of
+      Just pds ->
+        map
+          ( \pd ->
+              ( pd.productId,
+                [ offer
+                    { PInterface.discountAmount = pd.discountAmount,
+                      PInterface.cashbackAmount = pd.cashbackAmount,
+                      PInterface.finalOrderAmount = fromMaybe 0 (Map.lookup pd.productId amountMap) - pd.discountAmount
+                    }
+                ]
+              )
+          )
+          pds
+      Nothing ->
+        map (\pid -> (pid, [offer])) allProductIds
+
+    mkProductOfferListResp :: [PInterface.OfferResp] -> PInterface.OfferListResp
+    mkProductOfferListResp offers =
+      PInterface.OfferListResp
+        { offerResp = offers,
+          bestOfferCombination = Nothing
+        }
+
+-- | Single offer eligibility + discount flow.
+--   Looks up offer, checks eligibility via jsonLogic, returns discounted amount.
+--   Returns Nothing if offer not found, inactive, or ineligible.
+--   mbDomainContext: optional domain-specific data (e.g., person stats, ride history)
+--   that gets merged into the eligibility check data before running json logic.
+offersEligibilityFlow ::
+  (EncFlow m r, PaymentBeamFlow.BeamFlow m r) =>
+  Text ->
+  Maybe Value ->
+  m Bool
+offersEligibilityFlow offerId mbDomainContext = do
+  mbOffer <- QOffer.findById (Id offerId)
+  case mbOffer of
+    Nothing -> pure False
+    Just offer
+      | not offer.isActive -> pure False
+      | otherwise ->
+        case offer.offerEligibilityJsonLogic of
+          Nothing -> pure True
+          Just logic -> do
+            let baseData = A.object []
+                eligibilityData = case mbDomainContext of
+                  Just (A.Object ctx) -> case baseData of
+                    A.Object base -> A.Object (base <> ctx)
+                    _ -> baseData
+                  _ -> baseData
+            logicResp <- LYUtils.runLogics [logic] eligibilityData
+            case logicResp.result of
+              A.Bool result -> pure result
+              _ -> do
+                logError $ "Offer eligibility logic returned non-boolean for offerId: " <> offer.id.getId <> " errors: " <> show logicResp.errors
+                pure False
+
+-- offer computation functions ---------------------------------------------
+
+data ComputedOfferAmount = ComputedOfferAmount
+  { discountAmount :: HighPrecMoney, -- charge reduction (>0 for DISCOUNT, 0 for CASHBACK)
+    payoutAmount :: HighPrecMoney, -- amount to pay back (discount or cashback value)
+    postOfferAmount :: HighPrecMoney, -- amount after applying discount to charge
+    amountSaved :: HighPrecMoney -- amount saved by the offer (regardless of offer type)
+  }
+  deriving (Show, Generic)
+
+-- | Compute offer amounts for a single Offer.
+computeOfferAmount :: DOffer.Offer -> HighPrecMoney -> ComputedOfferAmount
+computeOfferAmount offer amount =
+  let offerAmount = case offer.discountType of
+        DOffer.FLAT -> min offer.discountValue amount
+        DOffer.PERCENTAGE ->
+          let pctAmount = amount * offer.discountValue / 100
+           in maybe pctAmount (min pctAmount) offer.maxDiscount
+      (discountAmount, payoutAmount) = case offer.offerType of
+        DOffer.DISCOUNT -> (offerAmount, 0)
+        DOffer.CASHBACK -> (0, offerAmount)
+   in ComputedOfferAmount
+        { discountAmount,
+          payoutAmount,
+          postOfferAmount = max 0 (amount - discountAmount),
+          amountSaved = discountAmount + payoutAmount
+        }
+
+-- apply offer service ----------------------------------------------------
+
+applyOfferService ::
+  (EncFlow m r, PaymentBeamFlow.BeamFlow m r) =>
+  Id DOrder.PaymentOrder ->
+  OfferStatsInput ->
+  Bool -> -- useDomainOffers
+  (PInterface.OfferApplyReq -> m PInterface.OfferApplyResp) ->
+  UTCTime ->
+  m ()
+applyOfferService paymentOrderId offerStatsInput useDomainOffers applyOfferCall rideCreatedAt = do
+  existingOffers <- QPaymentOrderOffer.findByPaymentOrder paymentOrderId
+  let offerInitiatedPaymentOrderOffer = filter (\offer -> offer.status == PInterface.OFFER_INITIATED) existingOffers
+  unless (null offerInitiatedPaymentOrderOffer) $ do
+    now <- getCurrentTime
+    order <- QOrder.findById paymentOrderId >>= fromMaybeM (PaymentOrderDoesNotExist paymentOrderId.getId)
+    unless useDomainOffers $ do
+      let offerIds = map (.offer_id) offerInitiatedPaymentOrderOffer
+          customer =
+            PInterface.OfferCustomer
+              { customerId = order.personId.getId,
+                email = offerStatsInput.email,
+                mobile = offerStatsInput.mobile
+              }
+      void $
+        applyOfferCall
+          PInterface.OfferApplyReq
+            { txnId = order.shortId.getShortId,
+              offers = offerIds,
+              customer = customer,
+              amount = order.amount,
+              currency = order.currency,
+              planId = "dummy-not-required",
+              registrationDate = addUTCTime 19800 rideCreatedAt, -- ist time
+              dutyDate = now,
+              paymentMode = "dummy-not-required",
+              numOfRides = 0,
+              basket = Nothing,
+              staticCustomerId = offerStatsInput.staticPersonId,
+              deviceImei = offerStatsInput.deviceId
+            }
+    forM_ offerInitiatedPaymentOrderOffer $ \paymentOffer -> do
+      QPaymentOrderOffer.updateByPrimaryKey paymentOffer {DPaymentOrderOffer.status = PInterface.OFFER_AVAILED, DPaymentOrderOffer.updatedAt = now}
+      upsertOfferStats (Id paymentOffer.offer_id) offerStatsInput paymentOffer.discountAmount paymentOffer.payoutAmount order.currency paymentOffer.merchantId paymentOffer.merchantOperatingCityId now
+
+-- | Apply offer without a payment order (e.g., when offer fully covers fare or cash ride).
+--   Uses OfflineOffer table for idempotency — skips if already applied for this referenceId.
+--   Computes discount/cashback and upserts person offer stats.
+applyOfferWithoutPaymentService ::
+  (EncFlow m r, PaymentBeamFlow.BeamFlow m r) =>
+  Text -> -- referenceId (bookingId)
+  Text -> -- offerId
+  Text -> -- offerCode
+  OfferStatsInput ->
+  Maybe HighPrecMoney -> -- discount amount
+  Maybe HighPrecMoney -> -- payout amount
+  HighPrecMoney -> -- orderAmount (total fare on which discount is applied)
+  Currency ->
+  Text -> -- merchantId
+  Text -> -- merchantOperatingCityId
+  Bool -> -- useDomainOffers
+  (PInterface.OfferApplyReq -> m PInterface.OfferApplyResp) ->
+  UTCTime ->
+  Maybe (Text, HighPrecMoney) -> -- mbProduct: (serviceTierType, amount) for basket
+  m ()
+applyOfferWithoutPaymentService referenceId offerId offerCode offerStatsInput discountAmount payoutAmount orderDiscountApplicableAmount currency merchantId merchantOperatingCityId useDomainOffers applyOfferCall rideCreatedAt mbProduct = do
+  existingOffers <- QOfflineOffer.findByReferenceId referenceId
+  when (null existingOffers) $ do
+    now <- getCurrentTime
+    unless useDomainOffers $ do
+      let basket = mbProduct <&> \(productId, amount) -> [Payment.Basket {id = productId, unitPrice = amount, quantity = 1}]
+          customer =
+            PInterface.OfferCustomer
+              { customerId = offerStatsInput.personId,
+                email = offerStatsInput.email,
+                mobile = offerStatsInput.mobile
+              }
+      void $
+        applyOfferCall
+          PInterface.OfferApplyReq
+            { txnId = referenceId,
+              offers = [offerId],
+              customer = customer,
+              amount = orderDiscountApplicableAmount,
+              currency = currency,
+              planId = "dummy-not-required",
+              registrationDate = addUTCTime 19800 rideCreatedAt, -- ist time
+              dutyDate = now,
+              paymentMode = "dummy-not-required",
+              numOfRides = 0,
+              basket = basket,
+              staticCustomerId = offerStatsInput.staticPersonId,
+              deviceImei = offerStatsInput.deviceId
+            }
+    offlineOfferId <- generateGUID
+    let offlineOffer =
+          DOfflineOffer.OfflineOffer
+            { id = offlineOfferId,
+              referenceId = referenceId,
+              offerId = offerId,
+              offerCode = offerCode,
+              status = PInterface.OFFER_AVAILED,
+              discountAmount = discountAmount,
+              payoutAmount = payoutAmount,
+              merchantId = merchantId,
+              merchantOperatingCityId = merchantOperatingCityId,
+              createdAt = now,
+              updatedAt = now
+            }
+    QOfflineOffer.create offlineOffer
+    upsertOfferStats (Id offerId) offerStatsInput discountAmount payoutAmount currency merchantId merchantOperatingCityId now
+    logInfo $ "Applied offline offer: referenceId=" <> referenceId <> " offerId=" <> offerId <> " discount=" <> show discountAmount <> " cashback=" <> show payoutAmount
+
+-- | Raw identifiers for offer stats upsert. The payment library builds the
+--   entity list internally from these fields.
+data OfferStatsInput = OfferStatsInput
+  { personId :: Text,
+    staticPersonId :: Maybe Text, -- static customer UUID (Nothing or same as personId means skip)
+    deviceId :: Maybe Text, -- device IMEI (Nothing or empty means skip)
+    email :: Maybe Text,
+    mobile :: Maybe Text
+  }
+  deriving (Show)
+
+-- common helper for stats upsert — builds entity list from raw identifiers and upserts counters
+upsertOfferStats ::
+  (EncFlow m r, PaymentBeamFlow.BeamFlow m r) =>
+  Id DOffer.Offer ->
+  OfferStatsInput ->
+  Maybe HighPrecMoney ->
+  Maybe HighPrecMoney ->
+  Currency ->
+  Text ->
+  Text ->
+  UTCTime ->
+  m ()
+upsertOfferStats offerId statsInput discountAmount payoutAmount payoutCurr merchantId merchantOperatingCityId now = do
+  let entities = buildEntities statsInput offerId
+  -- Upsert OfferStats for each entity type
+  forM_ entities $ \(entityType, entityId) -> do
+    let lockKey = "UpsertOfferStats:OfferId:" <> offerId.getId <> ":EntityType:" <> show entityType <> ":EntityId:" <> entityId
+    Redis.whenWithLockRedis lockKey 60 $ do
+      mbStats <- QOfferStats.findByOfferIdAndEntityIdAndEntityType offerId entityId entityType
+      case mbStats of
+        Just stats ->
+          QOfferStats.updateByPrimaryKey stats {DOfferStats.offerAppliedCount = stats.offerAppliedCount + 1, DOfferStats.updatedAt = now}
+        Nothing -> do
+          statsId <- generateGUID
+          QOfferStats.create $
+            DOfferStats.OfferStats
+              { id = statsId,
+                offerId = offerId,
+                entityId = entityId,
+                entityType = entityType,
+                offerAppliedCount = 1,
+                createdAt = now,
+                updatedAt = now
+              }
+  -- Upsert PersonDailyOfferStats (keyed by personId, not per entity)
+  let dailyLockKey = "UpsertOfferStats:Daily:PersonId:" <> statsInput.personId <> ":OfferId:" <> offerId.getId
+  Redis.whenWithLockRedis dailyLockKey 60 $ do
+    let today = utctDay now
+    mbDailyStats <- QPersonDailyOfferStats.findByPersonIdAndDate statsInput.personId today
+    case mbDailyStats of
+      Just ds ->
+        QPersonDailyOfferStats.updateByPrimaryKey
+          ds
+            { DPersonDailyOfferStats.totalDiscountAmount = ds.totalDiscountAmount + fromMaybe 0.0 discountAmount,
+              DPersonDailyOfferStats.totalCashbackAmount = ds.totalCashbackAmount + fromMaybe 0.0 payoutAmount,
+              DPersonDailyOfferStats.offerCount = ds.offerCount + 1,
+              DPersonDailyOfferStats.updatedAt = now
+            }
+      Nothing -> do
+        dailyId <- generateGUID
+        QPersonDailyOfferStats.create $
+          DPersonDailyOfferStats.PersonDailyOfferStats
+            { id = dailyId,
+              personId = statsInput.personId,
+              date = today,
+              totalDiscountAmount = fromMaybe 0.0 discountAmount,
+              totalCashbackAmount = fromMaybe 0.0 payoutAmount,
+              offerCount = 1,
+              payoutStatus = Initialized,
+              currency = payoutCurr,
+              merchantId = merchantId,
+              merchantOperatingCityId = merchantOperatingCityId,
+              createdAt = now,
+              updatedAt = now
+            }
+
+buildEntities :: OfferStatsInput -> Id DOffer.Offer -> [(DOfferStats.OfferStatsEntityType, Text)]
+buildEntities OfferStatsInput {..} offerId =
+  [(DOfferStats.Person, personId)]
+    <> maybe [] (\sid -> [(DOfferStats.StaticPerson, sid) | sid /= personId]) staticPersonId
+    <> maybe [] (\did -> [(DOfferStats.Device, did) | not (T.null did)]) deviceId
+    <> [(DOfferStats.Offer, offerId.getId)]
+
+-- Build Payment Offer ------------------------------------------------------
+
+buildPaymentOffer ::
+  (EncFlow m r, PaymentBeamFlow.BeamFlow m r) =>
+  Id DOrder.PaymentOrder ->
+  Maybe (Id DOffer.Offer) ->
+  Maybe HighPrecMoney ->
+  Maybe HighPrecMoney ->
+  Id Merchant ->
+  Maybe (Id MerchantOperatingCity) ->
+  m ()
+buildPaymentOffer paymentOrderId offerId discountAmount payoutAmount merchantId merchantOperatingCityId = do
+  Redis.whenWithLockRedis (offerProccessingLockKey paymentOrderId.getId) 60 $ do
+    existingOffers <- QPaymentOrderOffer.findByPaymentOrder paymentOrderId
+    when (null existingOffers) $ do
+      whenJust offerId $ \oid -> do
+        offer <- QOffer.findById oid >>= fromMaybeM (InternalError "Offer not found")
+        now <- getCurrentTime
+        poOfferId <- generateGUID
+        let paymentOrderOffer =
+              DPaymentOrderOffer.PaymentOrderOffer
+                { id = poOfferId,
+                  paymentOrderId = paymentOrderId,
+                  offer_id = offer.id.getId,
+                  offer_code = offer.offerCode,
+                  status = PInterface.OFFER_INITIATED,
+                  responseJSON = encodeToText $ PInterface.Offer {offerId = Just offer.id.getId, offerCode = Just offer.offerCode, status = PInterface.OFFER_INITIATED},
+                  discountAmount = discountAmount,
+                  payoutAmount = payoutAmount,
+                  merchantId = merchantId.getId,
+                  merchantOperatingCityId = maybe "" ((.getId) . cast) merchantOperatingCityId,
+                  createdAt = now,
+                  updatedAt = now
+                }
+        QPaymentOrderOffer.create paymentOrderOffer
+        logInfo $ "Created payment order offer for paymentOrderId: " <> paymentOrderId.getId <> " offerId: " <> show offerId
+
+offerProccessingLockKey :: Text -> Text
+offerProccessingLockKey paymentOrderId = "Offer:Processing:PaymentOrderId:" <> paymentOrderId
+
+buildOrderOffer :: (EncFlow m r, PaymentBeamFlow.BeamFlow m r) => Id DOrder.PaymentOrder -> Maybe [PInterface.Offer] -> Id Merchant -> Maybe (Id MerchantOperatingCity) -> m ()
+buildOrderOffer paymentOrderId mbOffers merchantId merchantOperatingCityId = do
+  let poIdTxt = paymentOrderId.getId
+  logDebug $ "buildOrderOffer called for paymentOrderId: " <> poIdTxt <> " with " <> show (length (fromMaybe [] mbOffers)) <> " offers"
+  case mbOffers of
+    Nothing -> do
+      logInfo $ "No offers to create for paymentOrderId: " <> paymentOrderId.getId
+      pure ()
+    Just [] -> do
+      logInfo $ "No offers to create for paymentOrderId: " <> paymentOrderId.getId
+      pure ()
+    Just offers -> do
+      Redis.whenWithLockRedis (offerProccessingLockKey poIdTxt) 60 $ do
+        existingPaymentOffers <- QPaymentOrderOffer.findByPaymentOrder paymentOrderId
+        case existingPaymentOffers of
+          [] -> do
+            now <- getCurrentTime
+            paymentOrderOffers <- mapM (createPaymentOrderOffer now) offers
+            logInfo $ "Creating " <> show (length paymentOrderOffers) <> " payment order offers for paymentOrderId: " <> paymentOrderId.getId
+            QPaymentOrderOffer.createMany paymentOrderOffers
+            logInfo $ "Successfully created payment order offers for paymentOrderId: " <> paymentOrderId.getId
+          _ -> do
+            logInfo $ "Payment order offers already exist for paymentOrderId: " <> paymentOrderId.getId <> ", skipping creation"
+            pure ()
+  where
+    createPaymentOrderOffer now offer = do
+      offerId <- generateGUID
+      let offerIdText = fromMaybe "" offer.offerId
+          offerCodeText = fromMaybe "" offer.offerCode
+          offerStatus = offer.status
+          responseJsonText = encodeToText offer
+          merchantIdText = merchantId.getId
+          merchantOperatingCityIdText = maybe "" ((.getId) . cast) merchantOperatingCityId
+      logDebug $ "Creating payment order offer with offerId: " <> offerIdText <> ", offerCode: " <> offerCodeText
+      pure $
+        DPaymentOrderOffer.PaymentOrderOffer
+          { id = offerId,
+            paymentOrderId = paymentOrderId,
+            offer_id = offerIdText,
+            offer_code = offerCodeText,
+            status = offerStatus,
+            responseJSON = responseJsonText,
+            discountAmount = Nothing,
+            payoutAmount = Nothing,
+            merchantId = merchantIdText,
+            merchantOperatingCityId = merchantOperatingCityIdText,
+            createdAt = now,
+            updatedAt = now
+          }
+
+-- order status -----------------------------------------------------
+
+orderStatusService ::
+  ( EncFlow m r,
+    BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id MerchantOperatingCity ->
+  Id Person ->
+  Id DOrder.PaymentOrder ->
+  (Payment.OrderStatusReq -> m Payment.OrderStatusResp) ->
+  m PaymentStatusResp
+orderStatusService merchantOpCityId personId orderId orderStatusCall = do
+  -- order <- runInReplica $ QOrder.findById orderId >>= fromMaybeM (PaymentOrderDoesNotExist orderId.getId)
+  order <- QOrder.findById orderId >>= fromMaybeM (PaymentOrderDoesNotExist orderId.getId)
+  unless (personId == order.personId) $ throwError NotAnExecutor
+  let orderStatusReq =
+        Payment.OrderStatusReq
+          { orderShortId = order.shortId.getShortId,
+            orderId = order.id.getId,
+            transactionDateTime = Just order.createdAt,
+            terminalId = order.paytmTid -- Paytm EDC: send terminal ID for status enquiry
+          }
+  now <- getCurrentTime
+  orderStatusResp <- orderStatusCall orderStatusReq -- api call
+  case orderStatusResp of
+    Payment.MandateOrderStatusResp {..} -> do
+      let orderTxn =
+            OrderTxn
+              { mandateStartDate = mandateStartDate,
+                mandateEndDate = mandateEndDate,
+                mandateId = Just mandateId,
+                mandateFrequency = Just mandateFrequency,
+                mandateMaxAmount = Just mandateMaxAmount,
+                mandateStatus = Just mandateStatus,
+                isRetried = Nothing,
+                isRetargeted = Nothing,
+                splitSettlementResponse = Nothing,
+                retargetLink = Nothing,
+                applicationFeeAmount = Nothing,
+                customerName = Nothing,
+                gatewayName = Nothing,
+                cardType = Nothing,
+                surchargeAmount = Nothing,
+                taxAmount = Nothing,
+                netAmount = Nothing,
+                epgTxnId = Nothing,
+                cardBrand = Nothing,
+                cardIsin = Nothing,
+                cardLastFourDigits = Nothing,
+                cardIssuer = Nothing,
+                authorizationDateTime = Nothing,
+                captureDateTime = Nothing,
+                vpa = payerVpa,
+                ..
+              }
+      maybe
+        (updateOrderTransaction merchantOpCityId order orderTxn Nothing)
+        ( \transactionUUID' ->
+            Redis.whenWithLockRedis (txnProccessingKey transactionUUID') 60 $ updateOrderTransaction merchantOpCityId order orderTxn Nothing
+        )
+        transactionUUID -- should we put it in fork ?
+      return $
+        MandatePaymentStatus
+          { status = orderStatusResp.transactionStatus,
+            upi = orderStatusResp.upi,
+            mandateStartDate = fromMaybe now mandateStartDate,
+            mandateEndDate = fromMaybe now mandateEndDate,
+            ..
+          }
+    Payment.OrderStatusResp {..} -> do
+      let mkOrderTxn txnObj =
+            OrderTxn
+              { transactionUUID = txnObj.txnUuid,
+                txnId = txnObj.txnId,
+                paymentMethodType = txnObj.paymentMethodType,
+                paymentMethod = txnObj.paymentMethod,
+                respMessage = txnObj.respMessage,
+                respCode = txnObj.respCode,
+                gatewayReferenceId = txnObj.gatewayReferenceId,
+                amount = fromMaybe amount txnObj.effectiveAmount,
+                applicationFeeAmount = Nothing,
+                bankErrorMessage = txnObj.bankErrorMessage,
+                bankErrorCode = txnObj.bankErrorCode,
+                mandateStartDate = Nothing,
+                mandateEndDate = Nothing,
+                mandateId = Nothing,
+                mandateStatus = Nothing,
+                mandateFrequency = Nothing,
+                mandateMaxAmount = Nothing,
+                isRetried = isRetriedOrder,
+                isRetargeted = isRetargetedOrder,
+                retargetLink = retargetPaymentLink,
+                customerName = (.nameOnCard) =<< card,
+                gatewayName = (.gateway) =<< txnObj.txnDetail,
+                cardType = (.cardType) =<< card,
+                surchargeAmount = (.surchargeAmount) =<< txnObj.txnDetail,
+                taxAmount = (.taxAmount) =<< txnObj.txnDetail,
+                netAmount = (.netAmount) =<< txnObj.txnDetail,
+                epgTxnId = (.epgTxnId) =<< txnObj.paymentGatewayResponse,
+                cardBrand = (.cardBrand) =<< card,
+                cardIsin = (.cardIsin) =<< card,
+                cardLastFourDigits = (.lastFourDigits) =<< card,
+                cardIssuer = (.cardIssuer) =<< card,
+                authorizationDateTime = (.created) =<< txnObj.paymentGatewayResponse,
+                captureDateTime = dateCreated,
+                vpa = payerVpa,
+                ..
+              }
+      -- transactionStatusId, transactionStatus, currency, dateCreated, splitSettlementResponse from top-level
+
+      forM_ txnList $ \txnObj -> do
+        let orderTxn = mkOrderTxn txnObj
+        maybe
+          (updateOrderTransaction merchantOpCityId order orderTxn Nothing)
+          ( \transactionUUID' ->
+              Redis.whenWithLockRedis (txnProccessingKey transactionUUID') 60 $
+                updateOrderTransaction merchantOpCityId order orderTxn Nothing
+          )
+          txnObj.txnUuid
+      mapM_ (upsertRefundStatus merchantOpCityId order) refunds
+      void $ QOrder.updateEffectiveAmount orderId effectiveAmount
+      res <- withTryCatch "buildOrderOffer:processPaymentStatus" $ buildOrderOffer orderId offers order.merchantId order.merchantOperatingCityId
+      case res of
+        Left e -> logError $ "buildOrderOffer failed for orderId=" <> orderId.getId <> " err=" <> show e
+        Right _ -> pure ()
+      return $
+        PaymentStatus
+          { orderId = orderId,
+            orderShortId = order.shortId,
+            status = transactionStatus,
+            bankErrorCode = bankErrorCode,
+            bankErrorMessage = bankErrorMessage,
+            isRetried = isRetriedOrder,
+            isRetargeted = isRetargetedOrder,
+            retargetLink = retargetPaymentLink,
+            refunds = refunds,
+            payerVpa = (payerVpa <|> ((.payerVpa) =<< upi)),
+            authIdCode = ((.authIdCode) =<< paymentGatewayResponse),
+            txnUUID = transactionUUID,
+            txnId = txnId,
+            effectAmount = effectiveAmount,
+            offers = offers,
+            paymentServiceType = order.paymentServiceType,
+            validTill = order.validTill,
+            paymentFulfillmentStatus = order.paymentFulfillmentStatus,
+            domainEntityId = order.domainEntityId, -- To be filled by Domain
+            orderLoyaltyInfo = loyaltyInfo,
+            ..
+          }
+    _ -> throwError $ InternalError "Unexpected Order Status Response."
+
+data OrderTxn = OrderTxn
+  { transactionUUID :: Maybe Text,
+    txnId :: Maybe Text,
+    transactionStatusId :: Int,
+    transactionStatus :: Payment.TransactionStatus,
+    paymentMethodType :: Maybe Text,
+    paymentMethod :: Maybe Text,
+    respMessage :: Maybe Text,
+    respCode :: Maybe Text,
+    gatewayReferenceId :: Maybe Text,
+    amount :: HighPrecMoney,
+    applicationFeeAmount :: Maybe HighPrecMoney,
+    bankErrorMessage :: Maybe Text,
+    bankErrorCode :: Maybe Text,
+    currency :: Currency,
+    dateCreated :: Maybe UTCTime,
+    mandateStatus :: Maybe Payment.MandateStatus,
+    mandateStartDate :: Maybe UTCTime,
+    mandateEndDate :: Maybe UTCTime,
+    mandateId :: Maybe Text,
+    mandateFrequency :: Maybe Payment.MandateFrequency,
+    mandateMaxAmount :: Maybe HighPrecMoney,
+    isRetried :: Maybe Bool,
+    isRetargeted :: Maybe Bool,
+    retargetLink :: Maybe Text,
+    splitSettlementResponse :: Maybe PInterface.SplitSettlementResponse,
+    customerName :: Maybe Text,
+    gatewayName :: Maybe Text,
+    cardType :: Maybe Text,
+    surchargeAmount :: Maybe HighPrecMoney,
+    taxAmount :: Maybe HighPrecMoney,
+    netAmount :: Maybe HighPrecMoney,
+    epgTxnId :: Maybe Text,
+    cardBrand :: Maybe Text,
+    cardIsin :: Maybe Text,
+    cardLastFourDigits :: Maybe Text,
+    cardIssuer :: Maybe Text,
+    authorizationDateTime :: Maybe UTCTime,
+    captureDateTime :: Maybe UTCTime,
+    vpa :: Maybe Text
+  }
+
+updateOrderTransaction ::
+  (BeamFlow m r, Finance.HasActorInfo m r) =>
+  Id MerchantOperatingCity ->
+  DOrder.PaymentOrder ->
+  OrderTxn ->
+  Maybe Text ->
+  m ()
+updateOrderTransaction merchantOpCityId order resp respDump = do
+  let errorMessage = resp.bankErrorMessage
+      errorCode = resp.bankErrorCode
+      vpa = resp.vpa
+  mbTransaction <- do
+    case resp.transactionUUID of
+      -- Just transactionUUID -> runInReplica $ HQTransaction.findByTxnUUID transactionUUID
+      Just transactionUUID -> do
+        mbTxn <- HQTransaction.findByTxnUUID transactionUUID
+        when (isNothing mbTxn) $ do
+          transaction <- buildPaymentTransaction order resp respDump
+          HQTransaction.create merchantOpCityId transaction (Just "order status response or webhook")
+        return mbTxn
+      Nothing -> HQTransaction.findNewTransactionByOrderId order.id
+  let updOrder = order{status = resp.transactionStatus, isRetargeted = fromMaybe order.isRetargeted resp.isRetargeted, isRetried = fromMaybe order.isRetried resp.isRetried, retargetLink = resp.retargetLink}
+  case mbTransaction of
+    Nothing -> when (order.status /= updOrder.status && order.status `notElem` [Payment.CHARGED, Payment.AUTO_REFUNDED]) $ QOrder.updateStatusAndErrorAndVpa updOrder errorMessage errorCode vpa
+    -- Nothing -> runInReplica $ HQTransaction.findNewTransactionByOrderId order.id
+    Just transaction -> do
+      let updTransaction =
+            transaction{statusId = resp.transactionStatusId,
+                        status = resp.transactionStatus,
+                        paymentMethodType = resp.paymentMethodType,
+                        paymentMethod = resp.paymentMethod,
+                        respMessage = resp.respMessage,
+                        respCode = resp.respCode,
+                        gatewayReferenceId = resp.gatewayReferenceId,
+                        amount = resp.amount,
+                        applicationFeeAmount = fromMaybe transaction.applicationFeeAmount resp.applicationFeeAmount,
+                        currency = resp.currency,
+                        mandateStatus = resp.mandateStatus,
+                        mandateStartDate = resp.mandateStartDate,
+                        mandateEndDate = resp.mandateEndDate,
+                        mandateId = resp.mandateId,
+                        mandateFrequency = resp.mandateFrequency,
+                        mandateMaxAmount = resp.mandateMaxAmount,
+                        juspayResponse = respDump,
+                        txnId = resp.txnId,
+                        splitSettlementResponse = resp.splitSettlementResponse,
+                        customerName = resp.customerName,
+                        gatewayName = resp.gatewayName,
+                        cardType = resp.cardType,
+                        surchargeAmount = resp.surchargeAmount,
+                        taxAmount = resp.taxAmount,
+                        netAmount = resp.netAmount,
+                        epgTxnId = resp.epgTxnId,
+                        cardBrand = resp.cardBrand,
+                        cardIsin = resp.cardIsin,
+                        cardLastFourDigits = resp.cardLastFourDigits,
+                        cardIssuer = resp.cardIssuer,
+                        authorizationDateTime = resp.authorizationDateTime,
+                        captureDateTime = resp.captureDateTime
+                       }
+
+      -- Avoid updating status if already in CHARGED state to handle race conditions
+      when (transaction.status `notElem` [Payment.CHARGED, Payment.AUTO_REFUNDED]) $ do
+        HQTransaction.updateMultiple merchantOpCityId transaction updTransaction (Just "order status response or webhook")
+      when (order.status /= updOrder.status && order.status `notElem` [Payment.CHARGED, Payment.AUTO_REFUNDED]) $ QOrder.updateStatusAndErrorAndVpa updOrder errorMessage errorCode vpa
+
+buildPaymentTransaction :: MonadFlow m => DOrder.PaymentOrder -> OrderTxn -> Maybe Text -> m DTransaction.PaymentTransaction
+buildPaymentTransaction order OrderTxn {..} respDump = do
+  uuid <- generateGUID
+  now <- getCurrentTime
+  -- fetch ride table here from payment order domain entity id and send commission as application fee.
+  pure
+    DTransaction.PaymentTransaction
+      { id = uuid,
+        orderId = order.id,
+        merchantId = order.merchantId,
+        txnUUID = transactionUUID,
+        statusId = transactionStatusId,
+        status = transactionStatus,
+        applicationFeeAmount = fromMaybe 0 applicationFeeAmount,
+        retryCount = 0,
+        createdAt = now,
+        updatedAt = now,
+        juspayResponse = respDump,
+        bankErrorCode,
+        bankErrorMessage,
+        merchantOperatingCityId = order.merchantOperatingCityId,
+        ..
+      }
+
+-- juspay webhook ----------------------------------------------------------
+
+juspayWebhookService ::
+  (BeamFlow m r, Finance.HasActorInfo m r) =>
+  Id MerchantOperatingCity ->
+  Payment.OrderStatusResp ->
+  Text ->
+  m AckResponse
+juspayWebhookService merchantOpCityId resp respDump = do
+  logWarning $ "Webhook response dump: " <> respDump --- want this for now that's why changed it to warning
+  logWarning $ "Webhook response: " <> show resp
+  case resp of
+    Payment.MandateOrderStatusResp {..} -> do
+      order <- QOrder.findByShortId (ShortId orderShortId) >>= fromMaybeM (PaymentOrderNotFound orderShortId)
+      let orderTxn =
+            OrderTxn
+              { mandateStartDate = mandateStartDate,
+                mandateEndDate = mandateEndDate,
+                mandateId = Just mandateId,
+                mandateStatus = Just mandateStatus,
+                mandateFrequency = Just mandateFrequency,
+                mandateMaxAmount = Just mandateMaxAmount,
+                isRetried = Nothing,
+                isRetargeted = Nothing,
+                retargetLink = Nothing,
+                splitSettlementResponse = Nothing,
+                applicationFeeAmount = Nothing,
+                customerName = Nothing,
+                gatewayName = Nothing,
+                cardType = Nothing,
+                surchargeAmount = Nothing,
+                taxAmount = Nothing,
+                netAmount = Nothing,
+                epgTxnId = Nothing,
+                cardBrand = Nothing,
+                cardIsin = Nothing,
+                cardLastFourDigits = Nothing,
+                cardIssuer = Nothing,
+                authorizationDateTime = Nothing,
+                captureDateTime = Nothing,
+                vpa = payerVpa,
+                ..
+              }
+      maybe
+        (updateOrderTransaction merchantOpCityId order orderTxn Nothing)
+        ( \transactionUUID' ->
+            Redis.whenWithLockRedis (txnProccessingKey transactionUUID') 60 $ updateOrderTransaction merchantOpCityId order orderTxn $ Just respDump
+        )
+        transactionUUID
+    Payment.OrderStatusResp {..} -> do
+      order <- QOrder.findByShortId (ShortId orderShortId) >>= fromMaybeM (PaymentOrderNotFound orderShortId)
+      let mkOrderTxn txnObj =
+            OrderTxn
+              { transactionUUID = txnObj.txnUuid,
+                txnId = txnObj.txnId,
+                paymentMethodType = txnObj.paymentMethodType,
+                paymentMethod = txnObj.paymentMethod,
+                respMessage = txnObj.respMessage,
+                respCode = txnObj.respCode,
+                gatewayReferenceId = txnObj.gatewayReferenceId,
+                amount = fromMaybe amount txnObj.effectiveAmount,
+                applicationFeeAmount = Nothing,
+                bankErrorMessage = txnObj.bankErrorMessage,
+                bankErrorCode = txnObj.bankErrorCode,
+                mandateStartDate = Nothing,
+                mandateEndDate = Nothing,
+                mandateId = Nothing,
+                mandateStatus = Nothing,
+                mandateFrequency = Nothing,
+                mandateMaxAmount = Nothing,
+                isRetried = isRetriedOrder,
+                isRetargeted = isRetargetedOrder,
+                retargetLink = retargetPaymentLink,
+                customerName = (.nameOnCard) =<< card,
+                gatewayName = (.gateway) =<< txnObj.txnDetail,
+                cardType = (.cardType) =<< card,
+                surchargeAmount = (.surchargeAmount) =<< txnObj.txnDetail,
+                taxAmount = (.taxAmount) =<< txnObj.txnDetail,
+                netAmount = (.netAmount) =<< txnObj.txnDetail,
+                epgTxnId = (.epgTxnId) =<< txnObj.paymentGatewayResponse,
+                cardBrand = (.cardBrand) =<< card,
+                cardIsin = (.cardIsin) =<< card,
+                cardLastFourDigits = (.lastFourDigits) =<< card,
+                cardIssuer = (.cardIssuer) =<< card,
+                authorizationDateTime = (.created) =<< txnObj.paymentGatewayResponse,
+                captureDateTime = dateCreated,
+                vpa = payerVpa,
+                ..
+              }
+      -- transactionStatusId, transactionStatus, currency, dateCreated, splitSettlementResponse from top-level
+
+      forM_ txnList $ \txnObj -> do
+        let orderTxn = mkOrderTxn txnObj
+        maybe
+          (updateOrderTransaction merchantOpCityId order orderTxn Nothing)
+          ( \transactionUUID' ->
+              Redis.whenWithLockRedis (txnProccessingKey transactionUUID') 60 $ updateOrderTransaction merchantOpCityId order orderTxn $ Just respDump
+          )
+          txnObj.txnUuid
+      mapM_ (upsertRefundStatus merchantOpCityId order) refunds
+    _ -> return ()
+  return Ack
+
+-- stripe webhook ----------------------------------------------------------
+
+data StripeWebhookData
+  = OrderTxnWebhookData (Maybe Text, OrderTxn)
+  | RefundWebhookData PEInterface.Refund
+  | SkipWebhookData
+
+mkStripeWebhookData ::
+  PEInterface.EventObject ->
+  StripeWebhookData
+mkStripeWebhookData = \case
+  -- order transaction update
+  PEInterface.PaymentIntentSucceededEvent paymentIntent -> OrderTxnWebhookData $ mkPaymentIntentOrderTxn paymentIntent
+  PEInterface.PaymentIntentPaymentFailedEvent paymentIntent -> OrderTxnWebhookData $ mkPaymentIntentOrderTxn paymentIntent
+  PEInterface.PaymentIntentProcessingEvent paymentIntent -> OrderTxnWebhookData $ mkPaymentIntentOrderTxn paymentIntent
+  PEInterface.PaymentIntentCanceledEvent paymentIntent -> OrderTxnWebhookData $ mkPaymentIntentOrderTxn paymentIntent
+  PEInterface.PaymentIntentCreatedEvent paymentIntent -> OrderTxnWebhookData $ mkPaymentIntentOrderTxn paymentIntent
+  PEInterface.PaymentIntentRequiresActionEvent paymentIntent -> OrderTxnWebhookData $ mkPaymentIntentOrderTxn paymentIntent
+  PEInterface.ChargeSucceededEvent charge -> OrderTxnWebhookData $ mkChargeOrderTxn charge
+  PEInterface.ChargeFailedEvent charge -> OrderTxnWebhookData $ mkChargeOrderTxn charge
+  PEInterface.ChargeRefundedEvent charge -> OrderTxnWebhookData $ mkChargeOrderTxn charge
+  PEInterface.ChargeDisputeCreatedEvent charge -> OrderTxnWebhookData $ mkChargeOrderTxn charge
+  PEInterface.ChargeDisputeClosedEvent charge -> OrderTxnWebhookData $ mkChargeOrderTxn charge
+  -- refunds update
+  PEInterface.ChargeRefundUpdatedEvent _refunds -> SkipWebhookData -- redundant event
+  PEInterface.RefundCreatedEvent refunds -> RefundWebhookData refunds
+  PEInterface.RefundUpdatedEvent refunds -> RefundWebhookData refunds
+  PEInterface.RefundFailedEvent refunds -> RefundWebhookData refunds
+  -- setup intent, not implemented currently
+  PEInterface.SetupIntentSucceededEvent _setupIntent -> SkipWebhookData
+  PEInterface.SetupIntentSetupFailedEvent _setupIntent -> SkipWebhookData
+  PEInterface.SetupIntentCanceledEvent _setupIntent -> SkipWebhookData
+  PEInterface.SetupIntentCreatedEvent _setupIntent -> SkipWebhookData
+  PEInterface.SetupIntentRequiresActionEvent _setupIntent -> SkipWebhookData
+  PEInterface.CustomEvent _event -> SkipWebhookData
+
+stripeWebhookService ::
+  (BeamFlow m r, Finance.HasActorInfo m r) =>
+  Id MerchantOperatingCity ->
+  PEInterface.ServiceEventResp ->
+  Text ->
+  StripeWebhookData ->
+  m AckResponse
+stripeWebhookService merchantOpCityId resp respDump stripeWebhookData = do
+  logWarning $ "Webhook response dump: " <> respDump
+  logWarning $ "Webhook response: " <> show resp
+
+  case stripeWebhookData of
+    OrderTxnWebhookData (mbOrderShortId, orderTxn) -> do
+      case mbOrderShortId of
+        Just orderShortId -> do
+          order <- QOrder.findByShortId (ShortId orderShortId) >>= fromMaybeM (PaymentOrderNotFound orderShortId)
+          maybe
+            (updateOrderTransaction merchantOpCityId order orderTxn Nothing)
+            ( \transactionUUID' ->
+                Redis.whenWithLockRedis (txnStripeProccessingKey transactionUUID') 60 $ updateOrderTransaction merchantOpCityId order orderTxn $ Just respDump
+            )
+            orderTxn.transactionUUID
+        Nothing -> throwError (InvalidRequest $ "orderShortId not found for eventId: " <> resp.id.getId)
+    RefundWebhookData refundsInfo -> do
+      case refundsInfo.orderShortId of
+        Just orderShortId -> do
+          Redis.whenWithLockRedis (refundProccessingKey orderShortId) 60 $ updateRefundsByWebhook merchantOpCityId refundsInfo -- respDump currently does not stored in refunds table
+        Nothing -> throwError (InvalidRequest $ "orderShortId not found for eventId: " <> resp.id.getId)
+    SkipWebhookData -> logInfo $ "Skip webhook event: " <> show resp.eventType <> "; eventId: " <> resp.id.getId
+
+  pure Ack
+
+-- Stripe payout / transfer webhook (dedicated Stripe endpoint; separate signing secret) ----------
+
+data PayoutStripeWebhookData
+  = PayoutStripePayoutWebhookData PayoutEvents.Payout
+  | PayoutStripeTransferWebhookData PayoutEvents.Transfer
+  | SkipPayoutStripeWebhookData
+
+mkPayoutStripeWebhookData :: PayoutEvents.EventObject -> PayoutStripeWebhookData
+mkPayoutStripeWebhookData = \case
+  PayoutEvents.PayoutCanceledEvent p -> PayoutStripePayoutWebhookData p
+  PayoutEvents.PayoutCreatedEvent p -> PayoutStripePayoutWebhookData p
+  PayoutEvents.PayoutFailedEvent p -> PayoutStripePayoutWebhookData p
+  PayoutEvents.PayoutPaidEvent p -> PayoutStripePayoutWebhookData p
+  PayoutEvents.PayoutReconciliationCompletedEvent p -> PayoutStripePayoutWebhookData p
+  PayoutEvents.PayoutUpdatedEvent p -> PayoutStripePayoutWebhookData p
+  PayoutEvents.TransferCreatedEvent t -> PayoutStripeTransferWebhookData t
+  PayoutEvents.TransferReversedEvent t -> PayoutStripeTransferWebhookData t
+  PayoutEvents.TransferUpdatedEvent t -> PayoutStripeTransferWebhookData t
+  PayoutEvents.CustomEvent _ -> SkipPayoutStripeWebhookData
+
+stripePayoutWebhookService ::
+  ( EncFlow m r,
+    PaymentBeamFlow.BeamFlow m r,
+    FinanceBeamFlow.BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id MerchantOperatingCity ->
+  PayoutEvents.PayoutServiceEventResp ->
+  Text ->
+  PayoutStripeWebhookData ->
+  m AckResponse
+stripePayoutWebhookService merchantOperatingCityId resp respDump webhookData = do
+  logWarning $ "Stripe payout webhook dump: " <> respDump
+  logWarning $
+    "Stripe payout webhook (merchantOperatingCityId=" <> merchantOperatingCityId.getId <> "): " <> show resp
+
+  case webhookData of
+    PayoutStripePayoutWebhookData pObj ->
+      case pObj.orderId of
+        Nothing ->
+          throwError $
+            InvalidRequest $
+              "order_id not found in Stripe payout metadata for eventId: " <> resp.id.getId
+        Just orderId -> do
+          let statusResp = mkPayoutOrderStatusRespFromPayout orderId pObj
+          Redis.whenWithLockRedis (payoutStripeWebhookLockKey orderId) 60 $
+            payoutStatusUpdates orderId statusResp
+    PayoutStripeTransferWebhookData tObj ->
+      logInfo $
+        "Stripe transfer webhook (payout_order wiring pending): "
+          <> show tObj
+          <> "; eventId: "
+          <> resp.id.getId
+    SkipPayoutStripeWebhookData ->
+      logInfo $
+        "Skip Stripe payout webhook event: "
+          <> show resp.eventType
+          <> "; eventId: "
+          <> resp.id.getId
+
+  pure Ack
+
+payoutStripeWebhookLockKey :: Text -> Text
+payoutStripeWebhookLockKey orderId = "Payout:Stripe:Webhook:OrderId-" <> orderId
+
+mkPayoutOrderStatusRespFromPayout :: Text -> PayoutEvents.Payout -> PT.CreatePayoutOrderResp
+mkPayoutOrderStatusRespFromPayout orderId pObj =
+  PT.CreatePayoutOrderResp
+    { orderId = orderId,
+      status = IPayoutStripe.castPayoutStatus pObj.status,
+      transferStatus = Nothing,
+      orderType = pObj.orderType,
+      transferId = Nothing,
+      idAssignedByServiceProvider = Just $ IPayoutStripe.unPayoutId pObj.payoutId,
+      udf1 = Nothing,
+      udf2 = Nothing,
+      udf3 = Nothing,
+      udf4 = Nothing,
+      udf5 = Nothing,
+      amount = pObj.amount,
+      refunds = Nothing,
+      payments = Nothing,
+      fulfillments = Nothing,
+      customerId = pObj.customerId,
+      merchantTopUpAmount = Nothing
+    }
+
+txnStripeProccessingKey :: Text -> Text
+txnStripeProccessingKey txnId = "Txn:Stripe:Processing:TxnId-" <> txnId
+
+mkDefaultStripeOrderTxn :: Payment.TransactionStatus -> HighPrecMoney -> Currency -> OrderTxn
+mkDefaultStripeOrderTxn transactionStatus amount currency =
+  OrderTxn
+    { transactionUUID = Nothing,
+      transactionStatusId = 0, -- not used in stripe
+      txnId = Nothing,
+      paymentMethodType = Nothing,
+      paymentMethod = Nothing,
+      respMessage = Nothing,
+      respCode = Nothing,
+      gatewayReferenceId = Nothing,
+      applicationFeeAmount = Nothing,
+      bankErrorMessage = Nothing,
+      bankErrorCode = Nothing,
+      dateCreated = Nothing,
+      mandateStatus = Nothing,
+      mandateStartDate = Nothing,
+      mandateEndDate = Nothing,
+      mandateId = Nothing,
+      mandateFrequency = Nothing,
+      mandateMaxAmount = Nothing,
+      isRetried = Nothing,
+      isRetargeted = Nothing,
+      retargetLink = Nothing,
+      splitSettlementResponse = Nothing,
+      customerName = Nothing,
+      gatewayName = Nothing,
+      cardType = Nothing,
+      surchargeAmount = Nothing,
+      taxAmount = Nothing,
+      netAmount = Nothing,
+      epgTxnId = Nothing,
+      cardBrand = Nothing,
+      cardIsin = Nothing,
+      cardLastFourDigits = Nothing,
+      cardIssuer = Nothing,
+      authorizationDateTime = Nothing,
+      captureDateTime = Nothing,
+      vpa = Nothing,
+      ..
+    }
+
+mkPaymentIntentOrderTxn :: PEInterface.PaymentIntent -> (Maybe Text, OrderTxn)
+mkPaymentIntentOrderTxn PEInterface.PaymentIntent {..} = do
+  let transactionStatus = Payment.castToTransactionStatus status
+      defaultOrderTxn = mkDefaultStripeOrderTxn transactionStatus amount currency
+      orderTxn =
+        defaultOrderTxn{txnId = Just paymentIntentId,
+                        transactionUUID = Just paymentIntentId,
+                        paymentMethod = paymentMethod,
+                        dateCreated = Just createdAt,
+                        applicationFeeAmount = applicationFeeAmount
+                       }
+  (orderShortId, orderTxn)
+
+mkChargeOrderTxn :: PEInterface.Charge -> (Maybe Text, OrderTxn)
+mkChargeOrderTxn PEInterface.Charge {..} = do
+  let transactionStatus = PInterface.castChargeToTransactionStatus status
+      defaultOrderTxn = mkDefaultStripeOrderTxn transactionStatus amount currency
+      orderTxn =
+        defaultOrderTxn{txnId = paymentIntentId,
+                        transactionUUID = paymentIntentId,
+                        paymentMethod = paymentMethod,
+                        dateCreated = Just createdAt,
+                        applicationFeeAmount = applicationFeeAmount,
+                        bankErrorMessage = failureMessage,
+                        bankErrorCode = failureCode
+                       }
+  (orderShortId, orderTxn)
+
+updateRefundsByWebhook ::
+  forall m r.
+  ( BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id MerchantOperatingCity ->
+  PEInterface.Refund ->
+  m ()
+updateRefundsByWebhook merchantOpCityId refundInfo = do
+  refundsId <- (Id @Refunds <$>) $ refundInfo.refundsId & fromMaybeM (InvalidRequest "refundsId not found")
+  refunds <- HQRefunds.findById refundsId >>= fromMaybeM (InvalidRequest $ "No refunds matches passed data \"" <> refundsId.getId <> "\" not exist.")
+  -- The reference lands on a refund.updated whose status and errorCode are unchanged, so it has to be
+  -- in the guard or it is dropped.
+  when (refundInfo.errorCode /= refunds.errorCode || refundInfo.status /= refunds.status || (isJust refundInfo.reference && refundInfo.reference /= refunds.arn)) $ do
+    now <- getCurrentTime
+    -- Keep the first terminal timestamp; a late reference-only update would otherwise restamp it.
+    let newCompletedAt = refunds.completedAt <|> calculateCompletedAt refundInfo.status now
+    HQRefunds.updateRefundsEntryByStripeResponse merchantOpCityId refunds.idAssignedByServiceProvider refundInfo.errorCode refundInfo.status (refundInfo.reference <|> refunds.arn) (refundInfo.referenceType <|> refunds.referenceType) refunds.isApiCallSuccess newCompletedAt (Just refundInfo.amount) refunds (Just "update refunds by webhook")
+
+--- notification api ----------
+
+createNotificationService ::
+  ( EncFlow m r,
+    EsqDBReplicaFlow m r,
+    EsqDBFlow m r
+  ) =>
+  Payment.MandateNotificationReq ->
+  (Payment.MandateNotificationReq -> m Payment.MandateNotificationRes) ->
+  m Payment.MandateNotificationRes
+createNotificationService req notificationCall = do
+  notificationCall req
+
+----- execution api --------
+
+createExecutionService ::
+  ( EncFlow m r,
+    HasShortDurationRetryCfg r c,
+    PaymentBeamFlow.BeamFlow m r
+  ) =>
+  (Payment.MandateExecutionReq, Text) ->
+  Id Merchant ->
+  Maybe (Id MerchantOperatingCity) ->
+  (Payment.MandateExecutionReq -> m Payment.MandateExecutionRes) ->
+  m Payment.MandateExecutionRes
+createExecutionService (request, orderId) merchantId mbMerchantOpCityId executionCall = do
+  executionOrder <- mkExecutionOrder request
+  QOrder.create executionOrder
+  buildPaymentSplit orderId executionOrder (PInterface.AmountBased <$> request.splitSettlementDetails) merchantId mbMerchantOpCityId
+  executionResp <- withShortRetry $ executionCall request
+  QOrder.updateStatus (Id orderId) executionResp.orderId executionResp.status
+  return executionResp
+  where
+    mkExecutionOrder req = do
+      now <- getCurrentTime
+      return
+        DOrder.PaymentOrder
+          { id = Id orderId,
+            shortId = ShortId req.orderId, ---- to check --------
+            paymentServiceOrderId = "Unknown",
+            requestId = Nothing,
+            service = Nothing,
+            clientId = Nothing,
+            description = Nothing,
+            returnUrl = Nothing,
+            action = Nothing,
+            personId = Id req.customerId,
+            merchantId = merchantId,
+            entityName = Nothing,
+            paymentServiceType = Nothing,
+            paymentMerchantId = Nothing,
+            amount = req.amount,
+            currency = INR,
+            status = Payment.NEW,
+            paymentLinks = Payment.PaymentLinks Nothing Nothing Nothing Nothing,
+            clientAuthToken = Nothing,
+            clientAuthTokenExpiry = Nothing,
+            serviceProvider = Payment.Juspay, -- fix it later
+            getUpiDeepLinksOption = Nothing,
+            environment = Nothing,
+            createMandate = Nothing,
+            mandateMaxAmount = Nothing,
+            mandateStartDate = Nothing,
+            mandateEndDate = Nothing,
+            bankErrorMessage = Nothing,
+            bankErrorCode = Nothing,
+            isRetried = False,
+            isRetargeted = False,
+            retargetLink = Nothing,
+            sdkPayloadDump = Nothing,
+            validTill = Nothing,
+            createdAt = now,
+            updatedAt = now,
+            merchantOperatingCityId = mbMerchantOpCityId,
+            paymentFulfillmentStatus = Just FulfillmentPending,
+            domainEntityId = Nothing,
+            domainTransactionId = Nothing,
+            effectAmount = Nothing,
+            isMockPayment = Just False,
+            paytmTid = Nothing,
+            groupId = Nothing,
+            vpa = Nothing,
+            pgBaseFee = Nothing,
+            pgGst = Nothing
+          }
+
+--- refunds api ----
+
+createRefundService ::
+  ( EncFlow m r,
+    BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id MerchantOperatingCity ->
+  ShortId DOrder.PaymentOrder ->
+  (Payment.AutoRefundReq -> m Payment.AutoRefundResp) ->
+  m (Maybe Payment.AutoRefundResp)
+createRefundService merchantOpCityId orderShortId refundsCall =
+  do
+    order <- QOrder.findByShortId orderShortId >>= fromMaybeM (PaymentOrderDoesNotExist orderShortId.getShortId)
+    logDebug $ "Payment order details - shortId: " <> orderShortId.getShortId <> ", id: " <> order.id.getId <> ", status: " <> show order.status <> ", amount: " <> show order.amount.getHighPrecMoney <> ", currency: " <> show order.currency <> ", paymentServiceType: " <> show order.paymentServiceType <> ", paymentServiceOrderId: " <> order.paymentServiceOrderId
+    logDebug $ "Effect amount: " <> show order.effectAmount
+    Redis.whenWithLockRedisAndReturnValue (refundProccessingKey orderShortId.getShortId) 60 $ do
+      processRefund order
+    >>= \case
+      Left _ -> return Nothing
+      Right response -> return response
+  where
+    -- processRefund :: DOrder.PaymentOrder -> m (Maybe Payment.AutoRefundResp)
+    processRefund order = do
+      existingOrderRefunds <- HQRefunds.findLatestByOrderId order.shortId
+      if isNothing existingOrderRefunds
+        then do
+          paymentSplits <- QPaymentOrderSplit.findByPaymentOrder order.id
+          splitSettlementDetails <-
+            case order.effectAmount of
+              Just effectAmount | effectAmount /= order.amount -> return Nothing
+              _ -> mkSplitSettlementDetails paymentSplits
+          refundId <- generateGUID
+          let refundAmount = case order.effectAmount of
+                Just effectAmount | effectAmount /= order.amount -> effectAmount
+                _ -> order.amount
+          let refundReq =
+                PInterface.AutoRefundReq
+                  { orderId = order.shortId.getShortId,
+                    requestId = refundId,
+                    amount = refundAmount,
+                    splitSettlementDetails
+                  }
+          logDebug $ "Refund request splitSettlementDetails : " <> show splitSettlementDetails
+          refundsEntry <- mkRefundsEntry order.merchantId refundReq.requestId order.shortId refundAmount PInterface.REFUND_PENDING
+          let mbAction = Just "create refunds service"
+          HQRefunds.create merchantOpCityId refundsEntry mbAction
+          resp <- withTryCatch "refundsCall:refundService" (refundsCall refundReq)
+          case resp of
+            Right response -> do
+              mapM_ (upsertRefundStatus merchantOpCityId order) response.refunds
+              HQRefunds.updateIsApiCallSuccess merchantOpCityId (Just True) refundsEntry mbAction
+              return $ Just response
+            Left err -> do
+              logError $ "Refund API Call Failure with Error: " <> show err
+              HQRefunds.updateIsApiCallSuccess merchantOpCityId (Just False) refundsEntry mbAction
+              return Nothing
+        else return Nothing
+    mkSplitSettlementDetails :: MonadFlow m => [DPaymentOrderSplit.PaymentOrderSplit] -> m (Maybe PInterface.RefundSplitSettlementDetails)
+    mkSplitSettlementDetails paymentSplits = do
+      if null paymentSplits
+        then return Nothing
+        else do
+          marketPlaceSplit <- find (\split -> split.vendorId == "marketPlace") paymentSplits & fromMaybeM (InternalError "marketPlace Split Detail not Found")
+          let vendorSplits =
+                map
+                  ( \split ->
+                      PInterface.RefundSplit
+                        { refundAmount = split.amount.amount,
+                          subMid = split.vendorId,
+                          uniqueSplitId = fromMaybe split.id.getId split.transactionId
+                        }
+                  )
+                  paymentSplits
+              mdrBorneBy = marketPlaceSplit.mdrBorneBy
+          return $
+            Just $
+              PInterface.RefundSplitSettlementDetails
+                { marketplace = PInterface.RefundMarketplace marketPlaceSplit.amount.amount,
+                  mdrBorneBy,
+                  vendor = PInterface.RefundVendor vendorSplits
+                }
+
+refundProccessingKey :: Text -> Text
+refundProccessingKey refundId = "Refund:Processing:RefundId" <> refundId
+
+mkRefundsEntry :: PaymentBeamFlow.BeamFlow m r => Id Merchant -> Text -> ShortId DOrder.PaymentOrder -> HighPrecMoney -> PInterface.RefundStatus -> m Refunds
+mkRefundsEntry merchantId requestId orderShortId amount refundStatus = do
+  now <- getCurrentTime
+  return $
+    Refunds
+      { id = Id requestId,
+        merchantId = merchantId.getId,
+        shortId = ShortId requestId,
+        status = refundStatus,
+        isApiCallSuccess = if refundStatus == PInterface.REFUND_PENDING then Nothing else Just True,
+        orderId = orderShortId,
+        refundAmount = amount,
+        errorMessage = Nothing,
+        errorCode = Nothing,
+        idAssignedByServiceProvider = Nothing,
+        initiatedBy = Nothing,
+        createdAt = now,
+        updatedAt = now,
+        arn = Nothing,
+        referenceType = Nothing,
+        completedAt = Nothing,
+        actualRefundedAmount = Nothing
+      }
+
+upsertRefundStatus :: (BeamFlow m r, Finance.HasActorInfo m r) => Id MerchantOperatingCity -> DOrder.PaymentOrder -> Payment.RefundsData -> m (Maybe Refunds)
+upsertRefundStatus merchantOpCityId order Payment.RefundsData {..} =
+  do
+    now <- getCurrentTime
+    let newCompletedAt = calculateCompletedAt status now
+    Redis.whenWithLockRedisAndReturnValue upsertRefundProcessingKey 60 $
+      ( do
+          let mbAction = Just "upsert refunds status"
+          HQRefunds.findById (Id requestId)
+            >>= \case
+              Just refundEntry -> do
+                HQRefunds.updateRefundsEntryByResponse merchantOpCityId initiatedBy idAssignedByServiceProvider errorMessage errorCode status arn newCompletedAt (Just amount) refundEntry mbAction
+                return $ refundEntry {status = status, initiatedBy = initiatedBy, idAssignedByServiceProvider = idAssignedByServiceProvider, errorMessage = errorMessage, errorCode = errorCode, arn = arn, completedAt = newCompletedAt, actualRefundedAmount = Just amount}
+              Nothing -> do
+                refundEntry <- mkRefundsEntry order.merchantId requestId order.shortId order.amount status
+                HQRefunds.create merchantOpCityId refundEntry mbAction
+                return refundEntry
+      )
+    >>= \case
+      Left _ -> return Nothing
+      Right refundEntry -> return $ Just refundEntry
+  where
+    upsertRefundProcessingKey = "RefundUpsert:Processing:RequestId:" <> requestId
+
+-- | Calculate completedAt timestamp for terminal refund statuses
+calculateCompletedAt :: Payment.RefundStatus -> UTCTime -> Maybe UTCTime
+calculateCompletedAt status now =
+  case status of
+    Payment.REFUND_SUCCESS -> Just now
+    Payment.REFUND_FAILURE -> Just now
+    _ -> Nothing
+
+txnProccessingKey :: Text -> Text
+txnProccessingKey txnUUid = "Txn:Processing:TxnUuid" <> txnUUid
+
+-- payout APIs ---
+
+data CreatePayoutServiceReq = CreatePayoutServiceReq
+  { orderId :: Text,
+    amount :: HighPrecMoney,
+    transferAmount :: HighPrecMoney,
+    currency :: Currency,
+    customerPhone :: Text,
+    customerEmail :: Text,
+    customerId :: Text,
+    orderType :: Text,
+    remark :: Text,
+    customerName :: Text,
+    customerVpa :: Maybe Text,
+    payoutServiceFlow :: PT.PayoutServiceFlow
+  }
+
+mkCreatePayoutOrderReq :: Maybe Text -> Maybe Text -> CreatePayoutServiceReq -> PT.CreatePayoutOrderReq
+mkCreatePayoutOrderReq mRoutingId mConnectedAccountId CreatePayoutServiceReq {..} = PT.CreatePayoutOrderReq {mExternalAccountId = Nothing, ..}
+
+createPayoutService ::
+  ( EncFlow m r,
+    BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id Merchant ->
+  Maybe (Id MerchantOperatingCity) ->
+  Id Person ->
+  Maybe [Text] ->
+  Maybe EntityName ->
+  Text ->
+  CreatePayoutServiceReq ->
+  (CreatePayoutServiceReq -> m PT.CreatePayoutOrderResp) ->
+  Maybe PGFeeConfig -> -- fee config from JuspayConfig (if configured)
+  m (Maybe PT.CreatePayoutOrderResp, Maybe Payment.PayoutOrder)
+createPayoutService merchantId mbMerchantOpCityId _personId mbEntityIds mbEntityName city createPayoutServiceReq createPayoutOrderCall mbPGFeeConfig = do
+  mbExistingPayoutOrder <- QPayoutOrder.findByOrderId createPayoutServiceReq.orderId
+  case mbExistingPayoutOrder of
+    Nothing -> do
+      payoutOrder <- buildInitialPayoutOrder createPayoutServiceReq
+      QPayoutOrder.create payoutOrder
+      createPayoutOrderResp <- createPayoutOrderCall createPayoutServiceReq -- api call
+      -- Record PG fee ledger entries if configured
+      mbFeeResult <- case mbPGFeeConfig of
+        Just feeConfig -> do
+          let merchantOpCityId = maybe merchantId.getId getId mbMerchantOpCityId
+          result <- recordPGFeeLedgerEntries PGPayout feeConfig merchantId.getId merchantOpCityId createPayoutServiceReq.orderId
+          case result of
+            Right feeResult -> pure $ Just feeResult
+            Left _err -> pure Nothing
+        Nothing -> pure Nothing
+      let txn = listToMaybe <$> sortBy (comparing (.updatedAt)) =<< ((.transactions) =<< listToMaybe =<< createPayoutOrderResp.fulfillments)
+      QPayoutOrder.updatePostCreateFieldsSafely
+        createPayoutServiceReq.orderId
+        createPayoutOrderResp.status
+        ((.responseCode) =<< txn)
+        ((.responseMessage) =<< txn)
+        ((.detailsType) =<< (.beneficiaryDetails) =<< listToMaybe =<< createPayoutOrderResp.fulfillments)
+        ((.pgBaseFee) <$> mbFeeResult)
+        ((.pgGst) <$> mbFeeResult)
+        createPayoutOrderResp.idAssignedByServiceProvider
+        createPayoutOrderResp.transferStatus
+        createPayoutOrderResp.transferId
+        createPayoutOrderResp.merchantTopUpAmount
+      latestPayoutOrder <- QPayoutOrder.findByOrderId createPayoutServiceReq.orderId
+      return (Just createPayoutOrderResp, latestPayoutOrder)
+    Just existingPayoutOrder -> throwError $ PayoutOrderAlreadyExists (existingPayoutOrder.id.getId)
+  where
+    buildInitialPayoutOrder req = do
+      now <- getCurrentTime
+      uuid <- generateGUID
+      shortId <- generateShortId
+      customerEmail <- encrypt req.customerEmail
+      mobileNo <- encrypt req.customerPhone
+      let transferStatus = case createPayoutServiceReq.payoutServiceFlow of
+            PT.JuspayFlow -> Nothing
+            PT.StripeFlow -> Just Payout.TRANSFER_INITIATED
+      pure $
+        Payment.PayoutOrder
+          { id = uuid,
+            shortId = Just shortId,
+            customerId = req.customerId,
+            orderId = req.orderId,
+            merchantId = merchantId.getId,
+            mobileNo = mobileNo,
+            city = city,
+            amount = mkPrice Nothing req.amount,
+            transferAmount = Just req.transferAmount,
+            idAssignedByServiceProvider = Nothing,
+            entityIds = mbEntityIds,
+            entityName = mbEntityName,
+            status = Payout.INITIATED,
+            transferStatus,
+            transferId = Nothing,
+            responseMessage = Nothing,
+            responseCode = Nothing,
+            retriedOrderId = Nothing,
+            accountDetailsType = Nothing, --- for now only one fullfillment supported
+            vpa = req.customerVpa,
+            customerEmail = customerEmail,
+            lastStatusCheckedAt = Nothing,
+            pgBaseFee = Nothing,
+            pgGst = Nothing,
+            merchantTopUpAmount = Nothing,
+            createdAt = now,
+            updatedAt = now,
+            merchantOperatingCityId = getId <$> mbMerchantOpCityId
+          }
+
+data PayoutStatusServiceReq = PayoutStatusServiceReq
+  { orderId :: Text,
+    mbExpand :: Maybe PT.Expand
+  }
+
+mkPayoutOrderStatusReq :: Payment.PayoutOrder -> Maybe Text -> Maybe Text -> PayoutStatusServiceReq -> PT.PayoutOrderStatusReq
+mkPayoutOrderStatusReq payoutOrder mRoutingId mConnectedAccountId PayoutStatusServiceReq {..} =
+  PT.PayoutOrderStatusReq
+    { idAssignedByServiceProvider = payoutOrder.idAssignedByServiceProvider,
+      transferStatus = payoutOrder.transferStatus,
+      transferId = Payout.TransferId <$> payoutOrder.transferId,
+      ..
+    }
+
+payoutStatusService ::
+  ( EncFlow m r,
+    PaymentBeamFlow.BeamFlow m r,
+    FinanceBeamFlow.BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id Merchant ->
+  Id Person ->
+  PayoutStatusServiceReq ->
+  (Payment.PayoutOrder -> PayoutStatusServiceReq -> m PT.PayoutOrderStatusResp) ->
+  m PayoutPaymentStatus
+payoutStatusService _merchantId _personId payoutStatusServiceReq createPayoutOrderStatusCall = do
+  payoutOrder <- QPayoutOrder.findByOrderId payoutStatusServiceReq.orderId >>= fromMaybeM (PayoutOrderNotFound (payoutStatusServiceReq.orderId)) -- validation
+  statusResp <- createPayoutOrderStatusCall payoutOrder payoutStatusServiceReq -- api call
+  payoutStatusUpdates payoutStatusServiceReq.orderId statusResp
+  pure $ PayoutPaymentStatus {status = statusResp.status, transferStatus = statusResp.transferStatus, orderId = statusResp.orderId, accountDetailsType = show <$> ((.detailsType) =<< (.beneficiaryDetails) =<< listToMaybe =<< statusResp.fulfillments)}
+
+payoutStatusUpdates :: (EncFlow m r, PaymentBeamFlow.BeamFlow m r, FinanceBeamFlow.BeamFlow m r, Finance.HasActorInfo m r) => Text -> PT.PayoutOrderStatusResp -> m ()
+payoutStatusUpdates orderId statusResp = do
+  order <- QPayoutOrder.findByOrderId orderId >>= fromMaybeM (PayoutOrderNotFound orderId)
+  case statusResp.transferStatus of
+    Just transferStatus -> QPayoutOrder.updatePayoutOrderStatusAndTransferStatus statusResp.status (Just transferStatus) orderId -- Stripe specific
+    Nothing -> QPayoutOrder.updatePayoutOrderStatus statusResp.status orderId
+  logDebug $ "Payout order Status: " <> show statusResp
+  let Payout.CreatePayoutOrderResp {orderId = _orderPayoutId, status = _status, ..} = statusResp
+  let mbFulfillment = listToMaybe =<< fulfillments
+      txns = (.transactions) =<< mbFulfillment
+      mbTxn = listToMaybe <$> sortBy (comparing (.updatedAt)) =<< txns
+  QPayoutOrder.updatePayoutOrderTxnRespInfo ((.responseCode) =<< mbTxn) ((.responseMessage) =<< mbTxn) orderId
+  updatePayoutRequestStatusFromOrder order statusResp.status
+  whenJust mbTxn $ \JuspayPayout.Transaction {amount = amount_txn, ..} -> do
+    findTransaction <- QPayoutTransaction.findByTransactionRef transactionRef
+    let mbBeneficiaryDetails = (.beneficiaryDetails) =<< mbFulfillment
+        mbDetails = (.details) =<< mbBeneficiaryDetails
+    case findTransaction of
+      Just _ -> QPayoutTransaction.updatePayoutTransactionStatus status transactionRef
+      Nothing -> do
+        uuid <- generateGUID
+        now <- getCurrentTime
+        let payoutTransaction =
+              PT.PayoutTransaction
+                { id = uuid,
+                  merchantId = order.merchantId,
+                  merchantOperatingCityId = order.merchantOperatingCityId,
+                  payoutOrderId = Id orderId,
+                  transactionRef = transactionRef,
+                  gateWayRefId = gatewayRefId,
+                  fulfillmentMethod = fulfillmentMethod,
+                  amount = mkPrice Nothing (realToFrac amount_txn),
+                  status = status,
+                  beneficiaryName = (.name) <$> mbDetails,
+                  beneficiaryAccount = (.account) =<< mbDetails,
+                  beneficiaryIfsc = (.ifsc) =<< mbDetails,
+                  createdAt = now,
+                  updatedAt = now
+                }
+        QPayoutTransaction.create payoutTransaction
+
+updatePayoutRequestStatusFromOrder ::
+  (PaymentBeamFlow.BeamFlow m r, FinanceBeamFlow.BeamFlow m r, Finance.HasActorInfo m r) =>
+  Payment.PayoutOrder ->
+  JuspayPayout.PayoutOrderStatus ->
+  m ()
+updatePayoutRequestStatusFromOrder order orderStatus = do
+  let newStatus = RequestStatus.castPayoutOrderStatusToPayoutRequestStatus orderStatus
+      protectedStatuses = [DPayoutRequest.CREDITED, DPayoutRequest.CASH_PAID, DPayoutRequest.CASH_PENDING]
+  when (newStatus /= DPayoutRequest.PROCESSING) $
+    forM_ (fromMaybe [] order.entityIds) $ \entityId -> do
+      mbPayoutRequest <- QPayoutRequest.findById (Id entityId)
+      whenJust mbPayoutRequest $ \payoutRequest ->
+        when (payoutRequest.status /= newStatus && payoutRequest.status `notElem` protectedStatuses) $
+          RequestStatus.updatePayoutRequestStatusWithHistory newStatus (Just $ "Payout order status: " <> show orderStatus) payoutRequest
+
+mkCreatePayoutServiceReq ::
+  Text ->
+  HighPrecMoney ->
+  Currency ->
+  Maybe Text ->
+  Maybe Text ->
+  Text ->
+  Text ->
+  Maybe Text ->
+  Maybe Text ->
+  Text ->
+  Payout.PayoutServiceFlow ->
+  Maybe HighPrecMoney -> -- explicit transferAmount (Nothing = use 0)
+  CreatePayoutServiceReq
+mkCreatePayoutServiceReq orderId amount currency mbPhoneNo mbEmail customerId remark mbCustomerName customerVpa orderType payoutServiceFlow mbTransferAmount =
+  CreatePayoutServiceReq
+    { customerPhone = fromMaybe "6666666666" mbPhoneNo,
+      customerEmail = fromMaybe "growth@nammayatri.in" mbEmail,
+      customerName = fromMaybe "Unknown Customer" mbCustomerName,
+      transferAmount = fromMaybe 0 mbTransferAmount,
+      ..
+    }
+
+------ verifyVPA api ------
+
+verifyVPAService ::
+  ( EncFlow m r,
+    PaymentBeamFlow.BeamFlow m r
+  ) =>
+  Payment.VerifyVPAReq ->
+  (Payment.VerifyVPAReq -> m Payment.VerifyVPAResp) ->
+  m Payment.VerifyVPAResp
+verifyVPAService verifyVPAReq verifyVPACall = do
+  verifyVPACall verifyVPAReq -- api call
+
+getOrderShortId :: MonadFlow m => PaymentStatusResp -> m (ShortId DOrder.PaymentOrder)
+getOrderShortId paymentStatusResp = case paymentStatusResp of
+  PaymentStatus {..} -> pure orderShortId
+  _ -> throwError $ InternalError "Order Id not found in response."
+
+getTransactionStatus :: MonadFlow m => PaymentStatusResp -> m Payment.TransactionStatus
+getTransactionStatus paymentStatusResp = case paymentStatusResp of
+  PaymentStatus {..} -> pure status
+  _ -> throwError $ InternalError "Transaction Status not found in response."
+
+---------------------  Wallet APIs ---------------------
+
+createWalletService :: PaymentBeamFlow.BeamFlow m r => Wallet.CreateWalletReq -> (Wallet.CreateWalletReq -> m Wallet.CreateWalletResp) -> m Wallet.CreateWalletResp
+createWalletService createWalletReq createWalletCall = do
+  mbCreateWalletResp <- withTryCatch "createWalletService" (createWalletCall createWalletReq)
+  case mbCreateWalletResp of
+    Right createWalletResp -> do
+      case createWalletResp.success of
+        True -> do
+          return createWalletResp
+        False -> throwError $ InternalError $ "createWalletService failed with error: " <> show createWalletResp
+    Left err -> throwError $ InternalError $ "createWalletService failed with error: " <> show err
+
+walletPostingService :: PaymentBeamFlow.BeamFlow m r => Wallet.WalletPostingReq -> (Wallet.WalletPostingReq -> m Wallet.WalletPostingResp) -> m Wallet.WalletPostingResp
+walletPostingService walletPostingReq walletPostingCall = do
+  mbWalletPostingResp <- withTryCatch "walletPostingService" (walletPostingCall walletPostingReq)
+  case mbWalletPostingResp of
+    Right walletPostingResp -> do
+      case walletPostingResp.success of
+        True -> do
+          return walletPostingResp
+        False -> throwError $ InternalError $ "walletPostingService failed with error: " <> show walletPostingResp
+    Left err -> throwError $ InternalError $ "walletPostingService failed with error: " <> show err
+
+walletBalanceService :: PaymentBeamFlow.BeamFlow m r => Wallet.WalletBalanceReq -> (Wallet.WalletBalanceReq -> m Wallet.WalletBalanceResp) -> m Wallet.WalletBalanceResp
+walletBalanceService walletBalanceReq walletBalanceCall = do
+  mbWalletBalanceResp <- withTryCatch "walletBalanceService" (walletBalanceCall walletBalanceReq)
+  case mbWalletBalanceResp of
+    Right walletBalanceResp -> do
+      case walletBalanceResp.success of
+        True -> do
+          return walletBalanceResp
+        False -> throwError $ InternalError $ "walletBalanceService failed with error: " <> show walletBalanceResp
+    Left err -> throwError $ InternalError $ "walletBalanceService failed with error: " <> show err
+
+walletReversalService :: PaymentBeamFlow.BeamFlow m r => Wallet.WalletReversalReq -> (Wallet.WalletReversalReq -> m Wallet.WalletReversalResp) -> m Wallet.WalletReversalResp
+walletReversalService walletReversalReq walletReversalCall = do
+  mbWalletReversalResp <- withTryCatch "walletReversalService" (walletReversalCall walletReversalReq)
+  case mbWalletReversalResp of
+    Right walletReversalResp -> do
+      case walletReversalResp.success of
+        True -> do
+          return walletReversalResp
+        False -> throwError $ InternalError $ "walletReversalService failed with error: " <> show walletReversalResp
+    Left err -> throwError $ InternalError $ "walletReversalService failed with error: " <> show err
+
+walletVerifyTxnService :: PaymentBeamFlow.BeamFlow m r => Wallet.WalletVerifyTxnReq -> (Wallet.WalletVerifyTxnReq -> m Wallet.WalletVerifyTxnResp) -> m Wallet.WalletVerifyTxnResp
+walletVerifyTxnService walletVerifyTxnReq walletVerifyTxnCall = do
+  mbWalletVerifyTxnResp <- withTryCatch "walletVerifyTxnService" (walletVerifyTxnCall walletVerifyTxnReq)
+  case mbWalletVerifyTxnResp of
+    Right walletVerifyTxnResp -> do
+      case walletVerifyTxnResp.success of
+        True -> do
+          return walletVerifyTxnResp
+        False -> throwError $ InternalError $ "walletVerifyTxnService failed with error: " <> show walletVerifyTxnResp
+    Left err -> throwError $ InternalError $ "walletVerifyTxnService failed with error: " <> show err

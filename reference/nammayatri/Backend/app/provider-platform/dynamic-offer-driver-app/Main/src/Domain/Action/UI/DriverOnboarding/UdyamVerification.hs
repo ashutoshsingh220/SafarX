@@ -1,0 +1,208 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is distributed under the terms of the GNU Affero General Public License.
+-}
+
+module Domain.Action.UI.DriverOnboarding.UdyamVerification
+  ( DriverUdyamReq (..),
+    DriverUdyamRes,
+    verifyUdyam,
+    verifyUdyamFlow,
+    onVerifyUdyam,
+  )
+where
+
+import qualified Domain.Action.Dashboard.Common as DCommon
+import qualified Domain.Action.Dashboard.Fleet.RegistrationV2 as DFR
+import qualified Domain.Types.DocumentVerificationConfig as ODC
+import qualified Domain.Types.DriverUdyam as DUdyam
+import Domain.Types.Extra.IdfyVerification (docTypeToText)
+import qualified Domain.Types.IdfyVerification as DIdfy
+import qualified Domain.Types.Image as Image
+import qualified Domain.Types.MerchantOperatingCity as DMOC
+import qualified Domain.Types.Person as Person
+import Environment
+import Kernel.External.Encryption
+import qualified Kernel.External.Verification.Types as VT
+import Kernel.Prelude
+import Kernel.Types.APISuccess
+import qualified Kernel.Types.Documents as Documents
+import Kernel.Types.Error
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import Kernel.Utils.SlidingWindowLimiter (checkSlidingWindowLimitWithOptions)
+import Lib.ConfigPilot.Interface.Types (getOneConfig)
+import SharedLogic.DriverOnboarding (VerificationReqRecord, getDriverDocumentInfo)
+import qualified SharedLogic.DriverOnboarding.Status as SStatus
+import qualified Storage.Cac.TransporterConfig as SCTC
+import Storage.ConfigPilot.Config.TransporterConfig (TransporterConfigDimensions (..))
+import qualified Storage.Queries.DriverUdyam as DUQuery
+import qualified Storage.Queries.IdfyVerification as IVQuery
+import qualified Storage.Queries.Person as PersonQuery
+import Tools.Error
+import qualified Tools.Verification as Verification
+
+data DriverUdyamReq = DriverUdyamReq
+  { uamNumber :: Text,
+    imageId1 :: Id Image.Image
+  }
+  deriving (Generic, Show, FromJSON, ToJSON, ToSchema)
+
+type DriverUdyamRes = APISuccess
+
+makeVerifyUdyamHitsCountKey :: Text -> Text
+makeVerifyUdyamHitsCountKey uamNumber = "VerifyUdyam:uamNumberHits:" <> uamNumber <> ":hitsCount"
+
+verifyUdyam ::
+  (Id Person.Person, Id DMOC.MerchantOperatingCity) ->
+  DriverUdyamReq ->
+  Flow Bool
+verifyUdyam (personId, merchantOpCityId) req = do
+  externalServiceRateLimitOptions <- asks (.externalServiceRateLimitOptions)
+  checkSlidingWindowLimitWithOptions (makeVerifyUdyamHitsCountKey req.uamNumber) externalServiceRateLimitOptions
+
+  person <- PersonQuery.findById personId >>= fromMaybeM (PersonNotFound personId.getId)
+  (blocked, _driverDocument) <- getDriverDocumentInfo person
+  when blocked $ throwError AccountBlocked
+  transporterConfig <- getOneConfig (TransporterConfigDimensions {merchantOperatingCityId = person.merchantOperatingCityId.getId}) (Just (SCTC.findByMerchantOpCityId person.merchantOperatingCityId Nothing)) >>= fromMaybeM (TransporterConfigNotFound person.merchantOperatingCityId.getId)
+  case transporterConfig.allowDuplicateUdyam of
+    Just False -> do
+      udyamHash <- getDbHash req.uamNumber
+      udyamInfoList <- DUQuery.findAllByEncryptedUdyamNumber udyamHash
+      let otherDriverIds = filter (/= person.id) (map (.driverId) udyamInfoList)
+      unless (Kernel.Prelude.null otherDriverIds) $ do
+        otherPersonDetails <- PersonQuery.getDriversByIdIn otherDriverIds
+        when (person.role `elem` map (.role) otherPersonDetails) $ throwError UdyamAlreadyLinked
+    _ -> pure ()
+  cfg <- SStatus.getFleetDocVerificationConfig merchantOpCityId ODC.UDYAMCertificate person.role
+  if cfg.doStrictVerifcation
+    then verifyUdyamFlow person merchantOpCityId req.uamNumber req.imageId1
+    else upsertManualUdyamRecord person req.uamNumber req.imageId1 cfg.markImageValidOnValidationSkip
+  res <- case person.role of
+    Person.DRIVER -> do
+      fork "enabling driver if all the mandatory document is verified" $ do
+        void $ SStatus.processStatusEvent (Just person) (Just transporterConfig) (SStatus.PersonDocChangedEvent person.id)
+      pure False
+    role
+      | DCommon.checkFleetOwnerRole role ->
+        DFR.enableFleetIfPossible person.id Nothing (DFR.castRoleToFleetType person.role) person.merchantOperatingCityId (Just transporterConfig)
+    _ -> pure False
+  pure res
+
+verifyUdyamFlow :: Person.Person -> Id DMOC.MerchantOperatingCity -> Text -> Id Image.Image -> Flow ()
+verifyUdyamFlow person merchantOpCityId uamNumber imageId1 = do
+  now <- getCurrentTime
+  encryptedUam <- encrypt uamNumber
+  let imageExtractionValidation = DIdfy.Skipped
+  verifyRes <-
+    Verification.verifyUdyamAadhaarAsync person.merchantId merchantOpCityId $
+      Verification.VerifyUdyamAadhaarAsyncReq {uamNumber, driverId = person.id.getId}
+  case verifyRes.requestor of
+    VT.Idfy -> IVQuery.create =<< mkIdfyVerificationEntityUdyam person imageId1 verifyRes.requestId now imageExtractionValidation encryptedUam
+    -- Adding an async provider branch? Extend pullSourcesFor + hvWorkflowHint in SyncVerificationStatus.
+    _ -> throwError $ InternalError ("Service provider not configured to return Udyam Aadhaar verification async responses. Provider Name : " <> show verifyRes.requestor)
+  pure ()
+
+onVerifyUdyam :: VerificationReqRecord -> VT.UdyamAadhaarVerificationResponse -> VT.VerificationService -> Flow AckResponse
+onVerifyUdyam verificationReq output serviceName = do
+  case serviceName of
+    VT.Idfy -> do
+      person <- PersonQuery.findById verificationReq.driverId >>= fromMaybeM (PersonNotFound verificationReq.driverId.getId)
+      mDriverUdyam <- DUQuery.findByDriverId person.id
+      now <- getCurrentTime
+      case mDriverUdyam of
+        Just driverUdyam -> do
+          let updated =
+                driverUdyam
+                  { DUdyam.verificationStatus = Documents.VALID,
+                    DUdyam.documentImageId = verificationReq.documentImageId1,
+                    DUdyam.enterpriseName = output.enterpriseName,
+                    DUdyam.enterpriseType = output.enterpriseType,
+                    DUdyam.rejectReason = Nothing,
+                    DUdyam.updatedAt = now
+                  }
+          DUQuery.updateByPrimaryKey updated
+        Nothing -> do
+          udyamCardDetails <- buildDriverUdyamCard person verificationReq.documentNumber output.enterpriseName output.enterpriseType Documents.VALID verificationReq.documentImageId1
+          DUQuery.create udyamCardDetails
+      case person.role of
+        role
+          | DCommon.checkFleetOwnerRole role ->
+            void $ DFR.enableFleetIfPossible person.id Nothing (DFR.castRoleToFleetType person.role) person.merchantOperatingCityId Nothing
+        _ -> pure ()
+    _ -> throwError $ InternalError ("Unknown Service provider webhook encountered in onVerifyUdyam. Name of provider : " <> show serviceName)
+  pure Ack
+
+upsertManualUdyamRecord :: Person.Person -> Text -> Id Image.Image -> Maybe Bool -> Flow ()
+upsertManualUdyamRecord person uamNumber imageId markValidOnSkip = do
+  encryptedUam <- encrypt uamNumber
+  existing <- DUQuery.findByDriverId person.id
+  now <- getCurrentTime
+  let status = if markValidOnSkip == Just True then Documents.VALID else Documents.MANUAL_VERIFICATION_REQUIRED
+  case existing of
+    Just driverUdyam -> do
+      let updated =
+            driverUdyam
+              { DUdyam.udyamNumber = encryptedUam,
+                DUdyam.documentImageId = imageId,
+                DUdyam.verificationStatus = status,
+                DUdyam.rejectReason = Nothing,
+                DUdyam.enterpriseName = Nothing,
+                DUdyam.enterpriseType = Nothing,
+                DUdyam.updatedAt = now
+              }
+      DUQuery.updateByPrimaryKey updated
+    Nothing -> do
+      udyamCardDetails <- buildDriverUdyamCard person encryptedUam Nothing Nothing status imageId
+      DUQuery.create udyamCardDetails
+
+buildDriverUdyamCard :: Person.Person -> EncryptedHashedField 'AsEncrypted Text -> Maybe Text -> Maybe Text -> Documents.VerificationStatus -> Id Image.Image -> Flow DUdyam.DriverUdyam
+buildDriverUdyamCard person encryptedUdyamNumber enterpriseName enterpriseType verificationStatus imageId = do
+  now <- getCurrentTime
+  uuid <- generateGUID
+  return $
+    DUdyam.DriverUdyam
+      { driverId = person.id,
+        documentImageId = imageId,
+        id = Id uuid :: Id DUdyam.DriverUdyam,
+        udyamNumber = encryptedUdyamNumber,
+        verificationStatus = verificationStatus,
+        verifiedBy = Nothing,
+        merchantId = Just person.merchantId,
+        merchantOperatingCityId = Just person.merchantOperatingCityId,
+        enterpriseName = enterpriseName,
+        enterpriseType = enterpriseType,
+        rejectReason = Nothing,
+        createdAt = now,
+        updatedAt = now
+      }
+
+mkIdfyVerificationEntityUdyam :: MonadFlow m => Person.Person -> Id Image.Image -> Text -> UTCTime -> DIdfy.ImageExtractionValidation -> EncryptedHashedField 'AsEncrypted Text -> m DIdfy.IdfyVerification
+mkIdfyVerificationEntityUdyam person imageId1 requestId now imageExtractionValidation encryptedUam = do
+  entityId <- generateGUID
+  return $
+    DIdfy.IdfyVerification
+      { id = Id entityId,
+        driverId = person.id,
+        documentImageId1 = imageId1,
+        documentImageId2 = Nothing,
+        requestId,
+        docType = docTypeToText ODC.UDYAMCertificate,
+        documentNumber = encryptedUam,
+        driverDateOfBirth = Nothing,
+        imageExtractionValidation = imageExtractionValidation,
+        issueDateOnDoc = Nothing,
+        status = "pending",
+        idfyResponse = Nothing,
+        vehicleCategory = Nothing,
+        airConditioned = Nothing,
+        oxygen = Nothing,
+        ventilator = Nothing,
+        retryCount = Just 0,
+        nameOnCard = Nothing,
+        merchantId = Just person.merchantId,
+        merchantOperatingCityId = Just person.merchantOperatingCityId,
+        createdAt = now,
+        updatedAt = now
+      }

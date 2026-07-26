@@ -1,0 +1,47 @@
+CREATE TABLE atlas_app.payout_request ();
+
+ALTER TABLE atlas_app.payout_request ADD COLUMN amount double precision ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN beneficiary_id text NOT NULL;
+ALTER TABLE atlas_app.payout_request ADD COLUMN cash_marked_at timestamp with time zone ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN cash_marked_by_id text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN cash_marked_by_name text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN city text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN created_at timestamp with time zone NOT NULL default CURRENT_TIMESTAMP;
+ALTER TABLE atlas_app.payout_request ADD COLUMN customer_email text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN customer_name text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN customer_phone text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN customer_vpa text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN entity_id text NOT NULL;
+ALTER TABLE atlas_app.payout_request ADD COLUMN entity_name text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN entity_ref_id text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN expected_credit_time timestamp with time zone ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN failure_reason text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN id character varying(36) NOT NULL;
+ALTER TABLE atlas_app.payout_request ADD COLUMN merchant_id text NOT NULL;
+ALTER TABLE atlas_app.payout_request ADD COLUMN merchant_operating_city_id text NOT NULL;
+ALTER TABLE atlas_app.payout_request ADD COLUMN order_type text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN payout_transaction_id text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN remark text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN retry_count integer ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN scheduled_at timestamp with time zone ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN status text NOT NULL;
+ALTER TABLE atlas_app.payout_request ADD COLUMN updated_at timestamp with time zone NOT NULL default CURRENT_TIMESTAMP;
+ALTER TABLE atlas_app.payout_request ADD PRIMARY KEY ( id);
+
+
+
+------- SQL updates -------
+
+ALTER TABLE atlas_app.payout_request ADD COLUMN payout_fee double precision ;
+
+
+------- SQL updates -------
+
+ALTER TABLE atlas_app.payout_request ADD COLUMN payout_type text ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN coverage_to timestamp with time zone ;
+ALTER TABLE atlas_app.payout_request ADD COLUMN coverage_from timestamp with time zone ;
+
+
+------- SQL updates -------
+
+ALTER TABLE atlas_app.payout_request ADD COLUMN ledger_entry_ids text[] ;

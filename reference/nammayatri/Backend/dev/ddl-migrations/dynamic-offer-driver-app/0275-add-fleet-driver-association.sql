@@ -1,0 +1,4 @@
+CREATE INDEX idx_vehicle_registration_certificate_fleet_owner_id ON atlas_driver_offer_bpp.vehicle_registration_certificate USING btree (fleet_owner_id);
+CREATE INDEX idx_ride_detail_fleet_owner_id ON atlas_driver_offer_bpp.ride_details USING btree (fleet_owner_id);
+CREATE INDEX idx_ride_detail_driver_number_hash ON atlas_driver_offer_bpp.ride_details USING btree (driver_number_hash);
+CREATE INDEX idx_ride_detail_vehicle_number ON atlas_driver_offer_bpp.ride_details USING btree (vehicle_number);

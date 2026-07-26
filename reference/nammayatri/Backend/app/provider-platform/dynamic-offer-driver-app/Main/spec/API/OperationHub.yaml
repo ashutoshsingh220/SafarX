@@ -1,0 +1,63 @@
+imports:
+  MerchantOperatingCity: Domain.Types.MerchantOperatingCity
+  Merchant: Domain.Types.Merchant
+  OperationHub: Domain.Types.OperationHub
+  APISuccess: Kernel.Types.APISuccess
+  RequestType: Domain.Types.OperationHubRequests
+  RequestStatus: Domain.Types.OperationHubRequests
+  OperationHubRequests: Domain.Types.OperationHubRequests
+  UTCTime: Kernel.Prelude
+  Person: Domain.Types.Person
+  Summary: Dashboard.Common
+
+module: OperationHub
+
+types:
+  DriverOperationHubRequest:
+    requestType: RequestType
+    operationHubId: Id OperationHub
+    registrationNo: Maybe Text
+    driverId: Maybe (Id Person)
+    creatorId: Text
+  OperationHubRequestsResp:
+    - recordType: NewType
+    - requests: [OperationHubDriverRequest]
+  OperationHubDriverRequest:
+    id: Text
+    operationHubId: Id OperationHub
+    operationHubName: Text
+    operationHubAddress: Text
+    operationHubContact: Text
+    driverPhoneNo: Maybe Text
+    driverId: Maybe (Id Person)
+    registrationNo: Maybe Text
+    requestType: RequestType
+    requestStatus: RequestStatus
+    requestTime: UTCTime
+apis:
+  - GET:
+      endpoint: /operation/getAllHubs
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: "[OperationHub]"
+  - POST:
+      endpoint: /operation/createRequest
+      auth: TokenAuth PROVIDER_TYPE
+      request:
+        type: DriverOperationHubRequest
+      response:
+        type: APISuccess
+  - GET:
+      endpoint: /operation/getRequests
+      query:
+        - mbFrom: UTCTime
+        - mbTo: UTCTime
+        - mbLimit: Int
+        - mbOffset: Int
+        - mbStatus: RequestStatus
+        - mbReqType: RequestType
+        - mbRcNo: Text
+        - mbDriverId: Id Person
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: OperationHubRequestsResp

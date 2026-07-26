@@ -1,0 +1,951 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+{-# LANGUAGE ApplicativeDo #-}
+
+module Domain.Action.UI.DriverOnboarding.VehicleRegistrationCertificate
+  ( DriverVehicleDetails (..),
+    DriverRCReq (..),
+    DriverRCRes,
+    RCStatusReq (..),
+    RCValidationReq (..),
+    verifyRC,
+    parseDateTime,
+    onVerifyRC,
+    convertUTCTimetoDate,
+    deactivateCurrentRC,
+    invalidateRCAndRemoveVehicleForReminder,
+    linkRCStatus,
+    deleteRC,
+    getAllLinkedRCs,
+    LinkedRC (..),
+    DeleteRCReq (..),
+    convertTextToUTC,
+    defaultAssociationEnd,
+    mkHyperVergeVerificationEntity,
+    mkMorthVerificationEntity,
+    validateRCResponse,
+    VerificationReqRecord (..),
+    normalizeDocumentNumber,
+  )
+where
+
+import AWS.S3 as S3
+import Control.Applicative ((<|>))
+import Control.Monad.Extra (maybeM)
+import Data.Aeson hiding (Success)
+import qualified Data.HashMap.Strict as HM
+import qualified Data.List as DL
+import qualified Data.Text as T hiding (elem, find, map, zip)
+import Data.Time (Day)
+import qualified Domain.Types.Common as DCommon
+import qualified Domain.Types.DocStatus as DocStatus
+import qualified Domain.Types.DocsVerificationStatus as DDVS
+import qualified Domain.Types.DocumentVerificationConfig as ODC
+import qualified Domain.Types.DriverFlowStatus as DDFS
+import qualified Domain.Types.DriverInformation as DI
+import qualified Domain.Types.HyperVergeVerification as Domain
+import qualified Domain.Types.IdfyVerification as Domain
+import qualified Domain.Types.Image as Image
+import qualified Domain.Types.Merchant as DM
+import qualified Domain.Types.MerchantOperatingCity as DMOC
+import qualified Domain.Types.MorthVerification as MorthDomain
+import qualified Domain.Types.Person as Person
+import Domain.Types.RCValidationRules
+import qualified Domain.Types.TransporterConfig as DTC
+import qualified Domain.Types.VehicleCategory as DVC
+import qualified Domain.Types.VehicleRegistrationCertificate as DVRC
+import qualified Domain.Types.VehicleRegistrationCertificate as Domain
+import qualified Domain.Types.VehicleVariant as DV
+import Environment
+import Kernel.Beam.Functions
+import Kernel.Beam.Lib.UtilsTH (HasSchemaName)
+import Kernel.External.Encryption
+import Kernel.External.Types (Language (..), SchedulerFlow, ServiceFlow, VerificationFlow)
+import qualified Kernel.External.Verification.Types as VT
+import Kernel.Prelude hiding (find)
+import qualified Kernel.Storage.Clickhouse.Config as CH
+import Kernel.Storage.Esqueleto.Config (EsqDBReplicaFlow)
+import qualified Kernel.Storage.Hedis as Redis
+import Kernel.Types.APISuccess
+import qualified Kernel.Types.Documents as Documents
+import Kernel.Types.Error
+import Kernel.Types.Id
+import Kernel.Types.Predicate
+import Kernel.Utils.Common
+import qualified Kernel.Utils.Predicates as P
+import Kernel.Utils.SlidingWindowLimiter (checkSlidingWindowLimitWithOptions)
+import Kernel.Utils.Validation
+import Lib.ConfigPilot.Interface.Types (getConfig, getOneConfig)
+import Lib.Scheduler.JobStorageType.DB.Table (SchedulerJobT)
+import qualified SharedLogic.Analytics as Analytics
+import SharedLogic.DriverOnboarding
+import qualified SharedLogic.DriverOnboarding.VehicleDocs as SStatus
+import SharedLogic.Reminder.Helper (createReminder)
+import qualified Storage.Cac.TransporterConfig as SCTC
+import qualified Storage.CachedQueries.DocumentVerificationConfig as CQDVC
+import qualified Storage.CachedQueries.Driver.OnBoarding as CQO
+import qualified Storage.CachedQueries.VehicleServiceTier as CQVST
+import Storage.ConfigPilot.Config.DocumentVerificationConfig (DocumentVerificationConfigDimensions (..))
+import Storage.ConfigPilot.Config.Translation (TranslationDimensions (..))
+import Storage.ConfigPilot.Config.TransporterConfig (TransporterConfigDimensions (..))
+import qualified Storage.Queries.DriverInformation as DIQuery
+import Storage.Queries.DriverRCAssociation (buildRcHM)
+import qualified Storage.Queries.DriverRCAssociation as DAQuery
+import qualified Storage.Queries.FleetDriverAssociationExtra as FDA
+import qualified Storage.Queries.FleetRCAssociation as FRCAssoc
+import qualified Storage.Queries.HyperVergeVerification as HVQuery
+import qualified Storage.Queries.IdfyVerification as IVQuery
+import qualified Storage.Queries.Image as ImageQuery
+import qualified Storage.Queries.MorthVerification as MorthQuery
+import qualified Storage.Queries.Person as Person
+import Storage.Queries.RCValidationRules
+import Storage.Queries.Ride as RQuery
+import qualified Storage.Queries.TranslationsExtra as QTranslation
+import qualified Storage.Queries.Vehicle as VQuery
+import qualified Storage.Queries.VehicleDetails as CQVD
+import qualified Storage.Queries.VehicleRegistrationCertificate as RCQuery
+import qualified Storage.Queries.VehicleRegistrationCertificateExtra as VRCExtra
+import Tools.Error
+import qualified Tools.Verification as Verification
+
+data DriverVehicleDetails = DriverVehicleDetails
+  { vehicleManufacturer :: Text,
+    vehicleModel :: Text,
+    vehicleColour :: Text,
+    vehicleDoors :: Maybe Int,
+    vehicleSeatBelts :: Maybe Int,
+    vehicleModelYear :: Maybe Int
+  }
+  deriving (Generic, ToSchema, Show, ToJSON, FromJSON)
+
+data DriverRCReq = DriverRCReq
+  { vehicleRegistrationCertNumber :: Text,
+    imageId :: Id Image.Image,
+    imageId2 :: Maybe (Id Image.Image), -- backside of RC document
+    udinNumber :: Maybe Text, -- For TTEN certificate validation (TOTO)
+    operatingCity :: Text,
+    dateOfRegistration :: Maybe UTCTime, -- updatable
+    vehicleCategory :: Maybe DVC.VehicleCategory,
+    vehicleClass :: Maybe Text,
+    airConditioned :: Maybe Bool,
+    oxygen :: Maybe Bool,
+    ventilator :: Maybe Bool,
+    vehicleDetails :: Maybe DriverVehicleDetails,
+    isRCImageValidated :: Maybe Bool, -- updatable
+    engineNumber :: Maybe Text,
+    chassisNumber :: Maybe Text
+  }
+  deriving (Generic, Show, FromJSON, ToJSON, ToSchema)
+
+type DriverRCRes = APISuccess
+
+data LinkedRC = LinkedRC
+  { rcDetails :: VehicleRegistrationCertificateAPIEntity,
+    rcActive :: Bool,
+    isFleetRC :: Bool,
+    isValid :: Maybe Bool
+  }
+  deriving (Generic, ToSchema, ToJSON, FromJSON)
+
+newtype DeleteRCReq = DeleteRCReq
+  { rcNo :: Text
+  }
+  deriving (Generic, ToSchema, ToJSON, FromJSON)
+
+data RCStatusReq = RCStatusReq
+  { rcNo :: Text,
+    isActivate :: Bool
+  }
+  deriving (Generic, ToSchema, ToJSON, FromJSON)
+
+data RCValidationReq = RCValidationReq
+  { fuelType :: Maybe Text,
+    vehicleClass :: Maybe Text,
+    manufacturer :: Maybe Text,
+    model :: Maybe Text,
+    mYManufacturing :: Maybe Day
+  }
+  deriving (Generic, Show, ToJSON, FromJSON)
+
+validateDriverRCReq :: Validate DriverRCReq
+validateDriverRCReq DriverRCReq {..} =
+  sequenceA_
+    [validateField "vehicleRegistrationCertNumber" vehicleRegistrationCertNumber P.vehicleRegistrationCertNumberRule]
+
+validateDriverRCReqRegexFlow :: Validate DriverRCReq
+validateDriverRCReqRegexFlow DriverRCReq {..} =
+  sequenceA_
+    [validateField "vehicleRegistrationCertNumber" vehicleRegistrationCertNumber (MinLength 1)]
+
+prefixMatchedResult :: Text -> [Text] -> Bool
+prefixMatchedResult rcNumber = DL.any (`T.isPrefixOf` rcNumber)
+
+normalizeDocumentNumber :: Text -> Text
+normalizeDocumentNumber = T.toUpper . removeSpaceAndDash
+
+isRCNumberFormatValid :: ODC.DocumentVerificationConfig -> Text -> Flow Bool
+isRCNumberFormatValid documentVerificationConfig normalizedRCNumber = do
+  let normalizedPrefixList = normalizeDocumentNumber <$> documentVerificationConfig.rcNumberPrefixList
+      rcLength = T.length normalizedRCNumber
+      isLegacyCertNumFormatValid =
+        rcLength >= 5
+          && rcLength <= 12
+          && T.all (\ch -> (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == ',') normalizedRCNumber
+      fallbackCheck =
+        pure $
+          (null normalizedPrefixList || prefixMatchedResult normalizedRCNumber normalizedPrefixList)
+            && isLegacyCertNumFormatValid
+  validateByRegex "RC" documentVerificationConfig normalizedRCNumber fallbackCheck
+
+verifyRC ::
+  Bool ->
+  Maybe DM.Merchant ->
+  (Id Person.Person, Id DM.Merchant, Id DMOC.MerchantOperatingCity) ->
+  DriverRCReq ->
+  Bool ->
+  Maybe (Id Person.Person) ->
+  Flow DriverRCRes
+verifyRC isDashboard mbMerchant (personId, _, merchantOpCityId) req bulkUpload mbFleetOwnerId = do
+  externalServiceRateLimitOptions <- asks (.externalServiceRateLimitOptions)
+  checkSlidingWindowLimitWithOptions (makeVerifyRCHitsCountKey req.vehicleRegistrationCertNumber) externalServiceRateLimitOptions
+
+  person <- Person.findById personId >>= fromMaybeM (PersonNotFound personId.getId)
+
+  let isTtenCertificate = isJust req.udinNumber
+  documentVerificationConfig <- getOneConfig (DocumentVerificationConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId, documentType = Just ODC.VehicleRegistrationCertificate, vehicleCategory = Just (fromMaybe DVC.CAR req.vehicleCategory)}) (Just (maybeToList <$> CQDVC.findByMerchantOpCityIdAndDocumentTypeAndCategory merchantOpCityId ODC.VehicleRegistrationCertificate (fromMaybe DVC.CAR req.vehicleCategory) Nothing)) >>= fromMaybeM (DocumentVerificationConfigNotFound merchantOpCityId.getId (show ODC.VehicleRegistrationCertificate))
+  transporterConfig <- getOneConfig (TransporterConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (SCTC.findByMerchantOpCityId merchantOpCityId Nothing)) >>= fromMaybeM (TransporterConfigNotFound merchantOpCityId.getId)
+  unless isTtenCertificate $ do
+    let regexRules = getRegexRulesFromDocumentConfig documentVerificationConfig
+        hasRegexRules = not (null regexRules)
+    if hasRegexRules
+      then runRequestValidation validateDriverRCReqRegexFlow req
+      else runRequestValidation validateDriverRCReq req
+    let normalizedRCNumber = normalizeDocumentNumber req.vehicleRegistrationCertNumber
+    checkRCFormat <- isRCNumberFormatValid documentVerificationConfig normalizedRCNumber
+    unless checkRCFormat $ do
+      if hasRegexRules
+        then throwError (InvalidRequest "RC number format is not valid")
+        else throwError (InvalidRequest "RC number prefix is not valid")
+
+  (blocked, _) <- getDriverDocumentInfo person
+  when blocked $ throwError AccountBlocked
+  whenJust mbMerchant $ \merchant -> do
+    unless (merchant.id == person.merchantId) $ throwError (PersonNotFound personId.getId)
+  when (person.role == Person.DRIVER) $ do
+    allLinkedRCs <- DAQuery.findAllLinkedByDriverId personId
+    rcs <- RCQuery.findAllById (map (.rcId) allLinkedRCs)
+    let validLinkedRCs = Kernel.Prelude.filter (\rc -> rc.verificationStatus /= Documents.INVALID) rcs
+    unless (length validLinkedRCs < (transporterConfig.rcLimit + (if isDashboard then 1 else 0))) $ throwError (RCLimitReached transporterConfig.rcLimit)
+  when
+    ( person.role == Person.DRIVER && isNothing mbFleetOwnerId
+        && transporterConfig.blockDriverOwnRCForFleetDrivers == Just True
+    )
+    $ do
+      mbFleetAssoc <- FDA.findByDriverId personId True
+      whenJust mbFleetAssoc $ \_ ->
+        throwError (InvalidRequest "Fleet drivers cannot register their own vehicle. Use a fleet vehicle.")
+  let mbAirConditioned = maybe req.airConditioned (\category -> if category `elem` [DVC.CAR, DVC.AMBULANCE, DVC.BUS] then req.airConditioned else Just False) req.vehicleCategory
+      (mbOxygen, mbVentilator) = maybe (req.oxygen, req.ventilator) (\category -> if category == DVC.AMBULANCE then (req.oxygen, req.ventilator) else (Just False, Just False)) req.vehicleCategory
+
+  unless isTtenCertificate $
+    when
+      ( isNothing req.vehicleDetails && isNothing req.dateOfRegistration && documentVerificationConfig.checkExtraction
+          && (not isDashboard || transporterConfig.checkImageExtractionForDashboard)
+          && (not bulkUpload)
+          && (isNothing req.isRCImageValidated || req.isRCImageValidated == Just False)
+      )
+      $ do
+        image <- getImage req.imageId
+        image2 <- getImage `mapM` req.imageId2
+        resp <-
+          Verification.extractRCImage person.merchantId merchantOpCityId $
+            Verification.ExtractImageReq {image1 = image, image2, driverId = person.id.getId}
+        case resp.extractedRC of
+          Just extractedRC -> do
+            let extractRCNumber = removeSpaceAndDash <$> extractedRC.rcNumber
+            let rcNumber = removeSpaceAndDash <$> Just req.vehicleRegistrationCertNumber
+            -- disable this check for debugging with mock-idfy
+            unless (extractRCNumber == rcNumber) $
+              throwImageError req.imageId $ ImageDocumentNumberMismatch (maybe "null" maskText extractRCNumber) (maybe "null" maskText rcNumber)
+          Nothing -> throwImageError req.imageId ImageExtractionFailed
+  whenJust mbFleetOwnerId $ \fleetOwnerId -> do
+    -- Reject cross-fleet hijacks: if the RC is already linked to a different
+    -- fleet owner, fail rather than silently re-linking it to this fleet.
+    mbExistingRC <- VRCExtra.findLastVehicleRCWrapper req.vehicleRegistrationCertNumber
+    whenJust mbExistingRC $ \existingRC ->
+      whenJust existingRC.fleetOwnerId $ \existingFleetId ->
+        when (existingFleetId /= fleetOwnerId.getId) $
+          throwError VehicleBelongsToAnotherFleet
+    Redis.set (makeFleetOwnerKey req.vehicleRegistrationCertNumber) fleetOwnerId.getId
+    -- Optionally update existing RC's fleetOwnerId in DB if enabled via transporterConfig
+    updateExistingRCFleetOwnerIfEnabled transporterConfig req.vehicleRegistrationCertNumber fleetOwnerId
+  encryptedRC <- encrypt req.vehicleRegistrationCertNumber
+  let imageExtractionValidation = bool Domain.Skipped Domain.Success (isNothing req.dateOfRegistration && documentVerificationConfig.checkExtraction && not isTtenCertificate)
+  Redis.whenWithLockRedis (rcVerificationLockKey req.vehicleRegistrationCertNumber) 60 $ do
+    case req.vehicleDetails of
+      Just vDetails@DriverVehicleDetails {..} -> do
+        vehicleDetails <-
+          CQVD.findByMakeAndModelAndYear vehicleManufacturer vehicleModel vehicleModelYear
+            |<|>| CQVD.findByMakeAndModelAndYear vehicleManufacturer vehicleModel Nothing
+        let mbVehicleVariant =
+              (vehicleDetails <&> (.vehicleVariant)) <|> transporterConfig.missingMappingFallbackVariant
+        void $ onVerifyRCHandler person (buildRCVerificationResponse vehicleDetails vehicleColour vehicleManufacturer vehicleModel req.vehicleCategory req.vehicleClass) req.vehicleCategory mbAirConditioned req.imageId mbVehicleVariant vehicleDoors vehicleSeatBelts req.dateOfRegistration vDetails.vehicleModelYear mbOxygen mbVentilator Nothing (Just imageExtractionValidation) (Just encryptedRC) req.imageId Nothing Nothing
+      Nothing -> verifyRCFlow person merchantOpCityId (fromMaybe True transporterConfig.useCategoryBasedVerificationPriorityList) req.vehicleRegistrationCertNumber req.imageId req.dateOfRegistration req.vehicleCategory mbAirConditioned mbOxygen mbVentilator encryptedRC imageExtractionValidation req.udinNumber req.engineNumber req.chassisNumber
+  return Success
+  where
+    getImage :: Id Image.Image -> Flow Text
+    getImage imageId_ = do
+      imageMetadata <- ImageQuery.findById imageId_ >>= fromMaybeM (ImageNotFound imageId_.getId)
+      unless (imageMetadata.verificationStatus == Just Documents.VALID) $ throwError (ImageNotValid imageId_.getId)
+      unless (imageMetadata.personId == personId) $ throwError (ImageNotFound imageId_.getId)
+      unless (imageMetadata.imageType == ODC.VehicleRegistrationCertificate) $
+        throwError (ImageInvalidType (show ODC.VehicleRegistrationCertificate) "")
+      Redis.withLockRedisAndReturnValue (imageS3Lock (imageMetadata.s3Path)) 5 $
+        S3.get $ T.unpack imageMetadata.s3Path
+
+    -- When enabled via transporterConfig, update any existing VehicleRegistrationCertificate
+    -- row for this registration number with the new fleetOwnerId.
+    updateExistingRCFleetOwnerIfEnabled ::
+      DTC.TransporterConfig ->
+      Text ->
+      Id Person.Person ->
+      Flow ()
+    updateExistingRCFleetOwnerIfEnabled transporterConfig regNumber fleetOwnerId = do
+      when (fromMaybe False transporterConfig.linkFleetToUnVerifiedExistingRC) $ do
+        mbExistingRC <- VRCExtra.findLastVehicleRCWrapper regNumber
+        whenJust mbExistingRC $ \existingRC -> do
+          now <- getCurrentTime
+          let updatedRC = existingRC {DVRC.fleetOwnerId = Just fleetOwnerId.getId}
+          RCQuery.upsert updatedRC
+          mbFleetAssoc <- FRCAssoc.findLinkedByRCIdAndFleetOwnerId fleetOwnerId updatedRC.id now
+          when (isNothing mbFleetAssoc) $
+            createFleetRCAssociationIfPossible transporterConfig fleetOwnerId updatedRC
+
+    buildRCVerificationResponse vehicleDetails vehicleColour vehicleManufacturer vehicleModel mbVehicleCategory mbVehicleClass =
+      Verification.RCVerificationResponse
+        { registrationDate = show <$> req.dateOfRegistration,
+          registrationNumber = Just req.vehicleRegistrationCertNumber,
+          fitnessUpto = Nothing,
+          insuranceValidity = Nothing,
+          vehicleClass = mbVehicleClass,
+          vehicleCategory = show <$> mbVehicleCategory,
+          seatingCapacity = Just . String . show <$> (.capacity) =<< vehicleDetails,
+          manufacturer = Just vehicleManufacturer,
+          permitValidityFrom = Nothing,
+          permitValidityUpto = Nothing,
+          pucValidityUpto = Nothing,
+          manufacturerModel = Just vehicleModel,
+          mYManufacturing = Nothing,
+          color = Just vehicleColour,
+          fuelType = Nothing,
+          bodyType = Nothing,
+          status = Nothing,
+          grossVehicleWeight = Nothing,
+          unladdenWeight = Nothing
+        }
+
+    makeVerifyRCHitsCountKey :: Text -> Text
+    makeVerifyRCHitsCountKey rcNumber = "VerifyRC:rcNumberHits:" <> rcNumber <> ":hitsCount"
+
+verifyRCFlow :: Person.Person -> Id DMOC.MerchantOperatingCity -> Bool -> Text -> Id Image.Image -> Maybe UTCTime -> Maybe DVC.VehicleCategory -> Maybe Bool -> Maybe Bool -> Maybe Bool -> EncryptedHashedField 'AsEncrypted Text -> Domain.ImageExtractionValidation -> Maybe Text -> Maybe Text -> Maybe Text -> Flow ()
+verifyRCFlow person merchantOpCityId useCategoryBasedPriority rcNumber imageId dateOfRegistration mbVehicleCategory mbAirConditioned mbOxygen mbVentilator encryptedRC imageExtractionValidation mbUdinNumber mbEngineNumber mbChassisNumber = do
+  now <- getCurrentTime
+  verifyRes <-
+    Verification.verifyRC person.merchantId
+      merchantOpCityId
+      useCategoryBasedPriority
+      Nothing
+      mbVehicleCategory
+      Verification.VerifyRCReq {rcNumber = rcNumber, driverId = person.id.getId, token = Nothing, udinNo = mbUdinNumber, engineNumber = mbEngineNumber, chassisNumber = mbChassisNumber, applicantMobile = Nothing}
+  case verifyRes.verifyRCResp of
+    Verification.AsyncResp res -> do
+      case res.requestor of
+        VT.Idfy -> IVQuery.create =<< mkRCIdfyVerificationEntity person res.requestId now imageExtractionValidation encryptedRC dateOfRegistration mbVehicleCategory mbAirConditioned mbOxygen mbVentilator imageId Nothing Nothing
+        VT.HyperVergeRCDL -> HVQuery.create =<< mkHyperVergeVerificationEntity person res.requestId now imageExtractionValidation encryptedRC dateOfRegistration mbVehicleCategory mbAirConditioned mbOxygen mbVentilator imageId Nothing Nothing res.transactionId
+        _ -> throwError $ InternalError ("Service provider not configured to return async responses. Provider Name : " <> (show res.requestor))
+      CQO.setVerificationPriorityList person.id verifyRes.remPriorityList
+    Verification.SyncResp resp -> do
+      when (resp.requestor == VT.Morth && isNothing mbVehicleCategory) $
+        throwError (InvalidRequest "vehicleCategory is required when using Morth for RC verification")
+      case resp.requestor of
+        VT.Morth -> do
+          let mbStatus = DocStatus.docStatusEnumToText $ if isJust resp.response.status then DocStatus.DOC_SUCCESS else DocStatus.DOC_FAILED
+          morthEntity <- mkMorthVerificationEntity person Nothing ODC.VehicleRegistrationCertificate encryptedRC mbStatus dateOfRegistration Nothing mbVehicleCategory Nothing Nothing (Just $ show resp.response) now
+          MorthQuery.create morthEntity
+        _ -> logError $ "Handle this case if we want to store the response in the database for provider: " <> show resp.requestor
+      void $ onVerifyRC person Nothing resp.response (Just verifyRes.remPriorityList) (Just imageExtractionValidation) (Just encryptedRC) imageId Nothing Nothing (Just resp.requestor) mbVehicleCategory
+
+mkHyperVergeVerificationEntity :: MonadFlow m => Person.Person -> Text -> UTCTime -> Domain.ImageExtractionValidation -> EncryptedHashedField 'AsEncrypted Text -> Maybe UTCTime -> Maybe DVC.VehicleCategory -> Maybe Bool -> Maybe Bool -> Maybe Bool -> Id Image.Image -> Maybe Int -> Maybe Text -> Maybe Text -> m Domain.HyperVergeVerification
+mkHyperVergeVerificationEntity person requestId now imageExtractionValidation encryptedRC dateOfRegistration mbVehicleCategory mbAirConditioned mbOxygen mbVentilator imageId mbRetryCnt mbStatus transactionId = do
+  id <- generateGUID
+  return $
+    Domain.HyperVergeVerification
+      { id,
+        driverId = person.id,
+        documentImageId1 = imageId,
+        documentImageId2 = Nothing,
+        requestId,
+        docType = ODC.VehicleRegistrationCertificate,
+        documentNumber = encryptedRC,
+        driverDateOfBirth = Nothing,
+        imageExtractionValidation = imageExtractionValidation,
+        issueDateOnDoc = dateOfRegistration,
+        status = fromMaybe "pending" mbStatus,
+        hypervergeResponse = Nothing,
+        vehicleCategory = mbVehicleCategory,
+        airConditioned = mbAirConditioned,
+        oxygen = mbOxygen,
+        ventilator = mbVentilator,
+        retryCount = Just $ fromMaybe 0 mbRetryCnt,
+        nameOnCard = Nothing,
+        merchantId = Just person.merchantId,
+        merchantOperatingCityId = Just person.merchantOperatingCityId,
+        createdAt = now,
+        updatedAt = now,
+        ..
+      }
+
+mkMorthVerificationEntity ::
+  MonadFlow m =>
+  Person.Person ->
+  Maybe Text ->
+  ODC.DocumentType ->
+  EncryptedHashedField 'AsEncrypted Text ->
+  Text ->
+  Maybe UTCTime ->
+  Maybe UTCTime ->
+  Maybe DVC.VehicleCategory ->
+  Maybe Text ->
+  Maybe Int ->
+  Maybe Text ->
+  UTCTime ->
+  m MorthDomain.MorthVerification
+mkMorthVerificationEntity person requestId docType documentNumber status issueDateOnDoc driverDateOfBirth vehicleCategory message statusCode morthResponse now = do
+  id <- generateGUID
+  return $
+    MorthDomain.MorthVerification
+      { id,
+        driverId = person.id,
+        requestId,
+        docType,
+        documentNumber,
+        status,
+        issueDateOnDoc,
+        driverDateOfBirth,
+        vehicleCategory,
+        message,
+        statusCode,
+        morthResponse,
+        merchantId = Just person.merchantId,
+        merchantOperatingCityId = Just person.merchantOperatingCityId,
+        createdAt = now,
+        updatedAt = now
+      }
+
+onVerifyRC :: (VerificationFlow m r, HasField "ttenTokenCacheExpiry" r Seconds, SchedulerFlow r, ServiceFlow m r, HasField "blackListedJobs" r [Text], HasSchemaName SchedulerJobT, EsqDBReplicaFlow m r, Redis.HedisLTSFlowEnv r) => Person.Person -> Maybe VerificationReqRecord -> VT.RCVerificationResponse -> Maybe [VT.VerificationService] -> Maybe Domain.ImageExtractionValidation -> Maybe (EncryptedHashedField 'AsEncrypted Text) -> Id Image.Image -> Maybe Int -> Maybe Text -> Maybe VT.VerificationService -> Maybe DVC.VehicleCategory -> m AckResponse
+onVerifyRC person mbVerificationReq rcVerificationResponse mbRemPriorityList mbImageExtractionValidation mbEncryptedRC imageId mbRetryCnt mbReqStatus mbServiceName mbVehicleCategoryFromSyncRequest = do
+  if maybe False (\req -> req.imageExtractionValidation == Domain.Skipped && compareRegistrationDates rcVerificationResponse.registrationDate req.issueDateOnDoc) mbVerificationReq
+    then do
+      case mbServiceName of
+        Just VT.Idfy -> IVQuery.updateExtractValidationStatus Domain.Failed (maybe "" (.requestId) mbVerificationReq)
+        Just VT.HyperVergeRCDL -> HVQuery.updateExtractValidationStatus Domain.Failed (maybe "" (.requestId) mbVerificationReq)
+        Nothing -> logError "WARNING: Sync API call, this check is redundant still entered in this case!!!!!!"
+        _ -> throwError $ InternalError ("Unknown Service provider webhook encountered in onVerifyRC. Name of provider : " <> show mbServiceName)
+      return Ack
+    else do
+      let mbVehicleCategory = (mbVerificationReq >>= (.vehicleCategory)) <|> mbVehicleCategoryFromSyncRequest
+          mbAirConditioned = mbVerificationReq >>= (.airConditioned)
+          mbOxygen = mbVerificationReq >>= (.oxygen)
+          mbVentilator = mbVerificationReq >>= (.ventilator)
+          mbImageExtractionValidation' = mbImageExtractionValidation <|> (mbVerificationReq <&> (.imageExtractionValidation))
+          mbEncryptedRC' = mbEncryptedRC <|> (mbVerificationReq <&> (.documentNumber))
+      void $ onVerifyRCHandler person rcVerificationResponse mbVehicleCategory mbAirConditioned (maybe "" (.documentImageId1) mbVerificationReq) Nothing Nothing Nothing Nothing Nothing mbOxygen mbVentilator mbRemPriorityList mbImageExtractionValidation' mbEncryptedRC' imageId mbRetryCnt mbReqStatus
+      return Ack
+
+onVerifyRCHandler :: (VerificationFlow m r, HasField "ttenTokenCacheExpiry" r Seconds, SchedulerFlow r, ServiceFlow m r, HasField "blackListedJobs" r [Text], HasSchemaName SchedulerJobT, EsqDBReplicaFlow m r, Redis.HedisLTSFlowEnv r) => Person.Person -> VT.RCVerificationResponse -> Maybe DVC.VehicleCategory -> Maybe Bool -> Id Image.Image -> Maybe DV.VehicleVariant -> Maybe Int -> Maybe Int -> Maybe UTCTime -> Maybe Int -> Maybe Bool -> Maybe Bool -> Maybe [VT.VerificationService] -> Maybe Domain.ImageExtractionValidation -> Maybe (EncryptedHashedField 'AsEncrypted Text) -> Id Image.Image -> Maybe Int -> Maybe Text -> m ()
+onVerifyRCHandler person rcVerificationResponse mbVehicleCategory mbAirConditioned mbDocumentImageId mbVehicleVariant mbVehicleDoors mbVehicleSeatBelts mbDateOfRegistration mbVehicleModelYear mbOxygen mbVentilator mbRemPriorityList mbImageExtractionValidation mbEncryptedRC imageId mbRetryCnt mbReqStatus' = do
+  let mbGrossVehicleWeight = rcVerificationResponse.grossVehicleWeight
+      mbUnladdenWeight = rcVerificationResponse.unladdenWeight
+  mbFleetOwnerId <- maybe (pure Nothing) (Redis.safeGet . makeFleetOwnerKey) rcVerificationResponse.registrationNumber
+  now <- getCurrentTime
+  transporterConfig <- getOneConfig (TransporterConfigDimensions {merchantOperatingCityId = person.merchantOperatingCityId.getId}) (Just (SCTC.findByMerchantOpCityId person.merchantOperatingCityId Nothing)) >>= fromMaybeM (TransporterConfigNotFound person.merchantOperatingCityId.getId)
+  rcValidationRules <- findByCityId person.merchantOperatingCityId
+  let rcValidationReq = RCValidationReq {mYManufacturing = convertTextToDay (rcVerificationResponse.mYManufacturing <> Just "-01"), fuelType = rcVerificationResponse.fuelType, vehicleClass = rcVerificationResponse.vehicleClass, manufacturer = rcVerificationResponse.manufacturer, model = rcVerificationResponse.manufacturerModel}
+  let lang = fromMaybe ENGLISH person.language
+  failures <- case rcValidationRules of
+    Nothing -> pure []
+    Just rules -> validateRCResponse rcValidationReq rules lang
+  let mbReqStatus = if null failures then mbReqStatus' else Just "failed"
+      rcInput = createRCInput mbVehicleCategory mbFleetOwnerId mbDocumentImageId mbDateOfRegistration mbVehicleModelYear mbGrossVehicleWeight mbUnladdenWeight
+      expiryFailures = getExpiryFailures transporterConfig rcInput now
+      allFailures = failures <> expiryFailures
+  mVehicleRC <- do
+    case mbVehicleVariant of
+      Just vehicleVariant ->
+        maybeM
+          (return Nothing)
+          ((Just <$>) . createVehicleRC transporterConfig person.merchantId person.merchantOperatingCityId rcInput vehicleVariant allFailures)
+          (encrypt `mapM` rcVerificationResponse.registrationNumber)
+      Nothing -> buildRC person.merchantId person.merchantOperatingCityId rcInput allFailures
+  if isNothing mbVehicleVariant && mbRemPriorityList /= Just [] && isJust mbRemPriorityList && ((mVehicleRC <&> (.verificationStatus)) == Just Documents.MANUAL_VERIFICATION_REQUIRED || join (mVehicleRC <&> (.reviewRequired)) == Just True)
+    then do
+      flip (maybe (logError "imageExtrationValidation flag or encryptedRC or registrationNumber is null in onVerifyRCHandler. Not proceeding with alternate service providers !!!!!!!!!" >> initiateRCCreation transporterConfig mVehicleRC now mbFleetOwnerId allFailures)) ((,,,) <$> mbImageExtractionValidation <*> mbEncryptedRC <*> mbRemPriorityList <*> rcVerificationResponse.registrationNumber) $
+        \(imageExtractionValidation, encryptedRC, remPriorityList, rcNum) -> do
+          logDebug $ "Calling verify RC with another provider as current provider resulted in MANUAL_VERIFICATION_REQUIRED. Remaining providers in priorityList : " <> show remPriorityList
+          resVerifyRes <- withTryCatch "verifyRC:onVerifyRCHandler" $ Verification.verifyRC person.merchantId person.merchantOperatingCityId True (Just remPriorityList) mbVehicleCategory (Verification.VerifyRCReq {rcNumber = rcNum, driverId = person.id.getId, token = Nothing, udinNo = Nothing, engineNumber = Nothing, chassisNumber = Nothing, applicantMobile = Nothing})
+          case resVerifyRes of
+            Left _ -> initiateRCCreation transporterConfig mVehicleRC now mbFleetOwnerId allFailures
+            Right verifyRes -> do
+              case verifyRes.verifyRCResp of
+                Verification.AsyncResp res -> do
+                  case res.requestor of
+                    VT.Idfy -> IVQuery.create =<< mkRCIdfyVerificationEntity person res.requestId now imageExtractionValidation encryptedRC mbDateOfRegistration mbVehicleCategory mbAirConditioned mbOxygen mbVentilator imageId mbRetryCnt mbReqStatus
+                    VT.HyperVergeRCDL -> HVQuery.create =<< mkHyperVergeVerificationEntity person res.requestId now imageExtractionValidation encryptedRC mbDateOfRegistration mbVehicleCategory mbAirConditioned mbOxygen mbVentilator imageId mbRetryCnt mbReqStatus res.transactionId
+                    _ -> throwError $ InternalError ("Service provider not configured to return async responses. Provider Name : " <> T.pack (show res.requestor))
+                  CQO.setVerificationPriorityList person.id verifyRes.remPriorityList
+                Verification.SyncResp resp -> do
+                  onVerifyRCHandler person resp.response mbVehicleCategory mbAirConditioned mbDocumentImageId mbVehicleVariant mbVehicleDoors mbVehicleSeatBelts mbDateOfRegistration mbVehicleModelYear mbOxygen mbVentilator (Just verifyRes.remPriorityList) mbImageExtractionValidation mbEncryptedRC imageId mbRetryCnt mbReqStatus
+    else initiateRCCreation transporterConfig mVehicleRC now mbFleetOwnerId allFailures
+  where
+    createRCInput :: Maybe DVC.VehicleCategory -> Maybe Text -> Id Image.Image -> Maybe UTCTime -> Maybe Int -> Maybe Float -> Maybe Float -> CreateRCInput
+    createRCInput vehicleCategory fleetOwnerId documentImageId' dateOfRegistration vehicleModelYear mbGrossVehicleWeight mbUnladdenWeight =
+      CreateRCInput
+        { registrationNumber = rcVerificationResponse.registrationNumber,
+          fitnessUpto = convertTextToUTC rcVerificationResponse.fitnessUpto,
+          fleetOwnerId,
+          vehicleCategory,
+          airConditioned = mbAirConditioned,
+          oxygen = mbOxygen,
+          ventilator = mbVentilator,
+          documentImageId = documentImageId',
+          vehicleClass = rcVerificationResponse.vehicleClass,
+          vehicleClassCategory = rcVerificationResponse.vehicleCategory,
+          insuranceValidity = convertTextToUTC rcVerificationResponse.insuranceValidity,
+          seatingCapacity = (readMaybe . T.unpack) =<< readFromJson =<< rcVerificationResponse.seatingCapacity,
+          permitValidityUpto = convertTextToUTC rcVerificationResponse.permitValidityUpto,
+          pucValidityUpto = convertTextToUTC rcVerificationResponse.pucValidityUpto,
+          manufacturer = rcVerificationResponse.manufacturer,
+          mYManufacturing = convertTextToDay (rcVerificationResponse.mYManufacturing <> Just "-01"), -- Appending date because we receive mYManufacturing in yyyy-mm format
+          manufacturerModel = rcVerificationResponse.manufacturerModel,
+          bodyType = rcVerificationResponse.bodyType,
+          fuelType = rcVerificationResponse.fuelType,
+          dateOfRegistration,
+          vehicleModelYear,
+          color = rcVerificationResponse.color,
+          grossVehicleWeight = mbGrossVehicleWeight,
+          unladdenWeight = mbUnladdenWeight
+        }
+
+    readFromJson (String val) = Just val
+    readFromJson (Number val) = Just $ T.pack $ show (floor val :: Int)
+    readFromJson _ = Nothing
+
+    createVehicleRC :: (MonadFlow m, Redis.HedisFlow m r, Redis.HedisLTSFlowEnv r) => DTC.TransporterConfig -> Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> CreateRCInput -> DV.VehicleVariant -> [Text] -> EncryptedHashedField 'AsEncrypted Text -> m DVRC.VehicleRegistrationCertificate
+    createVehicleRC transporterConfig merchantId merchantOperatingCityId input vehicleVariant failedRules certificateNumber = do
+      now <- getCurrentTime
+      id <- generateGUID
+      let updatedVehicleVariant = case input.vehicleCategory of
+            Just DVC.TRUCK -> DV.getTruckVehicleVariant input.grossVehicleWeight input.unladdenWeight vehicleVariant
+            Just DVC.TOTO -> DV.E_RICKSHAW
+            _ -> vehicleVariant
+          verificationStatus = if null failedRules then Documents.MANUAL_VERIFICATION_REQUIRED else Documents.INVALID
+      logInfo $ "createVehicleRC: Creating RC with verificationStatus=" <> show verificationStatus <> ", vehicleVariant=" <> show vehicleVariant <> ", failedRules=" <> show failedRules <> ", registrationNumber=" <> show input.registrationNumber
+      return $
+        DVRC.VehicleRegistrationCertificate
+          { id,
+            documentImageId = input.documentImageId,
+            certificateNumber,
+            fitnessExpiry = fromMaybe (addUTCTime (secondsToNominalDiffTime 788400000) now) input.fitnessUpto, -- TODO :: Please fix me, if my usage is critical. I am hardcoded for next 50 years.
+            permitExpiry = input.permitValidityUpto,
+            pucExpiry = input.pucValidityUpto,
+            vehicleClass = input.vehicleClass,
+            vehicleVariant = Just updatedVehicleVariant,
+            vehicleManufacturer = input.manufacturer <|> input.manufacturerModel,
+            vehicleCapacity = input.seatingCapacity,
+            vehicleModel = input.manufacturerModel,
+            vehicleColor = input.color,
+            manufacturerModel = input.manufacturerModel,
+            vehicleEnergyType = input.fuelType,
+            reviewedAt = Nothing,
+            reviewRequired = Nothing,
+            insuranceValidity = input.insuranceValidity,
+            verificationStatus = verificationStatus,
+            fleetOwnerId = input.fleetOwnerId,
+            merchantId = Just merchantId,
+            mYManufacturing = input.mYManufacturing,
+            merchantOperatingCityId = Just merchantOperatingCityId,
+            userPassedVehicleCategory = input.vehicleCategory,
+            airConditioned = input.airConditioned,
+            oxygen = input.oxygen,
+            ventilator = input.ventilator,
+            luggageCapacity = Nothing,
+            vehicleRating = Nothing,
+            vehicleRatingRemark = Nothing,
+            failedRules = failedRules,
+            docsVerificationStatus =
+              if transporterConfig.enableManualDocumentStatusCheck == Just True
+                then Just DDVS.ADMIN_PENDING
+                else Nothing,
+            dateOfRegistration = input.dateOfRegistration,
+            vehicleModelYear = input.vehicleModelYear,
+            vehicleDoors = mbVehicleDoors,
+            vehicleSeatBelts = mbVehicleSeatBelts,
+            rejectReason = Nothing,
+            createdAt = now,
+            unencryptedCertificateNumber = input.registrationNumber,
+            approved = Just False,
+            updatedAt = now,
+            vehicleImageId = Nothing,
+            verified = Nothing,
+            pendingChallan = Nothing
+          }
+    initiateRCCreation transporterConfig mVehicleRC now mbFleetOwnerId allFailures = do
+      case mVehicleRC of
+        Just vehicleRC
+          | vehicleRC.verificationStatus == Documents.INVALID && null vehicleRC.failedRules ->
+            throwError $
+              InvalidRequest $
+                "No valid mapping found for (vehicleClass: "
+                  <> fromMaybe "null" rcVerificationResponse.vehicleClass
+                  <> ", vehicleClassCategory: "
+                  <> maybe "null" (T.pack . show) rcVerificationResponse.vehicleCategory
+                  <> ", manufacturer: "
+                  <> fromMaybe "null" rcVerificationResponse.manufacturer
+                  <> ", model: "
+                  <> fromMaybe "null" rcVerificationResponse.manufacturerModel
+                  <> ")"
+        Just vehicleRC -> do
+          let isInvalid = vehicleRC.verificationStatus == Documents.INVALID
+          logInfo $ "initiateRCCreation: Upserting RC with verificationStatus=" <> show vehicleRC.verificationStatus <> ", failedRules=" <> show vehicleRC.failedRules <> ", registrationNumber=" <> show vehicleRC.unencryptedCertificateNumber <> ", vehicleVariant=" <> show vehicleRC.vehicleVariant <> ", vehicleClass=" <> show vehicleRC.vehicleClass
+          RCQuery.upsert vehicleRC
+          rc <- RCQuery.findByRCAndExpiry vehicleRC.certificateNumber vehicleRC.fitnessExpiry >>= fromMaybeM (RCNotFound (fromMaybe "" rcVerificationResponse.registrationNumber))
+          -- Create reminders only for non-INVALID RCs
+          unless isInvalid $ do
+            createReminder
+              ODC.VehicleRegistrationCertificate
+              person.id
+              person.merchantId
+              person.merchantOperatingCityId
+              (Just $ rc.id.getId)
+              (Just rc.fitnessExpiry)
+              Nothing
+            whenJust rc.pucExpiry $ \pucExpiry ->
+              createReminder
+                ODC.VehiclePUC
+                person.id
+                person.merchantId
+                person.merchantOperatingCityId
+                (Just $ rc.id.getId)
+                (Just pucExpiry)
+                Nothing
+            whenJust rc.permitExpiry $ \permitExpiry ->
+              createReminder
+                ODC.VehiclePermit
+                person.id
+                person.merchantId
+                person.merchantOperatingCityId
+                (Just $ rc.id.getId)
+                (Just permitExpiry)
+                Nothing
+            whenJust rc.insuranceValidity $ \insuranceValidity ->
+              createReminder
+                ODC.VehicleInsurance
+                person.id
+                person.merchantId
+                person.merchantOperatingCityId
+                (Just $ rc.id.getId)
+                (Just insuranceValidity)
+                Nothing
+          -- Create associations always
+          case person.role of
+            Person.FLEET_OWNER -> do
+              mbFleetAssoc <- FRCAssoc.findLinkedByRCIdAndFleetOwnerId person.id rc.id now
+              when (isNothing mbFleetAssoc) $ do
+                createFleetRCAssociationIfPossible transporterConfig person.id rc
+            _ -> do
+              whenJust mbFleetOwnerId $ \fleetOwnerId -> do
+                mbFleetAssoc <- FRCAssoc.findLinkedByRCIdAndFleetOwnerId (Id fleetOwnerId) rc.id now
+                when (isNothing mbFleetAssoc) $ do
+                  createFleetRCAssociationIfPossible transporterConfig (Id fleetOwnerId :: Id Person.Person) rc
+              mbAssoc <- DAQuery.findLinkedByRCIdAndDriverId person.id rc.id now
+              when (isNothing mbAssoc) $ do
+                createDriverRCAssociationIfPossible transporterConfig person.id rc
+              -- update vehicle details only for non-INVALID RCs
+              unless isInvalid $ do
+                mbVehicle <- VQuery.findByRegistrationNo =<< decrypt rc.certificateNumber
+                whenJust mbVehicle $ \vehicle -> do
+                  when (rc.verificationStatus == Documents.VALID && isJust rc.vehicleVariant && null allFailures) $ do
+                    driverInfo <- DIQuery.findById vehicle.driverId >>= fromMaybeM DriverInfoNotFound
+                    driver <- Person.findById vehicle.driverId >>= fromMaybeM (PersonNotFound vehicle.driverId.getId)
+                    vehicleServiceTiers <- CQVST.findAllByMerchantOpCityId person.merchantOperatingCityId Nothing
+                    let updatedVehicle = makeFullVehicleFromRC vehicleServiceTiers driverInfo driver person.merchantId vehicle.registrationNo rc person.merchantOperatingCityId now Nothing
+                    VQuery.upsert updatedVehicle
+              whenJust rcVerificationResponse.registrationNumber $ \num -> Redis.del $ makeFleetOwnerKey num
+        Nothing -> pure ()
+
+validateRCResponse :: forall r m. (MonadFlow m, EsqDBFlow m r, CacheFlow m r) => RCValidationReq -> RCValidationRules -> Language -> m [Text]
+validateRCResponse rc rule language = do
+  now <- getCurrentTime
+  let fuelValid = maybe True (\ft -> isNothing rule.fuelType || Kernel.Prelude.any (\ftRule -> ftRule `T.isInfixOf` ft) (map T.toLower $ fromMaybe [] rule.fuelType)) (T.toLower <$> rc.fuelType)
+      vehicleClassValid = maybe True (\vc -> isNothing rule.vehicleClass || Kernel.Prelude.any (\vcRule -> vcRule `T.isInfixOf` vc) (map T.toLower $ fromMaybe [] rule.vehicleClass)) (T.toLower <$> rc.vehicleClass)
+
+      manufacturerValid = case rule.vehicleOEM of
+        Nothing -> True
+        Just oems ->
+          let lowerOems = map T.toLower oems
+              matches val = Kernel.Prelude.any (`T.isInfixOf` T.toLower val) lowerOems
+           in (maybe False matches rc.manufacturer)
+                || (maybe False matches rc.model)
+
+      vehicleAge = getVehicleAge rc.mYManufacturing now
+      vehicleAgeValid = ((.getMonths) <$> vehicleAge) <= rule.maxVehicleAge
+      failureKeysWithValues =
+        catMaybes
+          [ if not fuelValid then Just ("InvalidFuelType", fromMaybe "" rc.fuelType) else Nothing,
+            if not vehicleClassValid then Just ("InvalidVehicleClass", fromMaybe "" rc.vehicleClass) else Nothing,
+            if not manufacturerValid then Just ("InvalidOEM", fromMaybe "" (rc.manufacturer <|> rc.model)) else Nothing,
+            if not vehicleAgeValid then Just ("InvalidManufacturingYear", maybe "" (T.take 7 . T.pack . show) rc.mYManufacturing) else Nothing
+          ]
+  forM failureKeysWithValues $ \(messageKey, value) ->
+    resolveTranslations language messageKey value
+
+resolveTranslations :: forall r m. (MonadFlow m, EsqDBFlow m r, CacheFlow m r) => Language -> Text -> Text -> m Text
+resolveTranslations language messageKey value = do
+  mbTranslation <- getConfig (TranslationDimensions {merchantOperatingCityId = Nothing, messageKey = messageKey, language = Just language}) (Just (QTranslation.findByErrorAndLanguage messageKey language))
+  let translatedMessage = maybe messageKey (.message) mbTranslation
+      placeholder = failureValuePlaceholder messageKey
+      renderedMessage = maybe translatedMessage (\ph -> T.replace ph value translatedMessage) placeholder
+  pure $
+    if T.null value
+      then maybe translatedMessage (\ph -> T.replace ph "" translatedMessage) placeholder
+      else case placeholder of
+        Just ph | ph `T.isInfixOf` translatedMessage -> renderedMessage
+        _ -> translatedMessage <> ": " <> value
+
+failureValuePlaceholder :: Text -> Maybe Text
+failureValuePlaceholder = \case
+  "InvalidFuelType" -> Just "{#fuelType#}"
+  "InvalidVehicleClass" -> Just "{#vehicleClass#}"
+  "InvalidOEM" -> Just "{#manufacturer#}"
+  "InvalidManufacturingYear" -> Just "{#year#}"
+  _ -> Nothing
+
+compareRegistrationDates :: Maybe Text -> Maybe UTCTime -> Bool
+compareRegistrationDates actualDate providedDate =
+  isJust providedDate
+    && ((convertUTCTimetoDate <$> providedDate) /= (convertUTCTimetoDate <$> convertTextToUTC actualDate))
+
+linkRCStatus :: (Id Person.Person, Id DM.Merchant, Id DMOC.MerchantOperatingCity) -> Bool -> RCStatusReq -> Flow APISuccess
+linkRCStatus (driverId, merchantId, merchantOpCityId) isTaxiBoothRequest req@RCStatusReq {..} = runInMasterDbAndRedis $ do
+  driverInfo <- DIQuery.findById (cast driverId) >>= fromMaybeM (PersonNotFound driverId.getId)
+  rc <- RCQuery.findLastVehicleRCWrapper rcNo >>= fromMaybeM (RCNotFound rcNo)
+  unless (rc.verificationStatus == Documents.VALID) $ do
+    DAQuery.updateRcErrorMessage driverId rc.id "Vehicle is not ready to be linked"
+    throwError (InvalidRequest "Vehicle is not ready to be linked")
+  now <- getCurrentTime
+  transporterConfig <- getOneConfig (TransporterConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (SCTC.findByMerchantOpCityId merchantOpCityId Nothing)) >>= fromMaybeM (TransporterConfigNotFound merchantOpCityId.getId)
+  if req.isActivate
+    then do
+      SStatus.validateMandatoryVehicleDocsForRC transporterConfig rc
+      validated <- validateRCActivation isTaxiBoothRequest driverId transporterConfig rc
+      when validated $ activateRC driverInfo merchantId merchantOpCityId transporterConfig now rc
+    else do
+      deactivateRC isTaxiBoothRequest transporterConfig rc driverId
+  return Success
+
+deactivateRC :: Bool -> DTC.TransporterConfig -> Domain.VehicleRegistrationCertificate -> Id Person.Person -> Flow ()
+deactivateRC isTaxiBoothRequest transporterConfig rc driverId = do
+  activeAssociation <- DAQuery.findActiveAssociationByRC rc.id True >>= fromMaybeM ActiveRCNotFound
+  unless (activeAssociation.driverId == driverId) $ do
+    DAQuery.updateRcErrorMessage driverId rc.id "Driver can't deactivate RC which is not active with them"
+    throwError (InvalidRequest "Driver can't deactivate RC which is not active with them")
+  removeVehicle isTaxiBoothRequest driverId
+  DAQuery.deactivateRCForDriver False driverId rc.id
+  now <- getCurrentTime
+  DIQuery.updateActivityWithDriverFlowStatus False (Just DCommon.OFFLINE) (Just DDFS.OFFLINE) Nothing (Just now) (cast driverId)
+  when transporterConfig.analyticsConfig.enableFleetOperatorDashboardAnalytics $ Analytics.decrementFleetOwnerAnalyticsActiveVehicleCount transporterConfig rc.fleetOwnerId driverId
+  return ()
+
+removeVehicle :: (MonadFlow m, EsqDBFlow m r, CacheFlow m r) => Bool -> Id Person.Person -> m ()
+removeVehicle isTaxiBoothRequest driverId = do
+  isOnRide <- DIQuery.findByDriverIdActiveRide (cast driverId)
+  when ((not isTaxiBoothRequest) && isJust isOnRide) $ throwError RCVehicleOnRide
+  VQuery.deleteById driverId -- delete the vehicle entry too for the driver
+
+validateRCActivation :: Bool -> Id Person.Person -> DTC.TransporterConfig -> Domain.VehicleRegistrationCertificate -> Flow Bool
+validateRCActivation isTaxiBoothRequest driverId transporterConfig rc = do
+  now <- getCurrentTime
+  mAssoc <- DAQuery.findLinkedByRCIdAndDriverId driverId rc.id now
+  case mAssoc of
+    Just _ -> return ()
+    Nothing -> do
+      unless (transporterConfig.allowDriverToUseFleetRcs == Just True) $ do
+        DAQuery.updateRcErrorMessage driverId rc.id "RC is not associated with the driver"
+        throwError (InvalidRequest "RC is not associated with the driver")
+      fleetDriverAssociation <- FDA.findByDriverId driverId True >>= fromMaybeM (InvalidRequest "RC is not linked with the driver.")
+      let fleetOwnerId = fleetDriverAssociation.fleetOwnerId
+      unless (rc.fleetOwnerId == Just fleetOwnerId) $ do
+        DAQuery.updateRcErrorMessage driverId rc.id "RC does not belong to you or your fleet."
+        throwError (InvalidRequest "RC does not belong to you or your fleet.")
+      createDriverRCAssociationIfPossible transporterConfig driverId rc
+
+  -- check if rc is already active to other driver
+  mActiveAssociation <- DAQuery.findActiveAssociationByRC rc.id True
+  case mActiveAssociation of
+    Just activeAssociation -> do
+      if activeAssociation.driverId == driverId
+        then return False
+        else do
+          deactivateIfWeCanDeactivate activeAssociation.driverId now (deactivateRC isTaxiBoothRequest transporterConfig rc)
+          return True
+    Nothing -> do
+      -- check if vehicle of that rc number is already with other driver
+      mVehicle <- VQuery.findByRegistrationNo =<< decrypt rc.certificateNumber
+      case mVehicle of
+        Just vehicle -> do
+          if vehicle.driverId /= driverId
+            then deactivateIfWeCanDeactivate vehicle.driverId now (removeVehicle isTaxiBoothRequest)
+            else removeVehicle isTaxiBoothRequest driverId
+        Nothing -> return ()
+      return True
+  where
+    deactivateIfWeCanDeactivate :: Id Person.Person -> UTCTime -> (Id Person.Person -> Flow ()) -> Flow ()
+    deactivateIfWeCanDeactivate oldDriverId now deactivateFunc = do
+      driverInfo <- DIQuery.findById oldDriverId >>= fromMaybeM (PersonNotFound oldDriverId.getId)
+      let canUnlinkWhenOffline = transporterConfig.allowRcUnlinkWhenDriverOffline == Just True && driverInfo.mode == Just DCommon.OFFLINE
+      mLastRideAssigned <- RQuery.findLastRideAssigned oldDriverId
+      case mLastRideAssigned of
+        Just lastRide -> do
+          if ((nominalDiffTimeToSeconds (diffUTCTime now lastRide.createdAt) > transporterConfig.automaticRCActivationCutOff || canUnlinkWhenOffline) && driverInfo.onRide == False) || isTaxiBoothRequest
+            then deactivateFunc oldDriverId
+            else do
+              DAQuery.updateRcErrorMessage oldDriverId rc.id (show RCActiveOnOtherAccount)
+              throwError RCActiveOnOtherAccount
+        Nothing -> do
+          -- if driver didn't take any ride yet
+          person <- Person.findById oldDriverId >>= fromMaybeM (PersonNotFound oldDriverId.getId)
+          if ((nominalDiffTimeToSeconds (diffUTCTime now person.createdAt) > transporterConfig.automaticRCActivationCutOff || canUnlinkWhenOffline) && driverInfo.onRide == False) || isTaxiBoothRequest
+            then deactivateFunc oldDriverId
+            else do
+              DAQuery.updateRcErrorMessage oldDriverId rc.id (show RCActiveOnOtherAccount)
+              throwError RCActiveOnOtherAccount
+
+activateRC :: DI.DriverInformation -> Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> DTC.TransporterConfig -> UTCTime -> Domain.VehicleRegistrationCertificate -> Flow ()
+activateRC driverInfo merchantId merchantOpCityId transporterConfig now rc = do
+  when (transporterConfig.requiresOnboardingInspection == Just True || transporterConfig.enableBotFlow == Just True) $ do
+    unless driverInfo.enabled $ do
+      DAQuery.updateRcErrorMessage driverInfo.driverId rc.id "Driver is not enabled"
+      throwError (InvalidRequest "Driver is not enabled")
+    unless (fromMaybe False rc.approved) $ do
+      DAQuery.updateRcErrorMessage driverInfo.driverId rc.id "Vehicle is not approved"
+      throwError (InvalidRequest "Vehicle is not approved")
+  deactivateCurrentRC transporterConfig driverInfo.driverId
+  addVehicleToDriver
+  DAQuery.activateRCForDriver driverInfo.driverId rc.id now
+  when transporterConfig.analyticsConfig.enableFleetOperatorDashboardAnalytics $ Analytics.incrementFleetOwnerAnalyticsActiveVehicleCount transporterConfig rc.fleetOwnerId driverInfo.driverId
+  return ()
+  where
+    addVehicleToDriver = do
+      rcNumber <- decrypt rc.certificateNumber
+      whenJust rc.vehicleVariant $ \variant -> do
+        when (variant == DV.SUV) $
+          DIQuery.updateDriverDowngradeForSuv transporterConfig.canSuvDowngradeToHatchback transporterConfig.canSuvDowngradeToTaxi driverInfo.driverId
+      cityVehicleServiceTiers <- CQVST.findAllByMerchantOpCityId merchantOpCityId Nothing
+      person <- Person.findById driverInfo.driverId >>= fromMaybeM (PersonNotFound driverInfo.driverId.getId)
+      -- driverStats <- runInReplica $ QDriverStats.findById driverInfo.driverId >>= fromMaybeM DriverInfoNotFound
+      let vehicle = makeFullVehicleFromRC cityVehicleServiceTiers driverInfo person merchantId rcNumber rc merchantOpCityId now Nothing
+      VQuery.create vehicle
+
+deactivateCurrentRC :: DTC.TransporterConfig -> Id Person.Person -> Flow ()
+deactivateCurrentRC transporterConfig driverId = do
+  mActiveAssociation <- DAQuery.findActiveAssociationByDriver driverId True
+  case mActiveAssociation of
+    Just association -> do
+      rc <- RCQuery.findById association.rcId >>= fromMaybeM (RCNotFound "")
+      deactivateRC False transporterConfig rc driverId -- call deativate RC flow
+    Nothing -> do
+      removeVehicle False driverId
+      return ()
+
+-- | For reminder job: invalidate RC (set approved false, verification status INVALID),
+-- deactivate RC association and remove vehicle for the driver. Call this when vehicle
+-- inspection reminder is overdue and mandatory. Order: deactivate+remove first (while RC
+-- is still valid), then set RC invalid. Caller (ProcessReminder) must reschedule the job
+-- when driver is on ride and only call this when driver is not on ride (removeVehicle
+-- throws RCVehicleOnRide if driver is on ride).
+invalidateRCAndRemoveVehicleForReminder ::
+  ( MonadFlow m,
+    EsqDBFlow m r,
+    CacheFlow m r,
+    Redis.HedisFlow m r,
+    HasField "serviceClickhouseCfg" r CH.ClickhouseCfg,
+    HasField "serviceClickhouseEnv" r CH.ClickhouseEnv
+  ) =>
+  Id DVRC.VehicleRegistrationCertificate ->
+  Id Person.Person ->
+  Id DMOC.MerchantOperatingCity ->
+  Text ->
+  m ()
+invalidateRCAndRemoveVehicleForReminder rcId driverId merchantOpCityId reason = do
+  rc <- RCQuery.findById rcId >>= fromMaybeM (RCNotFound rcId.getId)
+  transporterConfig <- getOneConfig (TransporterConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (SCTC.findByMerchantOpCityId merchantOpCityId Nothing)) >>= fromMaybeM (TransporterConfigNotFound merchantOpCityId.getId)
+  mActiveAssociation <- DAQuery.findActiveAssociationByRC rc.id True
+  case mActiveAssociation of
+    Just assoc | assoc.driverId == driverId -> do
+      removeVehicle False driverId
+      DAQuery.deactivateRCForDriver False driverId rc.id
+      when transporterConfig.analyticsConfig.enableFleetOperatorDashboardAnalytics $
+        Analytics.decrementFleetOwnerAnalyticsActiveVehicleCount transporterConfig rc.fleetOwnerId driverId
+    _ -> return ()
+  RCQuery.updateApproved (Just False) rcId
+  VRCExtra.updateVerificationStatusAndRejectReason Documents.INVALID reason rc.documentImageId
+  ImageQuery.updateVerificationStatusAndFailureReason Documents.INVALID (ImageNotValid reason) rc.documentImageId
+
+deleteRC :: (Id Person.Person, Id DM.Merchant, Id DMOC.MerchantOperatingCity) -> DeleteRCReq -> Bool -> Flow APISuccess
+deleteRC (driverId, _, merchantOpCityId) DeleteRCReq {..} isOldFlow = do
+  rc <- RCQuery.findLastVehicleRCWrapper rcNo >>= fromMaybeM (RCNotFound rcNo)
+  mAssoc <- DAQuery.findActiveAssociationByRC rc.id True
+  transporterConfig <- getOneConfig (TransporterConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (SCTC.findByMerchantOpCityId merchantOpCityId Nothing)) >>= fromMaybeM (TransporterConfigNotFound merchantOpCityId.getId)
+  case (mAssoc, isOldFlow) of
+    (Just assoc, False) -> do
+      when (assoc.driverId == driverId) $ do
+        DAQuery.updateRcErrorMessage driverId rc.id "Deactivate Vehicle first to delete!"
+        throwError (InvalidRequest "Deactivate Vehicle first to delete!")
+    (Just _, True) -> deactivateRC False transporterConfig rc driverId
+    (_, _) -> return ()
+  DAQuery.endAssociationForRC driverId rc.id
+  return Success
+
+getAllLinkedRCs :: (Id Person.Person, Id DM.Merchant, Id DMOC.MerchantOperatingCity) -> Flow [LinkedRC]
+getAllLinkedRCs (driverId, _, _) = do
+  driverRCs <- DAQuery.findAllLinkedByDriverId driverId
+  rcs <- RCQuery.findAllById (map (.rcId) driverRCs)
+  let activeRcs = buildRcHM driverRCs
+  mapM (getCombinedRcData activeRcs) rcs
+  where
+    getCombinedRcData activeRcs rc = do
+      rcNo <- decrypt rc.certificateNumber
+      return $
+        LinkedRC
+          { rcActive = fromMaybe False $ HM.lookup rc.id.getId activeRcs <&> (.isRcActive),
+            rcDetails = makeRCAPIEntity rc rcNo,
+            isFleetRC = isJust rc.fleetOwnerId,
+            isValid = Nothing
+          }
+
+rcVerificationLockKey :: Text -> Text
+rcVerificationLockKey rcNumber = "VehicleRC::RCNumber-" <> rcNumber
+
+makeFleetOwnerKey :: Text -> Text
+makeFleetOwnerKey vehicleNo = "FleetOwnerId:PersonId-" <> removeSpaceAndDash vehicleNo

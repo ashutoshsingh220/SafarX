@@ -1,0 +1,381 @@
+package org.opentripplanner.standalone.configure;
+
+import jakarta.ws.rs.core.Application;
+import javax.annotation.Nullable;
+import org.opentripplanner.core.framework.deduplicator.DeduplicatorService;
+import org.opentripplanner.datastore.api.DataSource;
+import org.opentripplanner.ext.carpooling.CarpoolingRepository;
+import org.opentripplanner.ext.emission.EmissionRepository;
+import org.opentripplanner.ext.empiricaldelay.EmpiricalDelayRepository;
+import org.opentripplanner.ext.stopconsolidation.StopConsolidationRepository;
+import org.opentripplanner.framework.application.LogMDCSupport;
+import org.opentripplanner.framework.application.OTPFeature;
+import org.opentripplanner.graph_builder.GraphBuilder;
+import org.opentripplanner.graph_builder.GraphBuilderDataSources;
+import org.opentripplanner.graph_builder.issue.api.DataImportIssueSummary;
+import org.opentripplanner.raptor.configure.RaptorConfig;
+import org.opentripplanner.routing.algorithm.raptoradapter.transit.RaptorTransitData;
+import org.opentripplanner.routing.algorithm.raptoradapter.transit.TransitTuningParameters;
+import org.opentripplanner.routing.algorithm.raptoradapter.transit.TripSchedule;
+import org.opentripplanner.routing.algorithm.raptoradapter.transit.mappers.RaptorTransitDataMapper;
+import org.opentripplanner.routing.fares.FareServiceFactory;
+import org.opentripplanner.routing.util.EllipsoidUtils;
+import org.opentripplanner.service.osminfo.OsmInfoGraphBuildRepository;
+import org.opentripplanner.service.realtimevehicles.RealtimeVehicleRepository;
+import org.opentripplanner.service.streetdetails.StreetDetailsRepository;
+import org.opentripplanner.service.vehicleparking.VehicleParkingRepository;
+import org.opentripplanner.service.vehicleparking.VehicleParkingService;
+import org.opentripplanner.service.vehiclerental.VehicleRentalRepository;
+import org.opentripplanner.service.worldenvelope.WorldEnvelopeRepository;
+import org.opentripplanner.standalone.config.BuildConfig;
+import org.opentripplanner.standalone.config.CommandLineParameters;
+import org.opentripplanner.standalone.config.ConfigModel;
+import org.opentripplanner.standalone.config.DebugUiConfig;
+import org.opentripplanner.standalone.config.OtpConfig;
+import org.opentripplanner.standalone.config.RouterConfig;
+import org.opentripplanner.standalone.server.GrizzlyServer;
+import org.opentripplanner.standalone.server.OTPWebApplication;
+import org.opentripplanner.street.StreetRepository;
+import org.opentripplanner.street.graph.Graph;
+import org.opentripplanner.street.linking.VertexLinker;
+import org.opentripplanner.transfer.regular.TransferRepository;
+import org.opentripplanner.transit.service.TimetableRepository;
+import org.opentripplanner.updater.configure.UpdaterConfigurator;
+import org.opentripplanner.utils.logging.ProgressTracker;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * This class is responsible for creating the top level services like the {@link OTPWebApplication}
+ * and {@link GraphBuilder}. The purpose of this class is to wire the application, creating the
+ * necessary Services and modules and putting them together. It is NOT responsible for starting or
+ * running the application. The whole idea of this class is to separate application construction
+ * from running it.
+ * <p>
+ * The top level construction class(this class) may delegate to other construction classes
+ * to inject configuration and services into submodules. An instance of this class is created
+ * using the {@link LoadApplication} - An application is constructed AFTER config and input files
+ * are loaded.
+ * <p>
+ * THIS CLASS IS NOT THREAD SAFE - THE APPLICATION SHOULD BE CREATED IN ONE THREAD. The
+ * constructor performs the heavy Raptor data mapping before handing results to Dagger; all other
+ * wiring is fast (no IO beyond config file reads).
+ */
+public class ConstructApplication {
+
+  private static final Logger LOG = LoggerFactory.getLogger(ConstructApplication.class);
+
+  private final CommandLineParameters cli;
+  private final GraphBuilderDataSources graphBuilderDataSources;
+  /**
+   * The OSM Info is injected into the graph-builder, but not the web-server; Hence not part of
+   * the application context.
+   */
+  private final OsmInfoGraphBuildRepository osmInfoGraphBuildRepository;
+  private final ConstructApplicationFactory factory;
+
+  /**
+   * Create a new OTP configuration instance for a given directory.
+   */
+  ConstructApplication(
+    CommandLineParameters cli,
+    Graph graph,
+    OsmInfoGraphBuildRepository osmInfoGraphBuildRepository,
+    StreetDetailsRepository streetDetailsRepository,
+    TimetableRepository timetableRepository,
+    TransferRepository transferRepository,
+    WorldEnvelopeRepository worldEnvelopeRepository,
+    ConfigModel config,
+    GraphBuilderDataSources graphBuilderDataSources,
+    DataImportIssueSummary issueSummary,
+    EmissionRepository emissionRepository,
+    @Nullable EmpiricalDelayRepository empiricalDelayRepository,
+    VehicleParkingRepository vehicleParkingRepository,
+    @Nullable StopConsolidationRepository stopConsolidationRepository,
+    StreetRepository streetRepository,
+    FareServiceFactory fareServiceFactory
+  ) {
+    this.cli = cli;
+    this.graphBuilderDataSources = graphBuilderDataSources;
+    this.osmInfoGraphBuildRepository = osmInfoGraphBuildRepository;
+
+    // Compute Raptor data before Dagger construction so it can be injected as instances.
+    // This is intentionally done here rather than in a Dagger provider because the mapping
+    // is heavy and should not run inside the DI container's initialization.
+    var tuningParameters = config.routerConfig().transitTuningConfig();
+    if (!timetableRepository.hasTransit() || !timetableRepository.isIndexed()) {
+      LOG.warn(
+        "Cannot create Raptor data, that requires the graph to have transit data and be indexed."
+      );
+    }
+    LOG.info("Creating transit layer for Raptor routing.");
+    timetableRepository.initRaptorTransitData(
+      RaptorTransitDataMapper.map(tuningParameters, timetableRepository, transferRepository)
+    );
+    var scheduledRaptorTransitData = new RaptorTransitData(
+      timetableRepository.getRaptorTransitData()
+    );
+    var scheduledTripCalendars = timetableRepository.copyTripCalendarForRealTimeUpdates();
+
+    ConstructApplicationFactory.Builder builder = DaggerConstructApplicationFactory.builder();
+    this.factory = builder
+      .configModel(config)
+      .graph(graph)
+      .streetDetailsRepository(streetDetailsRepository)
+      .timetableRepository(timetableRepository)
+      .transferRepository(transferRepository)
+      .worldEnvelopeRepository(worldEnvelopeRepository)
+      .vehicleParkingRepository(vehicleParkingRepository)
+      .emissionRepository(emissionRepository)
+      .empiricalDelayRepository(empiricalDelayRepository)
+      .dataImportIssueSummary(issueSummary)
+      .stopConsolidationRepository(stopConsolidationRepository)
+      .streetStreetRepository(streetRepository)
+      .schema(config.routerConfig().routingRequestDefaults())
+      .fareServiceFactory(fareServiceFactory)
+      .scheduledRaptorTransitData(scheduledRaptorTransitData)
+      .scheduledTripCalendars(scheduledTripCalendars)
+      .build();
+  }
+
+  public ConstructApplicationFactory getFactory() {
+    return factory;
+  }
+
+  /**
+   * Create a new Grizzly server - call this method once, the new instance is created every time
+   * this method is called.
+   */
+  public GrizzlyServer createGrizzlyServer() {
+    return new GrizzlyServer(
+      cli,
+      createApplication(),
+      routerConfig().server().apiProcessingTimeout()
+    );
+  }
+
+  /**
+   * Create the default graph builder.
+   */
+  public GraphBuilder createGraphBuilder() {
+    LOG.info("Wiring up and configuring graph builder task.");
+    return GraphBuilder.create(
+      buildConfig(),
+      graphBuilderDataSources,
+      graph(),
+      osmInfoGraphBuildRepository,
+      factory.streetDetailsRepository(),
+      fareServiceFactory(),
+      factory.streetRepository(),
+      factory.timetableRepository(),
+      factory.transferRepository(),
+      factory.worldEnvelopeRepository(),
+      factory.vehicleParkingRepository(),
+      factory.emissionRepository(),
+      factory.empiricalDelayRepository(),
+      factory.stopConsolidationRepository(),
+      cli.doLoadStreetGraph(),
+      cli.doSaveStreetGraph()
+    );
+  }
+
+  /**
+   * The output data source to use for saving the serialized graph.
+   * <p>
+   * This method will return {@code null} if the graph should NOT be saved. The business logic to
+   * make that decision is in the {@link GraphBuilderDataSources}.
+   */
+  @Nullable
+  public DataSource graphOutputDataSource() {
+    return graphBuilderDataSources.getOutputGraph();
+  }
+
+  public GraphBuilderDataSources graphBuilderDataSources() {
+    return graphBuilderDataSources;
+  }
+
+  private Application createApplication() {
+    LOG.info("Wiring up and configuring server.");
+    setupTransitRoutingServer();
+    return new OTPWebApplication(routerConfig().server(), this::requestScopedFactory);
+  }
+
+  private void setupTransitRoutingServer() {
+    enableRequestTraceLogging();
+    createMetricsLogging();
+
+    /* Create updater modules from JSON config. */
+    UpdaterConfigurator.configure(
+      graph(),
+      deduplicatorService(),
+      vertexLinker(),
+      realtimeVehicleRepository(),
+      vehicleRentalRepository(),
+      vehicleParkingRepository(),
+      timetableRepository(),
+      carpoolingRepository(),
+      factory.updateManager(),
+      factory.timetableRepositoryHandle(),
+      routerConfig().updaterConfig()
+    );
+
+    // Start application warmup — runs routing queries to warm up the application
+    factory.warmupLauncher().start();
+
+    initEllipsoidToGeoidDifference();
+
+    initializeTransferCache(routerConfig().transitTuningConfig(), timetableRepository());
+
+    if (OTPFeature.SandboxAPIGeocoder.isOn()) {
+      LOG.info("Initializing geocoder");
+      // eagerly initialize the geocoder
+      this.factory.luceneIndex();
+    }
+  }
+
+  private void initEllipsoidToGeoidDifference() {
+    try {
+      var c = factory.worldEnvelopeService().envelope().orElseThrow().center();
+      double value = EllipsoidUtils.computeEllipsoidToGeoidDifference(c.latitude(), c.longitude());
+      graph().initEllipsoidToGeoidDifference(value, c.latitude(), c.longitude());
+    } catch (Exception e) {
+      LOG.error("Error computing ellipsoid/geoid difference");
+    }
+  }
+
+  public static void initializeTransferCache(
+    TransitTuningParameters transitTuningConfig,
+    TimetableRepository timetableRepository
+  ) {
+    var transferCacheRequests = transitTuningConfig.transferCacheRequests();
+    if (!transferCacheRequests.isEmpty()) {
+      var progress = ProgressTracker.track(
+        "Creating initial raptor transfer cache",
+        1,
+        transferCacheRequests.size()
+      );
+
+      LOG.info(progress.startMessage());
+
+      transferCacheRequests.forEach(request -> {
+        timetableRepository.getRaptorTransitData().initTransferCacheForRequest(request);
+
+        //noinspection Convert2MethodRef
+        progress.step(s -> LOG.info(s));
+      });
+
+      LOG.info(progress.completeMessage());
+    }
+  }
+
+  public TimetableRepository timetableRepository() {
+    return factory.timetableRepository();
+  }
+
+  public TransferRepository transferRepository() {
+    return factory.transferRepository();
+  }
+
+  public CarpoolingRepository carpoolingRepository() {
+    return factory.carpoolingRepository();
+  }
+
+  public DataImportIssueSummary dataImportIssueSummary() {
+    return factory.dataImportIssueSummary();
+  }
+
+  public OsmInfoGraphBuildRepository osmInfoGraphBuildRepository() {
+    return osmInfoGraphBuildRepository;
+  }
+
+  public StopConsolidationRepository stopConsolidationRepository() {
+    return factory.stopConsolidationRepository();
+  }
+
+  public StreetRepository streetRepository() {
+    return factory.streetRepository();
+  }
+
+  public RealtimeVehicleRepository realtimeVehicleRepository() {
+    return factory.realtimeVehicleRepository();
+  }
+
+  public VehicleRentalRepository vehicleRentalRepository() {
+    return factory.vehicleRentalRepository();
+  }
+
+  public VehicleParkingService vehicleParkingService() {
+    return factory.vehicleParkingService();
+  }
+
+  public VehicleParkingRepository vehicleParkingRepository() {
+    return factory.vehicleParkingRepository();
+  }
+
+  public Graph graph() {
+    return factory.graph();
+  }
+
+  public VertexLinker vertexLinker() {
+    return factory.vertexLinker();
+  }
+
+  public DeduplicatorService deduplicatorService() {
+    return factory.deduplicatorService();
+  }
+
+  public WorldEnvelopeRepository worldEnvelopeRepository() {
+    return factory.worldEnvelopeRepository();
+  }
+
+  public OtpConfig otpConfig() {
+    return factory.config().otpConfig();
+  }
+
+  public RouterConfig routerConfig() {
+    return factory.config().routerConfig();
+  }
+
+  public BuildConfig buildConfig() {
+    return factory.config().buildConfig();
+  }
+
+  public DebugUiConfig debugUiConfig() {
+    return factory.config().debugUiConfig();
+  }
+
+  public RaptorConfig<TripSchedule> raptorConfig() {
+    return factory.raptorConfig();
+  }
+
+  private RequestScopedFactory requestScopedFactory() {
+    return factory.requestScopedFactoryBuilder().build();
+  }
+
+  private void enableRequestTraceLogging() {
+    if (routerConfig().server().requestTraceLoggingEnabled()) {
+      LogMDCSupport.enable();
+    }
+  }
+
+  private void createMetricsLogging() {
+    factory.metricsLogging();
+  }
+
+  public EmissionRepository emissionRepository() {
+    return factory.emissionRepository();
+  }
+
+  public StreetDetailsRepository streetDetailsRepository() {
+    return factory.streetDetailsRepository();
+  }
+
+  @Nullable
+  public EmpiricalDelayRepository empiricalDelayRepository() {
+    return factory.empiricalDelayRepository();
+  }
+
+  public FareServiceFactory fareServiceFactory() {
+    return factory.fareServiceFactory();
+  }
+}

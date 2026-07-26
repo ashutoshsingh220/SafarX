@@ -1,0 +1,110 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module API.Dashboard.Registration where
+
+import qualified Domain.Action.Dashboard.Registration as DReg
+import Environment
+import Kernel.Prelude
+import Kernel.Utils.Common
+import Servant
+import Storage.Beam.BeamFlow
+import Tools.Auth
+
+type API =
+  "user"
+    :> ( "login"
+           :> ReqBody '[JSON] DReg.LoginReq
+           :> Post '[JSON] DReg.LoginRes
+           :<|> "logout"
+             :> DashboardAuth 'DASHBOARD_USER
+             :> Post '[JSON] DReg.LogoutRes
+           :<|> "logoutAllMerchants"
+             :> DashboardAuth 'DASHBOARD_USER
+             :> Post '[JSON] DReg.LogoutRes
+           :<|> "enable2Fa"
+             :> ReqBody '[JSON] DReg.Enable2FAReq
+             :> Post '[JSON] DReg.Enable2FARes
+           :<|> "initiate2FaSetup"
+             :> ReqBody '[JSON] DReg.Initiate2FASetupReq
+             :> Post '[JSON] DReg.Initiate2FASetupRes
+           :<|> "verify2FaSetup"
+             :> ReqBody '[JSON] DReg.Verify2FASetupReq
+             :> Post '[JSON] DReg.Enable2FARes
+           :<|> "twoFaStatus"
+             :> DashboardAuth 'DASHBOARD_USER
+             :> Get '[JSON] DReg.TwoFaStatusRes
+           :<|> "twoFaAdminReset"
+             :> DashboardAuth 'DASHBOARD_USER
+             :> ReqBody '[JSON] DReg.TwoFaAdminResetReq
+             :> Post '[JSON] DReg.TwoFaAdminResetRes
+           :<|> "twoFaDispatchDeadlineNotifications"
+             :> DashboardAuth 'DASHBOARD_USER
+             :> Post '[JSON] DReg.DispatchNotificationsRes
+           :<|> "switchMerchant"
+             :> DashboardAuth 'DASHBOARD_USER
+             :> ReqBody '[JSON] DReg.SwitchMerchantReq
+             :> Post '[JSON] DReg.LoginRes
+           :<|> "switchMerchantAndCity"
+             :> DashboardAuth 'DASHBOARD_USER
+             :> ReqBody '[JSON] DReg.SwitchMerchantAndCityReq
+             :> Post '[JSON] DReg.LoginRes
+       )
+
+handler :: BeamFlow' => FlowServer API
+handler =
+  login
+    :<|> logout
+    :<|> logoutAllMerchants
+    :<|> enable2fa
+    :<|> initiate2FASetup
+    :<|> verify2FASetup
+    :<|> twoFaStatus
+    :<|> twoFaAdminReset
+    :<|> twoFaDispatchDeadlineNotifications
+    :<|> switchMerchant
+    :<|> switchMerchantAndCity
+
+login :: BeamFlow' => DReg.LoginReq -> FlowHandler DReg.LoginRes
+login = withFlowHandlerAPI' . DReg.login
+
+logout :: BeamFlow' => TokenInfo -> FlowHandler DReg.LogoutRes
+logout = withFlowHandlerAPI' . DReg.logout
+
+logoutAllMerchants :: BeamFlow' => TokenInfo -> FlowHandler DReg.LogoutRes
+logoutAllMerchants = withFlowHandlerAPI' . DReg.logoutAllMerchants
+
+enable2fa :: BeamFlow' => DReg.Enable2FAReq -> FlowHandler DReg.Enable2FARes
+enable2fa = withFlowHandlerAPI' . DReg.enable2fa
+
+initiate2FASetup :: BeamFlow' => DReg.Initiate2FASetupReq -> FlowHandler DReg.Initiate2FASetupRes
+initiate2FASetup = withFlowHandlerAPI' . DReg.initiate2FASetup
+
+verify2FASetup :: BeamFlow' => DReg.Verify2FASetupReq -> FlowHandler DReg.Enable2FARes
+verify2FASetup = withFlowHandlerAPI' . DReg.verify2FASetup
+
+twoFaStatus :: BeamFlow' => TokenInfo -> FlowHandler DReg.TwoFaStatusRes
+twoFaStatus = withFlowHandlerAPI' . DReg.getTwoFaStatus
+
+twoFaAdminReset :: BeamFlow' => TokenInfo -> DReg.TwoFaAdminResetReq -> FlowHandler DReg.TwoFaAdminResetRes
+twoFaAdminReset token = withFlowHandlerAPI' . DReg.adminResetTwoFa token
+
+twoFaDispatchDeadlineNotifications :: BeamFlow' => TokenInfo -> FlowHandler DReg.DispatchNotificationsRes
+twoFaDispatchDeadlineNotifications = withFlowHandlerAPI' . DReg.dispatchTwoFaDeadlineNotifications
+
+switchMerchant :: BeamFlow' => TokenInfo -> DReg.SwitchMerchantReq -> FlowHandler DReg.LoginRes
+switchMerchant token = withFlowHandlerAPI' . DReg.switchMerchant token
+
+switchMerchantAndCity :: BeamFlow' => TokenInfo -> DReg.SwitchMerchantAndCityReq -> FlowHandler DReg.LoginRes
+switchMerchantAndCity token = withFlowHandlerAPI' . DReg.switchMerchantAndCity token

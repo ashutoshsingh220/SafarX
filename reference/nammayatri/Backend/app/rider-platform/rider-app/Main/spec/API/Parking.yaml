@@ -1,0 +1,58 @@
+imports:
+  Text: Data.Text
+  HighPrecMoney: Kernel.Types.Common
+  PaymentOrder: Lib.Payment.Domain.Types.PaymentOrder
+  Person: Domain.Types.Person
+
+module: ParkingBooking
+types:
+  ParkingBookingReq:
+    amount: HighPrecMoney
+    entityId: Text
+    parkingStartTime: UTCTime
+    parkingEndTime: UTCTime
+    slotNumber: Text
+    vehicleNumber: Text
+    customerId: Id Person
+    derive: "Show"
+
+  ParkingBookingResponse:
+    parkingLotId: Text
+    paymentLink: Text
+    orderId: Id PaymentOrder
+    orderShortId: Text
+    derive: "Show"
+
+  MarshalPersonReq:
+    merchantShortId: Text
+    mobileNumber: Text
+    mobileCountryCode: Text
+    firstName: Maybe Text
+    lastName: Maybe Text
+    email: Maybe Text
+    derive: "Show"
+
+  MarshalPersonResp:
+    recordType: NewType
+    customerId: Id Person
+
+apis:
+  - POST:
+      endpoint: /multimodal/parking/book
+      auth: NoAuth
+      headers:
+        api-key: Text
+      request:
+        type: ParkingBookingReq
+      response:
+        type: ParkingBookingResponse
+  - POST:
+      endpoint: /multimodal/parking/marshal/create
+      auth: NoAuth
+      headers:
+        api-key: Text
+      request:
+        type: MarshalPersonReq
+      response:
+        type: MarshalPersonResp
+

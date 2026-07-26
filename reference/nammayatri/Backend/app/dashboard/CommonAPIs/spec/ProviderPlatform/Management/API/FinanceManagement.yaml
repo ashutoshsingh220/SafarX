@@ -1,0 +1,662 @@
+# 1. Subscription Purchase list – track subscription revenue and usage
+# 2. Fleet Operator list – fleet operator master data and financials
+# 3. Invoice list – invoice metadata and compliance
+# All response fields Maybe so missing data does not break the API.
+
+imports:
+  Summary: Dashboard.Common
+  Driver: Dashboard.Common
+  SubscriptionPurchase: Dashboard.Common
+  PaymentOrder: Dashboard.Common
+  PGPaymentSettlementReport: Dashboard.Common
+  InvoiceStatus: Lib.Finance.Domain.Types.Invoice
+  InvoiceType: Domain.Types.Invoice
+  IssuedToType: Domain.Types.Invoice
+  Domain: Lib.Finance.Reconciliation.Types
+  DataSource: Lib.Finance.Reconciliation.Types
+  Day: Data.Time
+  TimeOfDay: Kernel.Prelude
+  DateOrTime: Lib.Finance.Invoice.PdfService
+  Value: Data.Aeson
+  Language: Kernel.External.Types
+  AuditAction: Lib.Finance.Domain.Types.AuditEntry
+  AuditEntityType: Lib.Finance.Domain.Types.AuditEntry
+  ActorType: Lib.Finance.Core.Types
+
+importPackageOverrides:
+  Domain.Types.Invoice: "beckn-spec"
+
+module: FinanceManagement
+
+apis:
+  # ----- Subscription Purchase -----
+  - GET: # SubscriptionPurchaseListAPI
+      endpoint: /subscriptionPurchase/list
+      query:
+        limit: Int
+        offset: Int
+        from: UTCTime
+        to: UTCTime
+        status: SubscriptionPurchaseStatus
+        driverId: Id Driver
+        fleetOwnerId: Text
+        amountMin: HighPrecMoney
+        amountMax: HighPrecMoney
+        subscriptionId: Text
+        serviceName: Text
+      auth: ApiAuthV2
+      response:
+        type: SubscriptionPurchaseListRes
+
+
+  # ----- Invoice PDF -----
+  - GET: # InvoiceDownloadPdfAPI
+      endpoint: /finance/invoice/pdf
+      query:
+        limit: Int
+        offset: Int
+        invoiceId: Text
+        invoiceNumber: Text
+        from: UTCTime
+        to: UTCTime
+        invoiceType: InvoiceType
+        status: InvoiceStatus
+        fleetOwnerOrDriverId: Text
+        issuedToType: IssuedToType
+        issuedToTypes: [IssuedToType] # Multi-value IN filter; mirrors /finance/invoice/list
+        language: Language
+      auth: ApiAuthV2
+      response:
+        type: FinanceInvoicePdfResp
+
+  # ----- Invoice -----
+  - GET: # InvoiceListAPI
+      endpoint: /finance/invoice/list
+      query:
+        limit: Int
+        offset: Int
+        invoiceId: Text
+        invoiceNumber: Text
+        from: UTCTime
+        to: UTCTime
+        invoiceType: InvoiceType
+        status: InvoiceStatus
+        fleetOwnerOrDriverId: Text
+        issuedToType: IssuedToType
+        issuedToTypes: [IssuedToType] # Added new query param to filter by multiple issuedToType values (IN clause)
+      auth: ApiAuthV2
+      response:
+        type: InvoiceListRes
+
+  # ----- Audit trail -----
+  - GET: # AuditListAPI
+      endpoint: /finance/audit/list
+      query:
+        - limit: Int
+        - offset: Int
+        - from: UTCTime
+        - to: UTCTime
+        - entityType: AuditEntityType
+        - action: AuditAction
+        - actorType: ActorType
+        - actorId: Text
+        - entityId: Text
+      auth: ApiAuthV2
+      response:
+        type: AuditListRes
+
+  # ----- Reconciliation -----
+  - GET: # ReconciliationAPI
+      endpoint: /finance/reconciliation
+      mandatoryQuery:
+        domain: Domain
+        source: DataSource
+        target: DataSource
+      query:
+        fromDate: UTCTime
+        toDate: UTCTime
+        limit: Int
+        offset: Int
+      auth: ApiAuthV2
+      response:
+        type: ReconciliationRes
+
+
+  # ----- Payment settlement list -----
+  - GET: # PaymentSettlementListAPI
+      endpoint: /finance/payment/settlement/list
+      query:
+        limit: Int
+        offset: Int
+        from: UTCTime
+        to: UTCTime
+        subscriptionPurchaseId: Id SubscriptionPurchase
+        paymentOrderShortId: ShortId PaymentOrder
+        settlementId: Id PGPaymentSettlementReport
+        pgApprovalCode: Text
+        settlementUtr: Text
+        settlementFrom: UTCTime
+        settlementTo: UTCTime
+        pgGateway: PgGateway
+        settlementAmountMin: HighPrecMoney
+        settlementAmountMax: HighPrecMoney
+      auth: ApiAuthV2
+      response:
+        type: PaymentSettlementListRes
+
+  # ----- Payment gateway transaction list -----
+  - GET: # PaymentGatewayTransactionListAPI
+      endpoint: /finance/payment/gateway/transaction/list
+      query:
+        limit: Int
+        offset: Int
+        from: UTCTime
+        to: UTCTime
+        subscriptionId: Id SubscriptionPurchase
+        paymentOrderId: ShortId PaymentOrder
+        pgGateway: PgGateway
+        paymentStatus: PaymentStatusFilter
+        paymentMode: PaymentModeFilter
+        txnAmountMin: HighPrecMoney
+        txnAmountMax: HighPrecMoney
+      auth: ApiAuthV2
+      response:
+        type: PaymentTransactionReportListRes
+
+  # ----- Wallet ledger (balance + ledger entries combined) -----
+  - GET: # WalletLedgerAPI
+      endpoint: /finance/wallet/ledger
+      query:
+        - limit: Int
+        - offset: Int
+        - driverId: Text
+        - fleetOperatorId: Text
+        - concernedIndividualId: Text
+        - from: UTCTime
+        - to: UTCTime
+        - sourceType: Text
+        - subscriptionId: Id SubscriptionPurchase
+      auth: ApiAuthV2
+      response:
+        type: WalletLedgerRes
+
+
+  - POST: # ReconciliationTriggerAPI
+      endpoint: /reconciliation/trigger
+      auth: ApiAuthV2
+      request:
+        type: ReconciliationTriggerReq
+      response:
+        type: ReconciliationTriggerRes
+      userActionType: ApiAuth DRIVER_OFFER_BPP_MANAGEMENT FINANCE RECONCILIATION_TRIGGER
+
+  # ----- SAP Journal Entries -----
+  - GET: # SapJournalListAPI
+      endpoint: /finance/sapJournals
+      query:
+        dateFrom: UTCTime
+        dateTo: UTCTime
+        limit: Int
+        offset: Int
+        transactionType: Text
+        status: Text
+        batchId: Text
+        belnr: Text
+      auth: ApiAuthV2
+      response:
+        type: SapJournalListRes
+
+  # ----- SAP Journal Transactions (drill-down by transactionType + postingDate) -----
+  - GET: # SapJournalTransactionsAPI
+      endpoint: /finance/sapJournals/transactions
+      mandatoryQuery:
+        transactionType: Text
+        periodStartTime: UTCTime
+        periodEndTime: UTCTime
+      query:
+        limit: Int
+        offset: Int
+        subscriptionId: Text
+        fromTime: UTCTime
+        toTime: UTCTime
+      auth: ApiAuthV2
+      response:
+        type: SapJournalTransactionsRes
+
+types:
+  SubscriptionPurchaseStatus:
+    - enum: "SubscriptionPending, SubscriptionActive, SubscriptionExpired, SubscriptionFailed, SubscriptionExhausted"
+    - derive: "HttpInstance"
+
+  PgGateway:
+    - enum: "Juspay, BillDesk, RazorPay, CCAvenue"
+    - derive: "HttpInstance"
+
+  PaymentModeFilter:
+    - enum: "UPI, Card, NetBanking, Wallet"
+    - derive: "HttpInstance"
+
+  PaymentStatusFilter:
+    - enum: "Success, Failed, Pending"
+    - derive: "HttpInstance"
+
+  TransactionTypeFilter:
+    - enum: "Order, Refund, Chargeback"
+    - derive: "HttpInstance"
+
+  # ----- Subscription Purchase -----
+  SubscriptionPurchaseListRes:
+    - totalItems: Int
+    - summary: Summary
+    - subscriptions: [SubscriptionPurchaseListItem]
+    - failedOwnerIds: [Text]
+  SubscriptionPurchaseListItem:
+    - subscriptionPurchaseId: Maybe Text
+    - purchasedAt: Maybe UTCTime
+    - driverName: Maybe Text
+    - fleetOwnerName: Maybe Text
+    - driverPhoneNumber: Maybe Text
+    - fleetOwnerPhoneNumber: Maybe Text
+    - driverId: Maybe Text
+    - fleetOwnerId: Maybe Text
+    - status: Maybe Text
+    - amount: Maybe HighPrecMoney
+    - planName: Maybe Text
+    - planType: Maybe Text
+    - planAmount: Maybe HighPrecMoney
+    - planRideCredits: Maybe HighPrecMoney
+    - planStatus: Maybe Text
+    - planValidityDays: Maybe Int
+    - planGeography: Maybe Text
+    - planVehicleCategory: Maybe Text
+    - subscriptionStartDate: Maybe UTCTime
+    - subscriptionEndDate: Maybe UTCTime
+    - subscriptionStatus: Maybe Text
+    - baseAmount: Maybe HighPrecMoney
+    - discountAmount: Maybe HighPrecMoney
+    - totalAmount: Maybe HighPrecMoney
+    - grossSubscriptionAmount: Maybe HighPrecMoney
+    - gstRate: Maybe Double
+    - gstAmount: Maybe HighPrecMoney
+    - totalSubscriptionAmount: Maybe HighPrecMoney
+    - invoiceId: Maybe Text
+    - totalEntitledValue: Maybe HighPrecMoney
+    - utilizedValue: Maybe HighPrecMoney
+    - remainingValue: Maybe HighPrecMoney
+    - revenueRecognized: Maybe HighPrecMoney
+    - linkedRides: [LinkedRideItem]
+    - createdAt: Maybe UTCTime
+    - updatedAt: Maybe UTCTime
+    - orderId: Maybe Text
+
+  LinkedRideItem:
+    - rideId: Text
+    - bookingId: Text
+    - rideCreatedAt: UTCTime
+    - rideSubscriptionDebitAmount: HighPrecMoney
+
+  # ----- Fleet Operator -----
+  FleetOperatorListRes:
+    - totalItems: Int
+    - summary: Summary
+    - fleetOperators: [FleetOperatorListItem]
+  FleetOperatorListItem:
+    - fleetOperatorId: Maybe Text
+    - legalName: Maybe Text
+    - pan: Maybe Text
+    - gstin: Maybe Text
+    - settlementPreference: Maybe Text
+    - linkedDriverIds: [Text]
+    - totalEarnings: Maybe HighPrecMoney
+    - totalDeductions: Maybe HighPrecMoney
+    - outstandingBalance: Maybe HighPrecMoney
+    - payoutReference: Maybe Text
+    - payoutAmount: Maybe HighPrecMoney
+    - payoutStatus: Maybe Text
+    - createdAt: Maybe UTCTime
+    - updatedAt: Maybe UTCTime
+
+  # ----- Invoice PDF -----
+  FinanceInvoicePdfResp:
+    - pdfBase64: Text
+    - invoiceNumber: Text
+
+  # ----- Invoice -----
+  InvoiceListRes:
+    - totalItems: Int
+    - summary: Summary
+    - invoices: [InvoiceListItem]
+  InvoiceListItem:
+    - invoiceId: Text
+    - invoiceNumber: Text
+    - invoiceType: InvoiceType
+    - invoiceDate: UTCTime
+    - invoiceStatus: InvoiceStatus
+    - counterpartyType: Text
+    - counterpartyId: Text
+    - taxableValue: Maybe HighPrecMoney
+    - gstRate: Maybe Double
+    - gstAmount: Maybe HighPrecMoney
+    - totalInvoiceValue: HighPrecMoney
+    - tdsReference: Maybe Text
+    - irn: Maybe Text
+    - qrCode: Maybe Text
+    - rideId: Maybe Text
+    - subscriptionId: Maybe Text
+    - cgstAmount: Maybe HighPrecMoney
+    - sgstAmount: Maybe HighPrecMoney
+    - supplierName: Maybe Text
+    - supplierAddress: Maybe Text
+    - supplierGstin: Maybe Text
+    - supplierTaxNo: Maybe Text
+    - supplierId: Maybe Text
+    - merchantGstin: Maybe Text
+    - issuedToName: Maybe Text
+    - issuedToAddress: Maybe Text
+    - issuedByName: Maybe Text
+    - issuedByAddress: Maybe Text
+    - gstinOfParty: Maybe Text
+    - sacCode: Maybe Text
+    - paymentMethod: Maybe Text
+    - taxableValueOfServiceSupplied: Maybe HighPrecMoney
+    - lineItems: Value
+    - generatedAt: UTCTime
+    - taxRate: Maybe Double
+    - issuedToTaxNo: Maybe Text
+    - issuedByTaxNo: Maybe Text
+
+  # ----- Audit trail -----
+  AuditListRes:
+    - totalItems: Int
+    - summary: Summary
+    - auditEntries: [AuditListItem]
+  AuditListItem:
+    - auditEntryId: Text
+    - entityType: AuditEntityType
+    - entityId: Text
+    - action: AuditAction
+    - actorType: ActorType
+    - actorId: Maybe Text
+    - previousState: Maybe Value
+    - newState: Maybe Value
+    - metadata: Maybe Value
+    - ipAddress: Maybe Text
+    - createdAt: UTCTime
+    - updatedAt: UTCTime
+
+  # ----- Reconciliation -----
+  ReconciliationRes:
+    - summary: ReconciliationSummary
+    - exceptions: [ReconciliationEntry]
+    - completed: [ReconciliationEntry]
+  # Recipe is identified by its (domain, source, target) triple — the same
+  # key the framework registry uses. Exactly one of `day` (immediate one-off
+  # for that IST calendar day) or `runAt` (daily auto-schedule at that IST
+  # time-of-day, processing D-2) must be set.
+  ReconciliationTriggerReq:
+    - domain: Domain
+    - source: DataSource
+    - target: DataSource
+    - day: Maybe Day
+    - runAt: Maybe TimeOfDay
+  ReconciliationTriggerRes:
+    - success: Bool
+    - message: Text
+
+  ReconciliationSummary:
+    - totalDiscrepancies: Int
+    - matchedRecords: Int
+    - matchRate: Text
+    - sourceTotal: HighPrecMoney
+    - targetTotal: HighPrecMoney
+    - varianceAmount: HighPrecMoney
+    - disputeAmountTotal: HighPrecMoney
+  # Generic-shaped recon entry. Old ride-fare-specific fields (bookingId,
+  # dcoId, mode, status) were renamed to their neutral equivalents so the
+  # response makes sense for postpaid / membership / consumption recons too.
+  # Legacy field pairs were collapsed:
+  #     expectedValue / actualValue     -> expectedAmount / actualAmount
+  #     sourceId       / targetId       -> sourceRecordId / targetRecordId
+  #     financeComponent                -> component
+  #     pgTransactionDate               -> transactionDate  (was a dup)
+  # B1/B2 fields (entryKey .. closeReason) surface the sweep's re-check
+  # state so dashboards can distinguish OPEN, aged-out, and twin-resolved
+  # entries at a glance.
+  ReconciliationEntry:
+    # ── Core identity ────────────────────────────────────────────────
+    - entityId: Maybe Text          # primary domain entity (booking / driver_fee / sub id / …)
+    - partyId: Maybe Text           # driver_id / owner_id / whoever
+    - sourceRecordId: Maybe Text    # source table row PK (was sourceId)
+    - targetRecordId: Maybe Text    # target table row PK (was targetId; null when MISSING_IN_TARGET)
+    - component: Maybe Text         # finance sub-classifier (was financeComponent)
+    # ── Amounts / verdict ───────────────────────────────────────────
+    - expectedAmount: Maybe HighPrecMoney   # was expectedValue
+    - actualAmount: Maybe HighPrecMoney     # was actualValue
+    - variance: Maybe HighPrecMoney
+    - disputeAmount: Maybe HighPrecMoney
+    - reconStatus: Maybe Text
+    - mismatchReason: Maybe Text
+    - mismatchCategory: Maybe Text
+    # ── Timestamps ──────────────────────────────────────────────────
+    - timestamp: Maybe UTCTime
+    - transactionDate: Maybe UTCTime
+    - settlementDate: Maybe UTCTime
+    # ── Settlement context ──────────────────────────────────────────
+    - settlementId: Maybe Text
+    - settlementMode: Maybe Text
+    - rrn: Maybe Text
+    - utr: Maybe Text
+    - pgOrderId: Maybe Text
+    - pgTxnId: Maybe Text
+    - paymentOrderId: Maybe Text
+    # ── Meta-derived subscription context ───────────────────────────
+    - subscriptionAmountExclGst: Maybe HighPrecMoney
+    - gstOnSubscription: Maybe HighPrecMoney
+    - totalTransactionAmount: Maybe HighPrecMoney
+    - subscriptionPurchaseId: Maybe Text
+    - purchaseTimestamp: Maybe UTCTime
+    - purchaseStatus: Maybe Text
+    - planName: Maybe Text
+    - entitledAmount: Maybe HighPrecMoney
+    - consumedAmount: Maybe HighPrecMoney
+    - remainingAmount: Maybe HighPrecMoney
+    - transactionType: Maybe Text
+    - linkedEntityId: Maybe Text
+    # ── B1: stable identity + upsert bookkeeping ────────────────────
+    - entryKey: Maybe Text                # natural key (srcId or "tgt:" <> tgtId)
+    - firstSeenAt: Maybe UTCTime          # preserved across upserts
+    - sourceLifecycle: Maybe Text         # InFlight / Settled / Cancelled
+    # ── B2: sweep-visible state ─────────────────────────────────────
+    - open: Maybe Bool                    # false once the sweep has closed it
+    - resolvedAt: Maybe UTCTime           # moment OPEN → CLOSED (null while OPEN)
+    - closeReason: Maybe Text             # null / AGED_OUT / RESOLVED_BY_SOURCE
+    # ── GroupByTargetKey / matchKey ─────────────────────────────────
+    - groupTargetKey: Maybe Text          # srcMatchKey uniformly; tgtMatchKey on orphans
+    - groupSourceTotal: Maybe HighPrecMoney
+    - groupTargetAmount: Maybe HighPrecMoney
+
+  # ----- Payout list -----
+  PayoutListRes:
+    - totalItems: Int
+    - payouts: [PayoutListItem]
+  PayoutListItem:
+    - payoutReference: Maybe Text
+    - payoutAmount: Maybe HighPrecMoney
+    - payoutDate: Maybe UTCTime
+    - payoutStatus: Maybe Text
+
+  # ----- Payment settlement list -----
+  PaymentSettlementListRes:
+    - totalItems: Int
+    - summary: Summary
+    - settlements: [PaymentSettlementListItem]
+  PaymentSettlementListItem:
+    - subscriptionPurchaseId: Maybe Text
+    - merchantRefNo: Maybe Text
+    - merchantOperatingCityId: Maybe Text
+    - pgApprovalCode: Maybe Text
+    - pgOrderId: Maybe Text
+    - transactionDateAndTime: Maybe UTCTime
+    - transactionType: Maybe TransactionTypeFilter
+    - chargedAmount: Maybe HighPrecMoney
+    - paymentStatus: Maybe Text
+    - pgFees: Maybe HighPrecMoney
+    - gstOnPgFees: Maybe HighPrecMoney
+    - netAmount: Maybe HighPrecMoney
+    - merchantId: Maybe Text
+    - paymentMode: Maybe Text
+    - driverName: Maybe Text
+    - driverMobileNo: Maybe Text
+    - driverEmailId: Maybe Text
+    - pgName: Maybe Text
+    - chargebackAmount: Maybe HighPrecMoney
+    - chargebackId: Maybe Text
+    - chargebackReasonCode: Maybe Text
+    - chargebackStatus: Maybe Text
+    - representmentStatus: Maybe Text
+    - settlementId: Maybe Text
+    - settlementDate: Maybe UTCTime
+    - settlementCycle: Maybe Text
+    - settlementAmount: Maybe HighPrecMoney
+    - utr: Maybe Text
+    - settlementStatus: Maybe Text
+    - rrnNo: Maybe Text
+    - reconciliationStatus: Maybe Text
+    - reconciliationDate: Maybe UTCTime
+    - differenceAmount: Maybe HighPrecMoney
+
+  # ----- Payment gateway transaction list -----
+  PaymentTransactionReportListRes:
+    - totalItems: Int
+    - summary: Summary
+    - transactions: [PaymentTransactionReportItem]
+  PaymentTransactionReportItem:
+    - gatewayTransactionId: Maybe Text
+    - merchantOrderId: Maybe Text
+    - referenceId: Maybe Text
+    - correlationId: Maybe Text
+    - parentTransactionId: Maybe Text
+    - transactionType: Maybe TransactionTypeFilter
+    - transactionStatus: Maybe Text
+    - failureReason: Maybe Text
+    - errorCode: Maybe Text
+    - transactionInitiationDate: Maybe UTCTime
+    - paymentPageOpenDate: Maybe UTCTime
+    - paymentGatewayOpenDate: Maybe UTCTime
+    - refundInitiationDate: Maybe UTCTime
+    - refundCompletionDate: Maybe UTCTime
+    - transactionAmountGross: Maybe HighPrecMoney
+    - netAmount: Maybe HighPrecMoney
+    - gatewayCharges: Maybe HighPrecMoney
+    - gstOnCharges: Maybe HighPrecMoney
+    - tdsAmount: Maybe HighPrecMoney
+    - withholdingAmount: Maybe HighPrecMoney
+    - refundAmount: Maybe HighPrecMoney
+    - currency: Maybe Text
+    - exchangeRate: Maybe Double
+    - paymentMode: Maybe Text
+    - paymentSubMode: Maybe Text
+    - upiId: Maybe Text
+    - upiAppName: Maybe Text
+    - cardType: Maybe Text
+    - cardNetwork: Maybe Text
+    - maskedCardNumber: Maybe Text
+    - issuerBank: Maybe Text
+    - walletProvider: Maybe Text
+    - payerType: Maybe Text
+    - payerName: Maybe Text
+    - payerId: Maybe Text
+    - payerMobile: Maybe Text
+    - payerEmail: Maybe Text
+    - subscriptionId: Maybe Text
+    - vehicleId: Maybe Text
+    - fleetOwnerId: Maybe Text
+    - city: Maybe Text
+    - operatingLocation: Maybe Text
+    - serviceType: Maybe Text
+    - refundId: Maybe Text
+    - refundReason: Maybe Text
+    - refundMode: Maybe Text
+    - refundStatus: Maybe Text
+    - ipAddress: Maybe Text
+    - pgName: Maybe Text
+    - pgMerchantId: Maybe Text
+
+  # ----- Wallet ledger (balance + ledger combined) -----
+  # normal mode (no subscriptionId): Liability wallet account — all entries on that account;
+  #   expiryEntries/creditEntries = Nothing.
+  # subscription mode (subscriptionId set): prepaid RideCredit account — RideSubscriptionDebit entries (ride <-> ledger join);
+  #   expiryEntries/creditEntries returned separately (not part of the join; mixing into one list would make limit/offset incorrect).
+  WalletLedgerRes:
+    - availableWalletBalance: Maybe HighPrecMoney
+    - lockedWalletBalance: Maybe HighPrecMoney
+    - lastWalletUpdatedAt: Maybe UTCTime
+    - totalItems: Int
+    - ledgerEntries: [WalletLedgerItem]
+    - expiryEntries: Maybe [WalletLedgerItem] # subscription filter only — ExpiryCreditTransfer entries
+    - creditEntries: Maybe [WalletLedgerItem] # subscription filter only — SubscriptionCredit entries
+    - subscriptionId: Maybe (Id SubscriptionPurchase) # echo of request filter; Just only in subscription mode
+  WalletLedgerItem:
+    - walletTxnId: Maybe Text
+    - walletTxnDate: Maybe UTCTime
+    - sourceType: Maybe Text
+    - sourceReferenceId: Maybe Text
+    - creditAmount: Maybe HighPrecMoney
+    - debitAmount: Maybe HighPrecMoney
+    - openingBalance: Maybe HighPrecMoney
+    - closingBalance: Maybe HighPrecMoney
+
+  # ----- Earnings Summary -----
+  EarningsSummaryRes:
+    - totalRideEarnings: HighPrecMoney
+    - totalIncentives: HighPrecMoney
+    - totalPenalties: HighPrecMoney
+    - grossEarnings: HighPrecMoney
+    - totalTdsDeducted: HighPrecMoney
+    - totalGstDeducted: HighPrecMoney
+    - netEarnings: HighPrecMoney
+
+  # ----- SAP Journal Entries -----
+  SapJournalListRes:
+    - totalItems: Int
+    - summary: Summary
+    - journals: [SapJournalItem]
+  SapJournalItem:
+    - id: Text
+    - belnr: Maybe Text
+    - batchId: Text
+    - blart: Text
+    - transactionType: Text
+    - description: Text
+    - budat: Text
+    - bldat: Text
+    - gjahr: Maybe Text
+    - totalDebitAmount: HighPrecMoney
+    - totalCreditAmount: HighPrecMoney
+    - currency: Text
+    - transactionCount: Int
+    - glNumber: Maybe [Text]
+    - glName: Maybe [Text]
+    - sapMessage: Maybe Text
+    - status: Text
+    - merchantId: Text
+    - merchantOperatingCityId: Text
+    - createdAt: UTCTime
+    - updatedAt: UTCTime
+
+  # ----- SAP Journal Transactions (drill-down) -----
+  SapJournalTransactionsRes:
+    - total: Int
+    - transactions: [SapJournalTransactionItem]
+  SapJournalTransactionItem:
+    - debitAmount: HighPrecMoney
+    - creditAmount: HighPrecMoney
+    - currency: Text
+    - description: Text
+    - subscriptionId: Maybe Text
+    - creationDate: UTCTime
+    - createdBy: Text
+
+extraOperations:
+  - EXTRA_API_TYPES_FILE
+  - EXTRA_API_COMMON_TYPES_FILE

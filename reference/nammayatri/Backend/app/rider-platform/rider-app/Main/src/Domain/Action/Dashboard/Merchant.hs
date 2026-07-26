@@ -1,0 +1,2226 @@
+{-# OPTIONS_GHC -Wno-deprecations #-}
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+module Domain.Action.Dashboard.Merchant
+  ( postMerchantServiceConfigMapsUpdate,
+    postMerchantServiceUsageConfigMapsUpdate,
+    postMerchantUpdate,
+    getMerchantServiceUsageConfig,
+    postMerchantServiceConfigSmsUpdate,
+    postMerchantServiceUsageConfigSmsUpdate,
+    postMerchantConfigOperatingCityCreate,
+    postMerchantSpecialLocationUpsert,
+    deleteMerchantSpecialLocationDelete,
+    postMerchantSpecialLocationGatesUpsert,
+    deleteMerchantSpecialLocationGatesDelete,
+    buildMerchantServiceConfig,
+    postMerchantConfigFailover,
+    postMerchantTicketConfigUpsert,
+    postMerchantConfigSpecialLocationUpsert,
+    postMerchantConfigTollUpsert,
+    getMerchantConfigTollList,
+    postMerchantTollUpsert,
+    deleteMerchantTollDelete,
+    postMerchantSchedulerTrigger,
+    postMerchantConfigOperatingCityWhiteList,
+    getMerchantConfigSpecialLocationList,
+    getMerchantConfigGeometryList,
+    putMerchantConfigGeometryUpdate,
+    getMerchantRiderConfigEstimatesOrder,
+    postMerchantRiderConfigEstimatesOrderUpdate,
+    postMerchantConfigMerchantCreate,
+    postMerchantConfigDebugLogUpdate,
+    getMerchantMerchantMessageCatalog,
+    postMerchantMerchantMessageUpsert,
+    deleteMerchantMerchantMessage,
+  )
+where
+
+import qualified "dashboard-helper-api" API.Types.RiderPlatform.Management.Merchant as Common
+import qualified BecknV2.FRFS.Enums as FRFS
+import Control.Applicative
+import qualified Data.Aeson as JSON
+import qualified Data.Aeson.Types as DAT
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
+import Data.Csv
+import Data.Default.Class
+import qualified Data.List as DL
+import Data.List.Extra (notNull)
+import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import Data.Time hiding (getCurrentTime)
+import qualified Data.Vector as V
+import qualified Domain.Action.Dashboard.IssueManagement.Issue as DIssueHandler
+import qualified Domain.Types
+import qualified Domain.Types.BecknConfig as DBC
+import Domain.Types.BusinessHour
+import qualified Domain.Types.Exophone as DExophone
+import qualified Domain.Types.Geometry as DGEO
+import qualified Domain.Types.HotSpotConfig as DHSC
+import qualified Domain.Types.Merchant as DM
+import qualified Domain.Types.MerchantMessage as DMM
+import qualified Domain.Types.MerchantOperatingCity as DMOC
+import qualified Domain.Types.MerchantPaymentMethod as DMPM
+import qualified Domain.Types.MerchantPushNotification as DMPN
+import qualified Domain.Types.MerchantServiceConfig as DMSC
+import qualified Domain.Types.MerchantServiceUsageConfig as DMSUC
+import qualified Domain.Types.RiderConfig as DRC
+import Domain.Types.ServiceCategory
+import Domain.Types.ServicePeopleCategory
+import Domain.Types.TicketPlace hiding (Fee (..))
+import Domain.Types.TicketService
+import qualified Domain.Types.ValueAddNP as DValueAddNP
+import qualified Domain.Types.WhiteListOrg as WLO
+import Environment
+import qualified EulerHS.Language as L
+import qualified "shared-services" IssueManagement.Common as ICommon
+import qualified "shared-services" IssueManagement.Common.Dashboard.Issue as IssueCommon
+import qualified "shared-services" IssueManagement.Domain.Action.Dashboard.Issue as DIssue
+import qualified "shared-services" IssueManagement.Domain.Types.Issue.IssueConfig as DIConfig
+import qualified "shared-services" IssueManagement.Storage.CachedQueries.Issue.IssueConfig as CQIssueConfig
+import Kernel.External.Call (CallService (Exotel))
+import qualified Kernel.External.Maps as Maps
+import Kernel.External.Maps.Types (LatLong (..))
+import qualified Kernel.External.SMS as SMS
+import Kernel.Prelude
+import Kernel.Storage.Esqueleto (runTransaction)
+import qualified Kernel.Storage.Hedis as Redis
+import Kernel.Types.APISuccess (APISuccess (..))
+import qualified Kernel.Types.Beckn.City as City
+import qualified Kernel.Types.Beckn.Context as Context
+import Kernel.Types.Geofencing
+import Kernel.Types.Id
+import Kernel.Types.Registry (SimpleLookupRequest (..), lookupRequestToRedisKey)
+import qualified Kernel.Types.Registry.Subscriber as BecknSub
+import Kernel.Types.TimeBound
+import Kernel.Utils.Common
+import Kernel.Utils.Geometry (getGeomFromKML)
+import qualified Kernel.Utils.Registry as Registry
+import Kernel.Utils.Validation
+import Lib.ConfigPilot.Interface.Getter (invalidateConfigInMem)
+import Lib.ConfigPilot.Interface.Types (getConfig)
+import qualified Lib.GateInfo.Geometry as GGeom
+import qualified Lib.Queries.GateInfo as QGI
+import qualified Lib.Queries.SpecialLocation as QSL
+import qualified Lib.Queries.SpecialLocationGeom as QSLG
+import Lib.Scheduler.JobStorageType.SchedulerType (createJobIn)
+import qualified Lib.Types.GateInfo as D
+import qualified Lib.Types.GateInfo as DGI
+import qualified Lib.Types.SpecialLocation as DSL
+import qualified Lib.Types.SpecialLocation as SL
+import qualified Lib.Yudhishthira.Storage.CachedQueries.AppDynamicLogicRollout as CADLR
+import qualified Lib.Yudhishthira.Tools.DebugLog as DebugLog
+import qualified Lib.Yudhishthira.Types as LYT
+import qualified Lib.Yudhishthira.Types.AppDynamicLogicRollout as LYTADLR
+import qualified Registry.Beckn.Interface as RegistryIF
+import qualified Registry.Beckn.Interface.Types as RegistryT
+import qualified SharedLogic.CallBPPInternal as CallBPPInternal
+import SharedLogic.JobScheduler (DailyPassStatusUpdateJobData (..), PartnerInvoiceDataExportJobData (..), PassExpiryReminderMasterJobData (..), RiderJobType (DailyPassStatusUpdate, NyRegularMaster, PartnerInvoiceDataExport, PassExpiryReminderMaster))
+import SharedLogic.Merchant (findMerchantByShortId)
+import SharedLogic.TollDashboard
+import qualified SharedLogic.TollUpsert as TU
+import Storage.Beam.IssueManagement ()
+import Storage.Beam.SchedulerJob ()
+import Storage.Beam.SpecialZone ()
+import qualified Storage.CachedQueries.Exophone as CQExophone
+import qualified Storage.CachedQueries.HotSpotConfig as HSC
+import qualified Storage.CachedQueries.Merchant as CQM
+import qualified Storage.CachedQueries.Merchant.MerchantMessage as CQMM
+import qualified Storage.CachedQueries.Merchant.MerchantOperatingCity as CQMOC
+import qualified Storage.CachedQueries.Merchant.MerchantPaymentMethod as CQMPM
+import qualified Storage.CachedQueries.Merchant.MerchantPushNotification as CQMPN
+import qualified Storage.CachedQueries.Merchant.MerchantServiceConfig as CQMSC
+import qualified Storage.CachedQueries.Merchant.MerchantServiceUsageConfig as CQMSUC
+import qualified Storage.CachedQueries.Merchant.RiderConfig as QRC
+import Storage.ConfigPilot.Config.Exophone (ExophoneDimensions (..))
+import Storage.ConfigPilot.Config.IssueConfig (IssueConfigDimensions (..))
+import Storage.ConfigPilot.Config.MerchantPaymentMethod (MerchantPaymentMethodDimensions (..))
+import Storage.ConfigPilot.Config.MerchantServiceConfig (MerchantServiceConfigDimensions (..))
+import Storage.ConfigPilot.Config.MerchantServiceUsageConfig (MerchantServiceUsageConfigDimensions (..))
+import Storage.ConfigPilot.Config.RiderConfig (RiderConfigDimensions (..))
+import qualified Storage.Queries.BecknConfig as SQBC
+import qualified Storage.Queries.BusinessHour as SQBH
+import qualified Storage.Queries.BusinessHourExtra as SQBHE
+import qualified Storage.Queries.Geometry as QGeo
+import qualified Storage.Queries.GeometryGeom as QGEO
+import qualified Storage.Queries.HotSpotConfig as QHSC
+import qualified Storage.Queries.Merchant as QM
+import qualified Storage.Queries.MerchantMessage as QMM
+import qualified Storage.Queries.MerchantPushNotification as SQMPN
+import qualified Storage.Queries.MerchantServiceConfig as SQMSC
+import qualified Storage.Queries.ServiceCategory as SQSC
+import qualified Storage.Queries.ServiceCategoryExtra as SQSCE
+import qualified Storage.Queries.ServicePeopleCategory as SQSPC
+import qualified Storage.Queries.ServicePeopleCategoryExtra as SQSPCE
+import qualified Storage.Queries.TicketPlace as SQTP
+import qualified Storage.Queries.TicketService as SQTS
+import qualified Storage.Queries.ValueAddNP as QValueAddNP
+import qualified Storage.Queries.WhiteListOrg as QWLO
+import qualified Toll.Domain.Types.Toll as Toll
+import qualified Toll.Storage.CachedQueries.Toll as CQToll
+import qualified Toll.Storage.Queries.Toll as QToll
+import qualified Toll.Storage.Queries.TollExtra as QTollExtra
+import Tools.Error
+import qualified Tools.Payment as Payment
+
+---------------------------------------------------------------------
+postMerchantUpdate :: ShortId DM.Merchant -> Context.City -> Common.MerchantUpdateReq -> Flow APISuccess
+postMerchantUpdate merchantShortId city req = do
+  runRequestValidation Common.validateMerchantUpdateReq req
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOperatingCity <- CQMOC.findByMerchantShortIdAndCity merchantShortId city >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city)
+  now <- getCurrentTime
+
+  let updMerchant =
+        merchant{DM.name = fromMaybe merchant.name req.name,
+                 DM.gatewayUrl = fromMaybe merchant.gatewayUrl req.gatewayUrl,
+                 DM.registryUrl = fromMaybe merchant.registryUrl req.registryUrl
+                }
+
+  mbAllExophones <- forM req.exoPhones $ \exophones -> do
+    allExophones <- CQExophone.findAllExophones
+    let alreadyUsedPhones = getAllPhones $ filter (\exophone -> exophone.merchantOperatingCityId /= merchantOperatingCity.id) allExophones
+    let reqPhones = getAllPhones $ toList exophones
+    let busyPhones = filter (`elem` alreadyUsedPhones) reqPhones
+    unless (null busyPhones) $ do
+      throwError $ InvalidRequest $ "Next phones are already in use: " <> show busyPhones
+    pure allExophones
+
+  void $ CQM.update updMerchant
+  whenJust req.exoPhones \exophones -> do
+    CQExophone.deleteByMerchantOperatingCityId merchantOperatingCity.id
+    forM_ exophones $ \exophoneReq -> do
+      exophone <- buildExophone merchant.id merchantOperatingCity.id now exophoneReq
+      CQExophone.create exophone
+
+  CQM.clearCache updMerchant
+  whenJust mbAllExophones $ \allExophones -> do
+    let oldExophones = filter (\exophone -> exophone.merchantOperatingCityId == merchantOperatingCity.id) allExophones
+    CQExophone.clearCache merchantOperatingCity.id oldExophones
+  logTagInfo "dashboard -> merchantUpdate : " (show merchant.id)
+  pure Success
+  where
+    getAllPhones es = (es <&> (.primaryPhone)) <> (es <&> (.backupPhone))
+
+buildExophone :: MonadGuid m => Id DM.Merchant -> Id DMOC.MerchantOperatingCity -> UTCTime -> Common.ExophoneReq -> m DExophone.Exophone
+buildExophone merchantId merchantOperatingCityId now req = do
+  uid <- generateGUID
+  pure
+    DExophone.Exophone
+      { id = uid,
+        merchantId,
+        merchantOperatingCityId,
+        primaryPhone = req.primaryPhone,
+        backupPhone = req.backupPhone,
+        isPrimaryDown = False,
+        callService = req.callService,
+        updatedAt = now,
+        createdAt = now,
+        enableAlternateNumber = Just False
+      }
+
+---------------------------------------------------------------------
+getMerchantServiceUsageConfig ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  Flow Common.ServiceUsageConfigRes
+getMerchantServiceUsageConfig merchantShortId city = do
+  merchantOperatingCity <- CQMOC.findByMerchantShortIdAndCity merchantShortId city >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city)
+  config <- getConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = merchantOperatingCity.id.getId}) (Just (CQMSUC.findByMerchantOperatingCityId merchantOperatingCity.id)) >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOperatingCity.id.getId)
+  pure $ mkServiceUsageConfigRes config
+
+mkServiceUsageConfigRes :: DMSUC.MerchantServiceUsageConfig -> Common.ServiceUsageConfigRes
+mkServiceUsageConfigRes DMSUC.MerchantServiceUsageConfig {..} =
+  Common.ServiceUsageConfigRes
+    { getEstimatedPickupDistances = Nothing,
+      getPickupRoutes = Just getPickupRoutes,
+      getTripRoutes = Just getTripRoutes,
+      snapToRoadProvidersList = [],
+      ..
+    }
+
+---------------------------------------------------------------------
+buildMerchantServiceConfig ::
+  MonadTime m =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  DMSC.ServiceConfig ->
+  m DMSC.MerchantServiceConfig
+buildMerchantServiceConfig merchantId merchantOperatingCityId serviceConfig = do
+  now <- getCurrentTime
+  pure
+    DMSC.MerchantServiceConfig
+      { merchantId,
+        serviceConfig,
+        merchantOperatingCityId,
+        runInCloud = Nothing,
+        updatedAt = now,
+        createdAt = now
+      }
+
+postMerchantServiceConfigMapsUpdate ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  Common.MapsServiceConfigUpdateReq ->
+  Flow APISuccess
+postMerchantServiceConfigMapsUpdate merchantShortId city req = do
+  merchant <- findMerchantByShortId merchantShortId
+  let serviceName = DMSC.MapsService $ Common.getMapsServiceFromReq req
+  serviceConfig <- DMSC.MapsServiceConfig <$> Common.buildMapsServiceConfig req
+  merchantOperatingCity <-
+    CQMOC.findByMerchantShortIdAndCity merchantShortId city
+      >>= fromMaybeM (MerchantOperatingCityNotFound ("merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city))
+  merchantServiceConfig <- buildMerchantServiceConfig merchant.id merchantOperatingCity.id serviceConfig
+  _ <- CQMSC.upsertMerchantServiceConfig merchantServiceConfig
+  CQMSC.clearCache merchant.id merchantOperatingCity.id serviceName
+  logTagInfo "dashboard -> postMerchantServiceConfigMapsUpdate : " (show merchant.id)
+  pure Success
+
+---------------------------------------------------------------------
+postMerchantServiceConfigSmsUpdate ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  Common.SmsServiceConfigUpdateReq ->
+  Flow APISuccess
+postMerchantServiceConfigSmsUpdate merchantShortId city req = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOperatingCity <-
+    CQMOC.findByMerchantShortIdAndCity merchantShortId city
+      >>= fromMaybeM (MerchantOperatingCityNotFound ("merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city))
+  let serviceName = DMSC.SmsService $ Common.getSmsServiceFromReq req
+  serviceConfig <- DMSC.SmsServiceConfig <$> Common.buildSmsServiceConfig req
+  merchantServiceConfig <- buildMerchantServiceConfig merchant.id merchantOperatingCity.id serviceConfig
+  _ <- CQMSC.upsertMerchantServiceConfig merchantServiceConfig
+  CQMSC.clearCache merchant.id merchantOperatingCity.id serviceName
+  logTagInfo "dashboard -> postMerchantServiceConfigSmsUpdate : " (show merchant.id)
+  pure Success
+
+---------------------------------------------------------------------
+postMerchantServiceUsageConfigMapsUpdate ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  Common.MapsServiceUsageConfigUpdateReq ->
+  Flow APISuccess
+postMerchantServiceUsageConfigMapsUpdate merchantShortId city req = do
+  runRequestValidation Common.validateMapsServiceUsageConfigUpdateReq req
+  whenJust req.getEstimatedPickupDistances $ \_ ->
+    throwError (InvalidRequest "getEstimatedPickupDistances is not allowed for bap")
+  merchantOperatingCity <- CQMOC.findByMerchantShortIdAndCity merchantShortId city >>= fromMaybeM (MerchantOperatingCityNotFound ("merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city))
+  forM_ Maps.availableMapsServices $ \service -> do
+    when (Common.mapsServiceUsedInReq req service) $ do
+      let mscDims = MerchantServiceConfigDimensions {merchantOperatingCityId = merchantOperatingCity.id.getId, merchantId = merchantOperatingCity.merchantId.getId, serviceName = Just (DMSC.MapsService service)}
+      void $
+        listToMaybe <$> getConfig mscDims (Just (maybeToList <$> CQMSC.findByMerchantOpCityIdAndService merchantOperatingCity.merchantId merchantOperatingCity.id (DMSC.MapsService service)))
+          >>= fromMaybeM (InvalidRequest $ "Merchant config for maps service " <> show service <> " is not provided")
+
+  merchantServiceUsageConfig <-
+    CQMSUC.findByMerchantOperatingCityId merchantOperatingCity.id
+      >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOperatingCity.id.getId)
+  let updMerchantServiceUsageConfig =
+        merchantServiceUsageConfig{getDistances = fromMaybe merchantServiceUsageConfig.getDistances req.getDistances,
+                                   getRoutes = fromMaybe merchantServiceUsageConfig.getRoutes req.getRoutes,
+                                   snapToRoad = fromMaybe merchantServiceUsageConfig.snapToRoad req.snapToRoad,
+                                   getPlaceName = fromMaybe merchantServiceUsageConfig.getPlaceName req.getPlaceName,
+                                   getPlaceDetails = fromMaybe merchantServiceUsageConfig.getPlaceDetails req.getPlaceDetails,
+                                   autoComplete = fromMaybe merchantServiceUsageConfig.autoComplete req.autoComplete
+                                  }
+  _ <- CQMSUC.updateMerchantServiceUsageConfig updMerchantServiceUsageConfig
+  CQMSUC.clearCache merchantOperatingCity.id
+  logTagInfo "dashboard -> postMerchantServiceUsageConfigMapsUpdate : " (show merchantOperatingCity.id)
+  pure Success
+
+---------------------------------------------------------------------
+postMerchantServiceUsageConfigSmsUpdate ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  Common.SmsServiceUsageConfigUpdateReq ->
+  Flow APISuccess
+postMerchantServiceUsageConfigSmsUpdate merchantShortId city req = do
+  runRequestValidation Common.validateSmsServiceUsageConfigUpdateReq req
+  _ <- findMerchantByShortId merchantShortId
+  merchantOperatingCity <- CQMOC.findByMerchantShortIdAndCity merchantShortId city >>= fromMaybeM (MerchantOperatingCityNotFound ("merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city))
+  forM_ SMS.availableSmsServices $ \service -> do
+    when (Common.smsServiceUsedInReq req service) $ do
+      let mscDims = MerchantServiceConfigDimensions {merchantOperatingCityId = merchantOperatingCity.id.getId, merchantId = merchantOperatingCity.merchantId.getId, serviceName = Just (DMSC.SmsService service)}
+      void $
+        listToMaybe <$> getConfig mscDims (Just (maybeToList <$> CQMSC.findByMerchantOpCityIdAndService merchantOperatingCity.merchantId merchantOperatingCity.id (DMSC.SmsService service)))
+          >>= fromMaybeM (InvalidRequest $ "Merchant config for sms service " <> show service <> " is not provided")
+
+  merchantServiceUsageConfig <-
+    CQMSUC.findByMerchantOperatingCityId merchantOperatingCity.id
+      >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOperatingCity.id.getId)
+  let updMerchantServiceUsageConfig =
+        merchantServiceUsageConfig{smsProvidersPriorityList = req.smsProvidersPriorityList
+                                  }
+  _ <- CQMSUC.updateMerchantServiceUsageConfig updMerchantServiceUsageConfig
+  CQMSUC.clearCache merchantOperatingCity.id
+  logTagInfo "dashboard -> postMerchantServiceUsageConfigSmsUpdate : " (show merchantOperatingCity.id)
+  pure Success
+
+postMerchantSpecialLocationUpsert :: ShortId DM.Merchant -> Context.City -> Maybe (Id SL.SpecialLocation) -> Common.UpsertSpecialLocationReqT -> Flow APISuccess
+postMerchantSpecialLocationUpsert merchantShortId _city mbSpecialLocationId request = do
+  existingSLWithGeom <- maybe (return Nothing) QSL.findByIdWithGeom mbSpecialLocationId
+  let mbExistingSL = fst <$> existingSLWithGeom
+      mbGeom = snd =<< existingSLWithGeom
+  updatedSL <- mkSpecialLocation mbExistingSL mbGeom
+  void $
+    runTransaction $
+      if isJust mbExistingSL then QSLG.updateSpecialLocation updatedSL else QSLG.create updatedSL
+  QSL.clearSpecialZoneInMemCache
+  return Success
+  where
+    mkSpecialLocation :: Maybe SL.SpecialLocation -> Maybe Text -> Flow SL.SpecialLocation
+    mkSpecialLocation mbExistingSpLoc mbGeometry = do
+      let geom = request.geom <|> mbGeometry
+          geomGeoJson = geom
+      id <- maybe generateGUID (return . (.id)) mbExistingSpLoc
+      now <- getCurrentTime
+      (merchantOperatingCityId, merchantId) <- case request.city of
+        Just opCity -> do
+          merchantOperatingCity <-
+            CQMOC.findByMerchantShortIdAndCity merchantShortId opCity
+              >>= fromMaybeM (MerchantOperatingCityDoesNotExist $ "merchantShortId: " <> merchantShortId.getShortId <> ", opCity: " <> show opCity)
+          let merchantOperatingCityId = cast @DMOC.MerchantOperatingCity @SL.MerchantOperatingCity merchantOperatingCity.id
+              merchantId = cast @DM.Merchant @SL.Merchant merchantOperatingCity.merchantId
+          pure (merchantOperatingCityId, merchantId)
+        Nothing -> case (mbExistingSpLoc >>= (.merchantOperatingCityId), mbExistingSpLoc >>= (.merchantId)) of
+          (Just merchantOperatingCityId, Just merchantId) -> pure (merchantOperatingCityId, merchantId)
+          (Just merchantOperatingCityId, Nothing) -> do
+            merchantOperatingCity <-
+              CQMOC.findById (cast @SL.MerchantOperatingCity @DMOC.MerchantOperatingCity merchantOperatingCityId)
+                >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantOperatingCityId-" <> merchantOperatingCityId.getId)
+            let merchantId = cast @DM.Merchant @SL.Merchant merchantOperatingCity.merchantId
+            pure (merchantOperatingCityId, merchantId)
+          (Nothing, _) -> throwError (InvalidRequest "Valid city should be provided")
+      locationName <-
+        fromMaybeM (InvalidRequest "Location Name cannot be empty for a new special location") $
+          request.locationName <|> (mbExistingSpLoc <&> (.locationName))
+      category <- fromMaybeM (InvalidRequest "Category is a required field for a new special location") $ request.category <|> (mbExistingSpLoc <&> (.category))
+      return $
+        SL.SpecialLocation
+          { gates = [],
+            enabled = True,
+            isOpenMarketEnabled = maybe True (.isOpenMarketEnabled) mbExistingSpLoc,
+            createdAt = maybe now (.createdAt) mbExistingSpLoc,
+            updatedAt = now,
+            merchantOperatingCityId = Just merchantOperatingCityId,
+            linkedLocationsIds = maybe [] (.linkedLocationsIds) mbExistingSpLoc,
+            locationType = SL.Closed,
+            priority = 0,
+            merchantId = Just merchantId,
+            isQueueEnabled = request.isQueueEnabled <|> (mbExistingSpLoc >>= (.isQueueEnabled)),
+            enforceTollRoute = mbExistingSpLoc >>= (.enforceTollRoute),
+            render = request.render,
+            fetchAllGateFareProduct = mbExistingSpLoc >>= (.fetchAllGateFareProduct),
+            supportNumber = request.supportNumber,
+            paymentModes = request.paymentModes <|> (mbExistingSpLoc >>= (.paymentModes)) <|> Just SL.defaultPaymentModes,
+            fareSettlementType = request.fareSettlementType,
+            boothSpecificFleet = mbExistingSpLoc >>= (.boothSpecificFleet),
+            ..
+          }
+
+deleteMerchantSpecialLocationDelete :: ShortId DM.Merchant -> Context.City -> Id SL.SpecialLocation -> Flow APISuccess
+deleteMerchantSpecialLocationDelete _merchantShortid _city specialLocationId = do
+  void $ QSL.findById specialLocationId >>= fromMaybeM (InvalidRequest "Special Location with given id not found")
+  void $ runTransaction $ QSL.deleteById specialLocationId
+  QGI.deleteAll specialLocationId
+  QSL.clearSpecialZoneInMemCache
+  pure Success
+
+postMerchantSpecialLocationGatesUpsert :: ShortId DM.Merchant -> Context.City -> Id SL.SpecialLocation -> Common.UpsertSpecialLocationGateReqT -> Flow APISuccess
+postMerchantSpecialLocationGatesUpsert _merchantShortId _city specialLocationId request = do
+  specialLocation <- QSL.findById specialLocationId >>= fromMaybeM (InvalidRequest "Cound not find a special location with the provided id")
+  existingGates <- QGI.findAllGatesBySpecialLocationId specialLocationId
+  createOrUpdateGate specialLocation existingGates request
+  QSL.clearSpecialZoneInMemCache
+  return Success
+  where
+    createOrUpdateGate :: SL.SpecialLocation -> [(D.GateInfo, Maybe Text)] -> Common.UpsertSpecialLocationGateReqT -> Flow ()
+    createOrUpdateGate specialLocation existingGates req = do
+      let existingGatewithGeom = find (\(gate, _mbGeom) -> normalizeName gate.name == normalizeName req.name) existingGates
+          existingGate = fst <$> existingGatewithGeom
+          mbGeom = snd =<< existingGatewithGeom
+      updatedGate <- mkGate specialLocation req existingGate mbGeom
+      if isNothing existingGate then QGI.create updatedGate else QGI.updateGate updatedGate
+
+    mkGate :: SL.SpecialLocation -> Common.UpsertSpecialLocationGateReqT -> Maybe D.GateInfo -> Maybe Text -> Flow D.GateInfo
+    mkGate specialLocation reqT mbGate mbGeom = do
+      id <- cast <$> maybe generateGUID (return . (.id)) mbGate
+      now <- getCurrentTime
+      latitude <- fromMaybeM (InvalidRequest "Latitude field cannot be empty for a new gate") $ reqT.latitude <|> (mbGate <&> (.point.lat))
+      longitude <- fromMaybeM (InvalidRequest "Longitude field cannot be empty for a new gate") $ reqT.longitude <|> (mbGate <&> (.point.lon))
+      address <- fromMaybeM (InvalidRequest "Address cannot be empty for a new gate") $ reqT.address <|> (mbGate >>= (.address))
+      let canQueueUpOnGate = fromMaybe False $ reqT.canQueueUpOnGate <|> (mbGate <&> (.canQueueUpOnGate))
+          defaultDriverExtra = reqT.defaultDriverExtra <|> (mbGate >>= (.defaultDriverExtra))
+          geomGeoJson = reqT.geom <|> mbGeom
+          gateTags = reqT.gateTags <|> (mbGate >>= (.gateTags))
+          walkDescription = reqT.walkDescription <|> (mbGate >>= (.walkDescription))
+      return $
+        D.GateInfo
+          { name = reqT.name,
+            address = Just address,
+            geomGeoJson,
+            createdAt = maybe now (.createdAt) mbGate,
+            updatedAt = now,
+            point = LatLong {lat = latitude, lon = longitude},
+            gateType = D.Pickup,
+            merchantId = specialLocation.merchantId,
+            merchantOperatingCityId = specialLocation.merchantOperatingCityId,
+            entryFeeAmount = mbGate >>= (.entryFeeAmount),
+            minDriverThresholds = mbGate >>= (.minDriverThresholds),
+            maxDriverThresholds = mbGate >>= (.maxDriverThresholds),
+            demandThresholds = mbGate >>= (.demandThresholds),
+            defaultMinDriverThreshold = mbGate >>= (.defaultMinDriverThreshold),
+            defaultMaxDriverThreshold = mbGate >>= (.defaultMaxDriverThreshold),
+            defaultDemandThreshold = mbGate >>= (.defaultDemandThreshold),
+            notificationCooldownInSec = mbGate >>= (.notificationCooldownInSec),
+            maxRideSkipsBeforeQueueRemoval = mbGate >>= (.maxRideSkipsBeforeQueueRemoval),
+            pickupZoneArrivalTimeoutInSec = mbGate >>= (.pickupZoneArrivalTimeoutInSec),
+            pickupRequestResponseTimeoutInSec = mbGate >>= (.pickupRequestResponseTimeoutInSec),
+            notificationActiveTillInSec = mbGate >>= (.notificationActiveTillInSec),
+            enableQueueFilter = mbGate >>= (.enableQueueFilter),
+            navigationInstructions = mbGate >>= (.navigationInstructions),
+            ..
+          }
+
+deleteMerchantSpecialLocationGatesDelete :: ShortId DM.Merchant -> Context.City -> Id SL.SpecialLocation -> Text -> Flow APISuccess
+deleteMerchantSpecialLocationGatesDelete _merchantShortId _city specialLocationId gateName = do
+  existingGates <- QGI.findAllGatesBySpecialLocationId specialLocationId
+  let existingGate = fst <$> find (\(gate, _mbGeom) -> normalizeName gate.name == normalizeName gateName) existingGates
+  case existingGate of
+    Nothing -> throwError $ InvalidRequest "Could not find any gates with the specified name for the given specialLocationId"
+    Just gate -> QGI.deleteById gate.id
+  QSL.clearSpecialZoneInMemCache
+  return Success
+
+normalizeName :: Text -> Text
+normalizeName = T.strip . T.toLower
+
+postMerchantConfigOperatingCityCreate :: ShortId DM.Merchant -> Context.City -> Common.CreateMerchantOperatingCityReqT -> Flow Common.CreateMerchantOperatingCityRes
+postMerchantConfigOperatingCityCreate merchantShortId city req = do
+  when (req.city == Context.City "AnyCity") $ throwError $ InvalidRequest "This Operation is not Allowed For AnyCity"
+  baseMerchant <- findMerchantByShortId merchantShortId
+  baseRequestedCityMerchant <- case req.baseRequestMerchant of
+    Just merchant -> findMerchantByShortId (ShortId merchant)
+    Nothing -> return baseMerchant
+
+  baseOperatingCity <- case req.baseRequestCity of
+    Just reqCity -> CQMOC.findByMerchantIdAndCity baseRequestedCityMerchant.id reqCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchant-Id-" <> baseRequestedCityMerchant.id.getId <> "-city-" <> show reqCity)
+    Nothing -> CQMOC.findByMerchantIdAndCity baseMerchant.id city >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchant-Id-" <> baseMerchant.id.getId <> "-city-" <> show city)
+
+  now <- getCurrentTime
+  let baseMerchantId = baseMerchant.id
+      baseOperatingCityId = baseOperatingCity.id
+
+  let newMerchantId =
+        case req.merchantData of
+          Just merchantData -> Id merchantData.subscriberId
+          Nothing -> baseMerchantId
+
+  -- merchant
+  mbNewMerchant <-
+    case req.merchantData of
+      Just merchantData -> do
+        CQM.findById newMerchantId >>= \case
+          Nothing -> do
+            merchant <- CQM.findById baseMerchantId >>= fromMaybeM (InvalidRequest "Base Merchant not found")
+            let newMerchant = buildMerchant newMerchantId merchantData now merchant
+            return $ Just newMerchant
+          _ -> return Nothing
+      _ -> return Nothing
+
+  -- hot spot config (only for a new merchant, copied from base merchant; keyed by merchant id)
+  mbHotSpotConfig <-
+    case mbNewMerchant of
+      Just _ ->
+        HSC.findConfigByMerchantId newMerchantId >>= \case
+          Just _ -> return Nothing
+          Nothing -> do
+            baseHotSpotConfig <- HSC.findConfigByMerchantId baseRequestedCityMerchant.id
+            return $ (\cfg -> cfg {DHSC.id = Id newMerchantId.getId}) <$> baseHotSpotConfig
+      Nothing -> return Nothing
+
+  cityAlreadyCreated <- CQMOC.findByMerchantIdAndCity newMerchantId req.city
+  newMerchantOperatingCityId <-
+    case cityAlreadyCreated of
+      Just newCity -> return newCity.id
+      Nothing -> generateGUID
+
+  let newMerchantShortId = maybe merchantShortId (.shortId) mbNewMerchant
+  -- city
+  mbNewOperatingCity <-
+    case cityAlreadyCreated of
+      Nothing -> do
+        cityStdCode <- getCityStdCode req.city req.cityStdCode >>= fromMaybeM (InvalidRequest "City std code not found")
+        let newOperatingCity = buildMerchantOperatingCity newMerchantId newMerchantOperatingCityId now newMerchantShortId req.driverOfferMerchantOperatingCityId cityStdCode
+        return $ Just newOperatingCity
+      _ -> return Nothing
+
+  -- merchant message
+  mbMerchantMessages <-
+    CQMM.findAllByMerchantOpCityIdInRideFlow newMerchantOperatingCityId [] >>= \case
+      [] -> do
+        merchantMessages <- CQMM.findAllByMerchantOpCityId baseOperatingCityId Nothing
+        let newMerchantMessages = map (buildMerchantMessage newMerchantId newMerchantOperatingCityId now) merchantMessages
+        return $ Just newMerchantMessages
+      _ -> return Nothing -- ignore
+
+  -- merchant payment method
+  mbMerchantPaymentMethods <-
+    getConfig (MerchantPaymentMethodDimensions {merchantOperatingCityId = newMerchantOperatingCityId.getId, configId = Nothing}) (Just (CQMPM.findAllByMerchantOperatingCityId newMerchantOperatingCityId)) >>= \case
+      [] -> do
+        merchantPaymentMethods <- getConfig (MerchantPaymentMethodDimensions {merchantOperatingCityId = baseOperatingCityId.getId, configId = Nothing}) (Just (CQMPM.findAllByMerchantOperatingCityId baseOperatingCityId))
+        newMerchantPaymentMethods <- mapM (buildMerchantPaymentMethod newMerchantId newMerchantOperatingCityId now) merchantPaymentMethods
+        return $ Just newMerchantPaymentMethods
+      _ -> return Nothing
+
+  -- merchant service usage config
+  mbMerchantServiceUsageConfig <-
+    getConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = newMerchantOperatingCityId.getId}) (Just (CQMSUC.findByMerchantOperatingCityId newMerchantOperatingCityId)) >>= \case
+      Nothing -> do
+        merchantServiceUsageConfig <- getConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = baseOperatingCityId.getId}) (Just (CQMSUC.findByMerchantOperatingCityId baseOperatingCityId)) >>= fromMaybeM (InvalidRequest "Merchant Service Usage Config not found")
+        let newMerchantServiceUsageConfig = buildMerchantServiceUsageConfig newMerchantId newMerchantOperatingCityId now merchantServiceUsageConfig
+        return $ Just newMerchantServiceUsageConfig
+      _ -> return Nothing
+
+  -- merchant service config
+
+  mbMerchantServiceConfig <-
+    SQMSC.findAllByMerchantOperatingCityId newMerchantOperatingCityId >>= \case
+      [] -> do
+        merchantServiceConfigs <- getConfig (MerchantServiceConfigDimensions {merchantOperatingCityId = baseOperatingCityId.getId, merchantId = baseRequestedCityMerchant.id.getId, serviceName = Nothing}) (Just (SQMSC.findAllByMerchantOperatingCityId baseOperatingCityId))
+        let newMerchantServiceConfigs = map (buildMerchantServiceConfigs newMerchantId newMerchantOperatingCityId now) merchantServiceConfigs
+        return $ Just newMerchantServiceConfigs
+      _ -> return Nothing
+
+  -- rider_config
+  mbRiderConfig <- do
+    getConfig (RiderConfigDimensions {merchantOperatingCityId = newMerchantOperatingCityId.getId}) (Just (QRC.findByMerchantOperatingCityId newMerchantOperatingCityId)) >>= \case
+      Nothing -> do
+        riderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = baseOperatingCityId.getId}) (Just (QRC.findByMerchantOperatingCityId baseOperatingCityId)) >>= fromMaybeM (InvalidRequest "Rider Config not found")
+        let newRiderConfig = buildRiderConfig newMerchantId newMerchantOperatingCityId now riderConfig
+        return $ Just newRiderConfig
+      _ -> return Nothing
+
+  -- cancellation reasons dynamic-logic rollout (copy-city support)
+  mbCancellationReasonsRollouts <- do
+    existingRollouts <- CADLR.findByMerchantOpCityAndDomain (cast newMerchantOperatingCityId) LYT.CANCELLATION_REASONS
+    case existingRollouts of
+      [] -> do
+        baseRollouts <- CADLR.findByMerchantOpCityAndDomain (cast baseOperatingCityId) LYT.CANCELLATION_REASONS
+        let newRollouts :: [LYTADLR.AppDynamicLogicRollout]
+            newRollouts =
+              baseRollouts <&> \r ->
+                r
+                  { LYTADLR.merchantOperatingCityId = cast newMerchantOperatingCityId,
+                    LYTADLR.createdAt = now,
+                    LYTADLR.updatedAt = now
+                  }
+        pure $ if null newRollouts then Nothing else Just newRollouts
+      _ -> pure Nothing
+
+  -- geometry
+  mbGeometry <-
+    QGeo.findGeometryByStateAndCity req.city req.state >>= \case
+      Nothing -> do
+        Just <$> buildGeometry
+      _ -> return Nothing
+
+  -- exophone
+  mbExophone <-
+    getConfig (ExophoneDimensions {merchantOperatingCityId = newMerchantOperatingCityId.getId, phoneNumber = Nothing, callService = Nothing}) (Just (CQExophone.findAllByMerchantOperatingCityId newMerchantOperatingCityId)) >>= \case
+      [] -> do
+        exophones <- getConfig (ExophoneDimensions {merchantOperatingCityId = baseOperatingCityId.getId, phoneNumber = Nothing, callService = Nothing}) (Just (CQExophone.findAllByMerchantOperatingCityId baseOperatingCityId))
+        return $ Just exophones
+      _ -> return Nothing
+
+  -- issue config
+  mbIssueConfig <-
+    getConfig (IssueConfigDimensions {merchantOperatingCityId = newMerchantOperatingCityId.getId, identifier = show ICommon.CUSTOMER}) (Just (CQIssueConfig.findByMerchantOpCityId (cast newMerchantOperatingCityId) ICommon.CUSTOMER)) >>= \case
+      Nothing -> do
+        issueConfig <- getConfig (IssueConfigDimensions {merchantOperatingCityId = baseOperatingCityId.getId, identifier = show ICommon.CUSTOMER}) (Just (CQIssueConfig.findByMerchantOpCityId (cast baseOperatingCityId) ICommon.CUSTOMER)) >>= fromMaybeM (InvalidRequest "Issue Config not found")
+        newIssueConfig <- buildIssueConfig newMerchantId newMerchantOperatingCityId now issueConfig
+        return $ Just newIssueConfig
+      _ -> return Nothing
+
+  -- beckn config
+  becknConfigList <- SQBC.findAllByMerchantOperatingCityId (Just baseOperatingCityId)
+  let becknConfigFRFS = find (\bcknCfg -> bcknCfg.domain == show FRFS.FRFS) becknConfigList
+  mbBecknConfig <-
+    SQBC.findAllByMerchantOperatingCityId (Just newMerchantOperatingCityId) >>= \case
+      [] -> do
+        newBecknConfig <- mapM (buildBecknConfig newMerchantId newMerchantOperatingCityId now) becknConfigList
+        return $ Just newBecknConfig
+      _ -> return Nothing
+
+  -- merchant push notification
+  mbMerchantPushNotification <-
+    SQMPN.findAllByMerchantOpCityId baseOperatingCityId >>= \case
+      merchantPushNotifications -> do
+        newMerchantPushNotifications <- mapM (buildMerchantPushNotification newMerchantId newMerchantOperatingCityId now) merchantPushNotifications
+        return $ Just newMerchantPushNotifications
+
+  nyRegistryBaseUrl <- asks (.nyRegistryUrl)
+  let uniqueKeyId = baseMerchant.bapUniqueKeyId
+      subscriberId = baseMerchant.bapId
+      subType = BecknSub.BAP
+      domain = Context.MOBILITY
+      lookupReq = SimpleLookupRequest {unique_key_id = uniqueKeyId, subscriber_id = subscriberId, merchant_id = baseMerchant.id.getId, subscriber_type = subType, ..}
+  oldSubscriber <- Registry.registryLookup nyRegistryBaseUrl lookupReq subscriberId
+  case oldSubscriber of
+    Just sub -> do
+      whenJust mbNewMerchant $ \newMerchant -> do
+        let subscriberUrl_ = showBaseUrl sub.subscriber_url
+            newSubscriberUrlText = T.replace baseMerchant.id.getId newMerchant.id.getId subscriberUrl_
+            ukId = newMerchant.bapUniqueKeyId
+            subId = newMerchant.bapId
+            subscriberType = BecknSub.BAP
+            subDomain = Context.MOBILITY
+            newCities = req.city
+            country = req.country
+            signingPublicKey = sub.signing_public_key
+            createdAt = now
+        newSubscriberUrl <- parseBaseUrl newSubscriberUrlText
+        void $ RegistryIF.createSubscriber nyRegistryBaseUrl (RegistryT.createNewSubscriberReq ukId subId newSubscriberUrl subscriberType subDomain newCities country signingPublicKey createdAt)
+    Nothing ->
+      logInfo $ "No existing MOBILITY subscriber found for " <> subscriberId <> " skipping subscriber creation"
+
+  -- support for adding FRFS subscriber
+  let buildFRFSSubscriber_ = fromMaybe False req.buildFRFSSubscriber
+  frfsUkId <- generateGUID
+  case (becknConfigFRFS, buildFRFSSubscriber_) of
+    (Just bcknCfg, True) -> do
+      case oldSubscriber of
+        Just sub -> do
+          case mbNewMerchant of
+            Just newMerchant -> do
+              let frfsSubUrl = showBaseUrl bcknCfg.subscriberUrl
+                  newFrfsSubUrl = T.replace baseMerchant.id.getId newMerchant.id.getId frfsSubUrl
+                  frfsUkId_ = frfsUkId
+                  frfsSubId_ = T.replace baseMerchant.id.getId newMerchant.id.getId sub.subscriber_id
+                  subscriberType = BecknSub.BAP
+                  frfsDomain = Context.PUBLIC_TRANSPORT
+                  newCities = req.city
+                  country = req.country
+                  signingPublicKey = sub.signing_public_key
+                  createdAt = now
+              newSubscriberUrl <- parseBaseUrl newFrfsSubUrl
+              void $
+                RegistryIF.createSubscriber nyRegistryBaseUrl $
+                  RegistryT.createNewSubscriberReq
+                    frfsUkId_
+                    frfsSubId_
+                    newSubscriberUrl
+                    subscriberType
+                    frfsDomain
+                    newCities
+                    country
+                    signingPublicKey
+                    createdAt
+            Nothing -> logInfo "Subscriber creation aborted for old Merchant"
+        Nothing ->
+          logInfo $ "No Subscriber found for baseMerchant: " <> baseMerchant.id.getId <> "building new FRFS subscriber" <> show True
+    (_, _) ->
+      logInfo $ "FRFS beckn Config not found for baseMerchant :" <> baseMerchant.id.getId
+
+  mbAddCityReq <-
+    case mbNewMerchant of
+      Just _ -> return Nothing
+      Nothing -> do
+        case oldSubscriber of
+          Nothing -> do
+            logError $ "No entry found for subscriberId: " <> subscriberId <> ", uniqueKeyId: " <> uniqueKeyId <> " in NY registry"
+            return Nothing
+          Just sub | req.city `elem` sub.city -> return Nothing
+          Just _ -> Just <$> RegistryT.buildAddCityNyReq (req.city :| []) uniqueKeyId subscriberId subType domain
+
+  whenJust mbNewOperatingCity $ \newOperatingCity ->
+    whenJust newOperatingCity.stdCode $ \stdCode -> do
+      let (Context.City cityText) = newOperatingCity.city
+      void $ City.validateAndAppendCityStdCodeMapping cityText stdCode
+
+  -- Reject before any DB write if the requested exophone number is already in use by another operating city
+  existingExophones <- CQExophone.findAllByPhone req.exophone
+  unless (all (\e -> e.merchantOperatingCityId == newMerchantOperatingCityId) existingExophones) $
+    throwError $ InvalidRequest $ "Exophone number " <> req.exophone <> " is already in use by another operating city"
+
+  finally
+    ( do
+        whenJust mbGeometry $ \geometry -> QGeo.create geometry
+        whenJust mbNewMerchant $ \newMerchant -> QM.create newMerchant
+        whenJust mbHotSpotConfig $ \hotSpotConfig -> QHSC.create hotSpotConfig
+        whenJust mbNewOperatingCity $ \newOperatingCity -> CQMOC.create newOperatingCity
+        whenJust mbMerchantMessages $ \merchantMessages -> mapM_ CQMM.create merchantMessages
+        whenJust mbMerchantPaymentMethods $ \mPM -> mapM_ CQMPM.create mPM
+        whenJust mbMerchantServiceUsageConfig $ \mSUC -> CQMSUC.create mSUC
+        whenJust mbMerchantServiceConfig $ \merchantServiceConfigs -> mapM_ SQMSC.create merchantServiceConfigs
+        whenJust mbBecknConfig $ \becknConfig -> mapM_ SQBC.create becknConfig
+        whenJust mbRiderConfig $ \riderConfig -> QRC.create riderConfig
+        whenJust mbCancellationReasonsRollouts $ \rollouts -> CADLR.createMany rollouts
+        whenJust mbMerchantPushNotification $ \newMerchantPushNotifications -> mapM_ CQMPN.create newMerchantPushNotifications
+        whenJust mbExophone $ \exophones -> do
+          whenJust (find (\ex -> ex.callService == Exotel) exophones) $ \exophone -> do
+            exophone' <- buildNewExophone newMerchantId newMerchantOperatingCityId now exophone
+            CQExophone.create exophone'
+        whenJust mbIssueConfig $ \issueConfig -> CQIssueConfig.create issueConfig
+
+        when (req.enableForMerchant) $ do
+          let origin = maybe baseMerchant.geofencingConfig.origin (.geofencingConfig.origin) mbNewMerchant
+              destination = maybe baseMerchant.geofencingConfig.destination (.geofencingConfig.destination) mbNewMerchant
+              newOrigin = updateGeoRestriction origin
+              newDestination = updateGeoRestriction destination
+
+          when (checkGeofencingConfig origin && checkGeofencingConfig destination) $ do
+            CQM.updateGeofencingConfig newMerchantId newOrigin newDestination
+            CQM.clearCache $ fromMaybe baseMerchant mbNewMerchant
+
+        whenJust mbAddCityReq $ \addCityReq ->
+          void $ RegistryIF.updateSubscriber addCityReq
+    )
+    ( do
+        CQMM.clearCacheById newMerchantOperatingCityId
+        CQMPM.clearCache newMerchantOperatingCityId
+        CQMSUC.clearCache newMerchantOperatingCityId
+        QRC.clearCache newMerchantOperatingCityId
+        CADLR.clearDomainCache (cast newMerchantOperatingCityId) LYT.CANCELLATION_REASONS
+        CQIssueConfig.clearIssueConfigCache (cast newMerchantOperatingCityId) ICommon.CUSTOMER
+        exoPhone <- getConfig (ExophoneDimensions {merchantOperatingCityId = newMerchantOperatingCityId.getId, phoneNumber = Nothing, callService = Nothing}) (Just (CQExophone.findAllByMerchantOperatingCityId newMerchantOperatingCityId))
+        CQExophone.clearCache newMerchantOperatingCityId exoPhone
+        whenJust mbAddCityReq $ \_ -> Redis.del $ cacheRegistryKey <> lookupRequestToRedisKey lookupReq
+    )
+  let (sourceMerchantShortId, sourceCity) = case (req.issueCategorySourceMerchant, req.issueCategorySourceCity) of
+        (Just m, Just c) -> (ShortId m, c)
+        _ -> (ShortId baseRequestedCityMerchant.shortId.getShortId, baseOperatingCity.city)
+      targetMerchantShortId = ShortId newMerchantShortId.getShortId
+  void $
+    withTryCatch "copyIssueCategoriesOnCityCreate" $
+      DIssue.copyAllIssueCategories
+        targetMerchantShortId
+        req.city
+        IssueCommon.CopyAllIssueCategoryReq
+          { sourceMerchantShortId = sourceMerchantShortId,
+            sourceCity = sourceCity
+          }
+        DIssueHandler.dashboardIssueHandle
+        ICommon.CUSTOMER
+  pure $ Common.CreateMerchantOperatingCityRes newMerchantOperatingCityId.getId
+  where
+    getCityStdCode newCity mbCityStdCode = do
+      mbMerchantOperatingCity <- CQMOC.findByCity newCity
+      case (mbMerchantOperatingCity >>= (.stdCode), mbCityStdCode) of
+        (_, Just cityStdCode) -> return $ Just cityStdCode
+        (Just merchantOpCityStdCode, _) -> return $ Just merchantOpCityStdCode
+        (_, _) -> return Nothing
+
+    updateGeoRestriction = \case
+      Unrestricted -> Unrestricted
+      Regions regions -> Regions $ regions <> [show req.city]
+    checkGeofencingConfig = \case
+      Regions regions -> notElem (show req.city) regions
+      Unrestricted -> True
+
+    buildGeometry = do
+      id <- generateGUID
+      pure
+        DGEO.Geometry
+          { id,
+            region = show req.city,
+            state = req.state,
+            city = req.city,
+            geom = Just req.geomGeoJson
+          }
+
+    buildMerchant merchantId merchantData currentTime DM.Merchant {..} = do
+      DM.Merchant
+        { id = merchantId,
+          subscriberId = ShortId merchantData.shortId,
+          shortId = ShortId merchantData.shortId,
+          fallbackShortId = ShortId merchantData.shortId,
+          name = merchantData.name,
+          defaultCity = req.city,
+          defaultState = req.state,
+          country = req.country,
+          geofencingConfig =
+            GeofencingConfig
+              { origin = Regions [show req.city],
+                destination = Regions [show req.city]
+              },
+          bapId = T.replace id.getId merchantId.getId bapId,
+          bapUniqueKeyId = merchantData.uniqueKeyId,
+          driverOfferMerchantId = merchantData.networkParticipantId,
+          gatewayAndRegistryPriorityList = maybe gatewayAndRegistryPriorityList (map castNetworkEnums) req.gatewayAndRegistryPriorityList,
+          createdAt = currentTime,
+          updatedAt = currentTime,
+          ..
+        }
+
+    buildMerchantOperatingCity newMerchantId cityId currentTime newMerchantShortId driverMerchantCityId cityStdCode = do
+      DMOC.MerchantOperatingCity
+        { id = cityId,
+          merchantId = newMerchantId,
+          merchantShortId = newMerchantShortId,
+          driverOfferMerchantOperatingCityId = driverMerchantCityId,
+          lat = req.lat,
+          long = req.long,
+          city = req.city,
+          state = req.state,
+          stdCode = Just cityStdCode,
+          country = req.country,
+          distanceUnit = fromMaybe Meter req.distanceUnit,
+          createdAt = currentTime,
+          updatedAt = currentTime
+        }
+
+    buildNewExophone mId newCityId currentTime DExophone.Exophone {..} = do
+      newId <- generateGUID
+      return
+        DExophone.Exophone
+          { id = newId,
+            merchantOperatingCityId = newCityId,
+            merchantId = mId,
+            primaryPhone = req.exophone,
+            backupPhone = req.exophone,
+            callService = req.callService,
+            isPrimaryDown = False,
+            createdAt = currentTime,
+            updatedAt = currentTime,
+            ..
+          }
+
+    buildMerchantMessage mId newCityId currentTime DMM.MerchantMessage {..} =
+      DMM.MerchantMessage
+        { merchantOperatingCityId = newCityId,
+          merchantId = mId,
+          createdAt = currentTime,
+          updatedAt = currentTime,
+          ..
+        }
+
+    buildMerchantPaymentMethod mId newCityId currentTime DMPM.MerchantPaymentMethod {..} = do
+      newId <- generateGUID
+      return
+        DMPM.MerchantPaymentMethod
+          { id = newId,
+            merchantId = mId,
+            merchantOperatingCityId = newCityId,
+            createdAt = currentTime,
+            updatedAt = currentTime,
+            ..
+          }
+
+    buildMerchantServiceUsageConfig mId newCityId currentTime DMSUC.MerchantServiceUsageConfig {..} = do
+      DMSUC.MerchantServiceUsageConfig
+        { merchantOperatingCityId = newCityId,
+          merchantId = mId,
+          createdAt = currentTime,
+          updatedAt = currentTime,
+          ..
+        }
+
+    {- Do it once service config on basis on city id is implemented -}
+    buildMerchantServiceConfigs mId newCityId currentTime DMSC.MerchantServiceConfig {..} =
+      DMSC.MerchantServiceConfig
+        { merchantOperatingCityId = newCityId,
+          merchantId = mId,
+          createdAt = currentTime,
+          updatedAt = currentTime,
+          ..
+        }
+
+    buildRiderConfig mId newCityId currentTime DRC.RiderConfig {..} =
+      DRC.RiderConfig
+        { merchantOperatingCityId = newCityId,
+          merchantId = Just mId,
+          createdAt = currentTime,
+          updatedAt = currentTime,
+          ..
+        }
+
+    buildIssueConfig mId newCityId currentTime DIConfig.IssueConfig {..} = do
+      newId <- generateGUID
+      return
+        DIConfig.IssueConfig
+          { id = newId,
+            merchantId = cast mId,
+            merchantOperatingCityId = cast newCityId,
+            createdAt = currentTime,
+            updatedAt = currentTime,
+            ..
+          }
+
+    buildBecknConfig newMerchantId newCityId currentTime DBC.BecknConfig {..} = do
+      newId <- generateGUID
+      let newSubscriberUrlText = maybe (showBaseUrl subscriberUrl) (\mId -> T.replace mId.getId newMerchantId.getId (showBaseUrl subscriberUrl)) merchantId
+      newSubscriberUrl <- parseBaseUrl newSubscriberUrlText
+      return
+        DBC.BecknConfig
+          { id = newId,
+            merchantId = Just newMerchantId,
+            merchantOperatingCityId = Just newCityId,
+            subscriberId = maybe subscriberId (\mId -> T.replace mId.getId newMerchantId.getId subscriberId) merchantId,
+            subscriberUrl = newSubscriberUrl,
+            uniqueKeyId = fromMaybe uniqueKeyId (req.merchantData <&> (.uniqueKeyId)),
+            createdAt = currentTime,
+            updatedAt = currentTime,
+            ..
+          }
+    buildMerchantPushNotification mercId merchantOpCityId currentTime DMPN.MerchantPushNotification {..} = do
+      newId <- generateGUID
+      return $
+        DMPN.MerchantPushNotification
+          { id = newId,
+            merchantId = mercId,
+            merchantOperatingCityId = merchantOpCityId,
+            createdAt = currentTime,
+            updatedAt = currentTime,
+            ..
+          }
+
+-- Alias for postMerchantConfigOperatingCityCreate to match generated code expectations
+postMerchantConfigMerchantCreate :: ShortId DM.Merchant -> Context.City -> Common.CreateMerchantOperatingCityReqT -> Flow Common.CreateMerchantOperatingCityRes
+postMerchantConfigMerchantCreate = postMerchantConfigOperatingCityCreate
+
+postMerchantConfigFailover :: ShortId DM.Merchant -> Context.City -> Common.ConfigNames -> Common.ConfigFailoverReq -> Flow APISuccess
+postMerchantConfigFailover merchantShortId city configNames req = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOperatingCity <- CQMOC.findByMerchantShortIdAndCity merchantShortId city >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city)
+  case configNames of
+    Common.BecknNetwork -> do
+      configureBecknNetworkFailover merchant req
+    _ -> do
+      configureMessageProviderFailover merchantOperatingCity req
+  pure Success
+
+configureBecknNetworkFailover :: DM.Merchant -> Common.ConfigFailoverReq -> Flow ()
+configureBecknNetworkFailover merchant req = do
+  case req.priorityOrder of
+    Just priorityOrder -> do
+      CQM.updateGatewayAndRegistryPriorityList merchant (castNetworkEnums <$> priorityOrder.networkTypes)
+    Nothing -> do
+      let networkPriorityList = reorderList merchant.gatewayAndRegistryPriorityList
+      CQM.updateGatewayAndRegistryPriorityList merchant networkPriorityList
+  pure ()
+
+configureMessageProviderFailover :: DMOC.MerchantOperatingCity -> Common.ConfigFailoverReq -> Flow ()
+configureMessageProviderFailover merchantOperatingCity req = do
+  case req.priorityOrder of
+    Just priorityOrder -> do
+      when (notNull priorityOrder.smsProviders) do CQMSUC.updateSmsProvidersPriorityList priorityOrder.smsProviders merchantOperatingCity.id
+      when (notNull priorityOrder.whatsappProviders) do CQMSUC.updateWhatsappProvidersPriorityList priorityOrder.whatsappProviders merchantOperatingCity.id
+    Nothing -> do
+      merchantServiceUsageConfig <- CQMSUC.findByMerchantOperatingCityId merchantOperatingCity.id >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOperatingCity.id.getId)
+      let messageProviderPriorityList = reorderList merchantServiceUsageConfig.smsProvidersPriorityList
+          whatsappProviderPriorityList = reorderList merchantServiceUsageConfig.whatsappProvidersPriorityList
+      CQMSUC.updateSmsProvidersPriorityList messageProviderPriorityList merchantOperatingCity.id
+      CQMSUC.updateWhatsappProvidersPriorityList whatsappProviderPriorityList merchantOperatingCity.id
+  pure ()
+
+reorderList :: [a] -> [a]
+reorderList [] = []
+reorderList (x : xs) = xs ++ [x]
+
+castNetworkEnums :: Common.NetworkEnums -> Domain.Types.GatewayAndRegistryService
+castNetworkEnums Common.ONDC = Domain.Types.ONDC
+castNetworkEnums Common.NY = Domain.Types.NY
+
+---------------------------------------------------------------------
+data TicketConfigCSVRow = TicketConfigCSVRow
+  { name :: Text,
+    city :: Text,
+    allowSameDayBooking :: Text,
+    description :: Text,
+    openTimings :: Text,
+    closeTimings :: Text,
+    placeType :: Text,
+    shortDesc :: Text,
+    gallery :: Text,
+    iconUrl :: Text,
+    lat :: Text,
+    lon :: Text,
+    mapImageUrl :: Text,
+    status :: Text,
+    termsAndConditions :: Text,
+    termsAndConditionsUrl :: Text,
+    svc :: Text,
+    svcShortDesc :: Text,
+    svcOperationalDays :: Text,
+    svcStartDate :: Text,
+    svcEndDate :: Text,
+    svcMaxVerification :: Text,
+    svcExpiryType :: Text,
+    svcExpiryValue :: Text,
+    svcExpiryTime :: Text,
+    svcAllowFutureBooking :: Text,
+    svcAllowCancellation :: Text,
+    businessHourType :: Text,
+    businessHourSlotTime :: Text,
+    businessHourStartTime :: Text,
+    businessHourEndTime :: Text,
+    svcCategoryAllowedSeats :: Text,
+    svcCategoryAvailableSeats :: Text,
+    svcCategoryDescription :: Text,
+    svcCategoryName :: Text,
+    peopleCategoryName :: Text,
+    peopleCategoryDescription :: Text,
+    priceAmount :: Text,
+    priceCurrency :: Text,
+    pricingType :: Text,
+    peakTimings :: Text,
+    peakDays :: Text,
+    cancellationType :: Text,
+    cancellationTime :: Text,
+    cancellationFee :: Text,
+    vendorSplitDetails :: Text,
+    businessBookingClosingTime :: Text
+  }
+  deriving (Show)
+
+instance FromNamedRecord TicketConfigCSVRow where
+  parseNamedRecord r = do
+    name <- r .: "name"
+    city <- r .: "city"
+    allowSameDayBooking <- r .: "allow_same_day_booking"
+    description <- r .: "description"
+    openTimings <- r .: "open_timings"
+    closeTimings <- r .: "close_timing"
+    placeType <- r .: "place_type"
+    shortDesc <- r .: "short_desc"
+    gallery <- r .: "gallery"
+    iconUrl <- r .: "icon_url"
+    lat <- r .: "lat"
+    lon <- r .: "lon"
+    mapImageUrl <- r .: "map_image_url"
+    status <- r .: "status"
+    termsAndConditions <- r .: "terms_and_conditions"
+    termsAndConditionsUrl <- r .: "terms_and_conditions_url"
+    svc <- r .: "svc"
+    svcShortDesc <- r .: "svc_short_desc"
+    svcOperationalDays <- r .: "svc_operational_days"
+    svcStartDate <- r .: "svc_start_date"
+    svcEndDate <- r .: "svc_end_date"
+    svcMaxVerification <- r .: "svc_max_verification"
+    svcExpiryType <- r .: "svc_expiry_type"
+    svcExpiryValue <- r .: "svc_expiry_value"
+    svcExpiryTime <- r .: "svc_expiry_time"
+    svcAllowFutureBooking <- r .: "svc_allow_future_booking"
+    svcAllowCancellation <- r .: "svc_allow_cancellation"
+    businessHourType <- r .: "business_hour_type"
+    businessHourSlotTime <- r .: "business_hour_slot_time"
+    businessHourStartTime <- r .: "business_hour_start_time"
+    businessHourEndTime <- r .: "business_hour_end_time"
+    svcCategoryAllowedSeats <- r .: "svc_category_allowed_seats"
+    svcCategoryAvailableSeats <- r .: "svc_category_available_seats"
+    svcCategoryDescription <- r .: "svc_category_description"
+    svcCategoryName <- r .: "svc_category_name"
+    peopleCategoryName <- r .: "people_category_name"
+    peopleCategoryDescription <- r .: "people_category_description"
+    priceAmount <- r .: "price_amount"
+    priceCurrency <- r .: "price_currency"
+    pricingType <- r .: "pricing_type"
+    peakTimings <- r .: "peak_timings"
+    peakDays <- r .: "peak_days"
+    cancellationType <- r .: "cancellation_type"
+    cancellationTime <- r .: "cancellation_time"
+    cancellationFee <- r .: "cancellation_fee"
+    vendorSplitDetails <- r .: "vendor_split_details"
+    businessBookingClosingTime <- r .: "booking_closing_time"
+    pure TicketConfigCSVRow {..}
+
+postMerchantTicketConfigUpsert :: ShortId DM.Merchant -> Context.City -> Common.UpsertTicketConfigReq -> Flow Common.UpsertTicketConfigResp
+postMerchantTicketConfigUpsert merchantShortId opCity request = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCity <- CQMOC.findByMerchantIdAndCity merchant.id opCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show opCity)
+  flatTicketConfigs <- readCsv request.file merchantOpCity
+  logTagInfo "Read file: " (show flatTicketConfigs)
+  void $ (processTicketConfigGroup . groupTicketEntities) flatTicketConfigs
+  return $
+    Common.UpsertTicketConfigResp
+      { unprocessedTicketConfigs = [], -- handle race condition and errors later if needed
+        success = "Ticket configs updated successfully"
+      }
+  where
+    readCsv csvFile merchantOpCity = do
+      csvData <- L.runIO $ BS.readFile csvFile
+      case (decodeByName $ LBS.fromStrict csvData :: Either String (Header, V.Vector TicketConfigCSVRow)) of
+        Left err -> throwError (InvalidRequest $ show err)
+        Right (_, v) -> V.imapM (makeTicketConfigs merchantOpCity) v >>= (pure . V.toList)
+
+    groupTicketEntities ::
+      [(TicketPlace, TicketService, BusinessHour, ServiceCategory, ServicePeopleCategory)] ->
+      [(TicketPlace, [(TicketService, [(BusinessHour, [(ServiceCategory, [ServicePeopleCategory])])])])]
+    groupTicketEntities = foldl insertTuple []
+      where
+        insertTuple acc (place, service, businessHour, category, peopleCategory) =
+          let accUpdated =
+                case lookupPlace place acc of
+                  Just (existingPlace, serviceList) ->
+                    let updatedServices = insertService service serviceList businessHour category peopleCategory
+                     in replacePlace (existingPlace, updatedServices) acc
+                  Nothing -> (place, [(service, [(businessHour, [(category, [peopleCategory])])])]) : acc
+           in accUpdated
+
+        insertService service [] businessHour category peopleCategory = [(service, [(businessHour, [(category, [peopleCategory])])])]
+        insertService service ((existingService, businessHourList) : rest) businessHour category peopleCategory =
+          if existingService.id == service.id
+            then (existingService, insertBusinessHour businessHour businessHourList category peopleCategory) : rest
+            else (existingService, businessHourList) : insertService service rest businessHour category peopleCategory
+
+        insertBusinessHour businessHour [] category peopleCategory = [(businessHour, [(category, [peopleCategory])])]
+        insertBusinessHour businessHour ((existingBusinessHour, categoryList) : rest) category peopleCategory =
+          if existingBusinessHour.id == businessHour.id
+            then (existingBusinessHour, insertCategory category categoryList peopleCategory) : rest
+            else (existingBusinessHour, categoryList) : insertBusinessHour businessHour rest category peopleCategory
+
+        insertCategory category [] peopleCategory = [(category, [peopleCategory])]
+        insertCategory category ((existingCategory, peopleCategoryList) : rest) peopleCategory =
+          if existingCategory.id == category.id
+            then (existingCategory, insertPeopleCategory peopleCategory peopleCategoryList) : rest
+            else (existingCategory, peopleCategoryList) : insertCategory category rest peopleCategory
+
+        insertPeopleCategory peopleCategory [] = [peopleCategory]
+        insertPeopleCategory peopleCategory (existingPeopleCategory : rest) =
+          if existingPeopleCategory.id == peopleCategory.id
+            then existingPeopleCategory : rest
+            else existingPeopleCategory : insertPeopleCategory peopleCategory rest
+
+        lookupPlace ::
+          TicketPlace ->
+          [(TicketPlace, [(TicketService, [(BusinessHour, [(ServiceCategory, [ServicePeopleCategory])])])])] ->
+          Maybe (TicketPlace, [(TicketService, [(BusinessHour, [(ServiceCategory, [ServicePeopleCategory])])])])
+        lookupPlace place = find (\(p, _) -> p.id == place.id)
+
+        replacePlace ::
+          (TicketPlace, [(TicketService, [(BusinessHour, [(ServiceCategory, [ServicePeopleCategory])])])]) ->
+          [(TicketPlace, [(TicketService, [(BusinessHour, [(ServiceCategory, [ServicePeopleCategory])])])])] ->
+          [(TicketPlace, [(TicketService, [(BusinessHour, [(ServiceCategory, [ServicePeopleCategory])])])])]
+        replacePlace (np, ns) = map (\(p, services) -> if p.id == np.id then (np, ns) else (p, services))
+
+    processTicketConfigGroup :: [(TicketPlace, [(TicketService, [(BusinessHour, [(ServiceCategory, [ServicePeopleCategory])])])])] -> Flow ()
+    processTicketConfigGroup = mapM_ upsertPlace
+      where
+        upsertPlace (place, serviceGroups) = do
+          existingPlace <- SQTP.findByNameAndCity place.name place.merchantOperatingCityId
+          case existingPlace of
+            Just oldPlace -> do
+              mapM_ (upsertService oldPlace.id.getId) serviceGroups
+              SQTP.updateByPrimaryKey place{id = oldPlace.id}
+            Nothing -> do
+              newPlaceId <- generateGUID
+              mapM_ (upsertService newPlaceId) serviceGroups
+              SQTP.create place{id = Id newPlaceId}
+
+        upsertService placeId (service, businessHourGroups) = do
+          existingService <- SQTS.findByPlacesIdAndService placeId service.service
+          let bHours = case existingService of
+                Nothing -> []
+                Just svc -> svc.businessHours
+          processedBusinessHours <- mapM (upsertBusinessHour bHours) businessHourGroups
+          case existingService of
+            Nothing -> do
+              newServiceId <- generateGUID
+              SQTS.create service{id = newServiceId, placesId = placeId, businessHours = processedBusinessHours}
+            Just existingSvc -> SQTS.updateByPrimaryKey service{placesId = placeId, id = existingSvc.id, businessHours = processedBusinessHours}
+
+        upsertBusinessHour businessHourIds (businessHour, categoryGroups) = do
+          existingBH <- SQBHE.findByBtypeAndId businessHour.btype businessHourIds
+          let categoryIds = case existingBH of
+                Nothing -> []
+                Just bh -> bh.categoryId
+          processedCategories <- mapM (upsertCategory categoryIds) categoryGroups
+          case existingBH of
+            Nothing -> do
+              newBusinessHourId <- generateGUID
+              SQBH.create businessHour {id = newBusinessHourId, categoryId = processedCategories}
+              return newBusinessHourId
+            Just bh -> do
+              SQBH.updateByPrimaryKey businessHour{id = bh.id, categoryId = processedCategories}
+              return bh.id
+
+        upsertCategory categoryIds (category, peopleCategories) = do
+          existingCategory <- SQSCE.findByIdAndName categoryIds category.name
+          let peopleCategoryIds = case existingCategory of
+                Nothing -> []
+                Just cat -> cat.peopleCategory
+          processedPeopleCategories <- mapM (upsertPeopleCategory peopleCategoryIds) peopleCategories
+          case existingCategory of
+            Nothing -> do
+              newCategoryId <- generateGUID
+              SQSC.create category {id = newCategoryId, peopleCategory = processedPeopleCategories}
+              return newCategoryId
+            Just sc -> do
+              SQSC.updateByPrimaryKey category{id = sc.id, peopleCategory = processedPeopleCategories}
+              return sc.id
+
+        upsertPeopleCategory peopleCategoryIds peopleCategory = do
+          existingPeopleCategory <- SQSPCE.findByIdAndName peopleCategoryIds peopleCategory.name
+          case existingPeopleCategory of
+            Nothing -> do
+              newPeopleCategoryId <- generateGUID
+              SQSPC.create peopleCategory{id = newPeopleCategoryId}
+              return newPeopleCategoryId
+            Just pc -> do
+              SQSPC.updateByPrimaryKey peopleCategory{id = pc.id}
+              return pc.id
+
+    makeTicketConfigs :: DMOC.MerchantOperatingCity -> Int -> TicketConfigCSVRow -> Flow (TicketPlace, TicketService, BusinessHour, ServiceCategory, ServicePeopleCategory)
+    makeTicketConfigs merchantOpCity idx row = do
+      now <- getCurrentTime
+      let createdAt = now
+          updatedAt = now
+          ticketPlaceId = Id (show row.name <> "_" <> merchantOpCity.id.getId)
+          merchantId = Just merchantOpCity.merchantId
+          merchantOperatingCityId = merchantOpCity.id
+          separator = "##XX##"
+
+      ------------ TicketPlace --------------------------------------------------
+      name <- cleanCSVField idx row.name "Name"
+      allowSameDayBooking :: Bool <- readCSVField idx row.allowSameDayBooking "Allow same day booking"
+      placeType :: PlaceType <- readCSVField idx row.placeType "Place Type"
+      shortDesc <- cleanCSVField idx row.shortDesc "Short Description"
+      gallery :: [Text] <- readCSVField idx row.gallery "Gallery"
+      status :: PlaceStatus <- readCSVField idx row.status "Status"
+      termsAndConditions :: [Text] <- readCSVField idx row.termsAndConditions "Terms and conditions"
+      let description :: Maybe Text = cleanMaybeCSVField idx row.description "Description"
+          openTimings :: Maybe TimeOfDay = readMaybeCSVField idx row.openTimings "Open timings"
+          closeTimings :: Maybe TimeOfDay = readMaybeCSVField idx row.closeTimings "Close timings"
+          iconUrl :: Maybe Text = cleanMaybeCSVField idx row.iconUrl "Icon URL"
+          lat :: Maybe Double = readMaybeCSVField idx row.lat "Latitude"
+          lon :: Maybe Double = readMaybeCSVField idx row.lon "Longitude"
+          mapImageUrl :: Maybe Text = cleanMaybeCSVField idx row.mapImageUrl "Map Image URL"
+          termsAndConditionsUrl :: Maybe Text = cleanMaybeCSVField idx row.termsAndConditionsUrl "Terms and conditions URL"
+          ticketPlace = TicketPlace {id = ticketPlaceId, priority = 0, ticketMerchantId = Nothing, customTabs = Nothing, rules = Nothing, recommend = False, faqs = Nothing, isRecurring = True, metadata = Nothing, platformFee = Nothing, platformFeeVendor = Nothing, pricingOnwards = Nothing, endDate = Nothing, isClosed = False, startDate = Nothing, venue = Nothing, assignTicketToBpp = False, enforcedAsSubPlace = False, ..}
+
+      ------------- TicketService --------------------------------------------------
+      service <- cleanCSVField idx row.svc "Service"
+      allowCancellation :: Bool <- readCSVField idx row.svcAllowCancellation "Service allow cancellation"
+      allowFutureBooking :: Bool <- readCSVField idx row.svcAllowFutureBooking "Service allow future booking"
+      maxVerification :: Int <- readCSVField idx row.svcMaxVerification "Service max verification"
+      expiryType <- cleanCSVField idx row.svcExpiryType "Service expiry type"
+      operationalDays :: [Text] <- readCSVField idx row.svcOperationalDays "Service operational days"
+      let svcStartDate :: Maybe Day = readMaybeCSVField idx row.svcStartDate "Service start date"
+          svcEndDate :: Maybe Day = readMaybeCSVField idx row.svcEndDate "Service end date"
+      let operationalDate = case (svcStartDate, svcEndDate) of
+            (Just startDt, Just endDt) -> Just OperationalDate {startDate = startDt, eneDate = endDt}
+            _ -> Nothing
+      expiry <- case expiryType of
+        "InstantExpiry" -> do
+          expiryValue :: Int <- readCSVField idx row.svcExpiryValue "Service expiry value"
+          pure $ InstantExpiry expiryValue
+        _ -> do
+          expiryTime <- readCSVField idx row.svcExpiryTime "Service expiry time"
+          pure $ VisitDate expiryTime
+      let svcShortDesc :: Maybe Text = readMaybeCSVField idx row.shortDesc "Short Description"
+          ticketServiceId = service <> separator <> ticketPlaceId.getId
+          placesId = ticketPlaceId.getId
+          ticketService =
+            TicketService
+              { id = Id ticketServiceId,
+                businessHours = [],
+                shortDesc = svcShortDesc,
+                subPlaceId = Nothing,
+                merchantOperatingCityId = Just merchantOperatingCityId,
+                rules = Nothing,
+                isClosed = False,
+                serviceDetails = Nothing,
+                maxSelection = Nothing,
+                note = Nothing,
+                priority = Nothing,
+                ..
+              }
+
+      ------------- Business Hour --------------------------------------------------
+      bhType <- cleanCSVField idx row.businessHourType "Business hour type"
+      (btype, bTypeId) <- case bhType of
+        "Duration" -> do
+          bhStartTime :: TimeOfDay <- readCSVField idx row.businessHourStartTime "Business hour start time"
+          bhEndTime :: TimeOfDay <- readCSVField idx row.businessHourEndTime "Business hour end time"
+          return (Duration bhStartTime bhEndTime, Id (show bhStartTime <> separator <> show bhEndTime <> separator <> ticketServiceId))
+        _ -> do
+          bhSlotTime :: TimeOfDay <- readCSVField idx row.businessHourSlotTime "Business hour slot time"
+          return (Slot bhSlotTime, Id (show bhSlotTime <> separator <> ticketServiceId))
+      let bookingClosingTime :: Maybe TimeOfDay = readMaybeCSVField idx row.businessBookingClosingTime "Booking closing Time"
+      let businessHour = BusinessHour {id = bTypeId, categoryId = [], merchantOperatingCityId = Just merchantOperatingCityId, placeId = Nothing, name = Nothing, hash = Nothing, expiryDate = Nothing, ..}
+
+      --------------- Service Category ------------------------------------------------
+      svcCategoryDescription <- cleanCSVField idx row.svcCategoryDescription "Service Category Description"
+      svcCategoryName <- cleanCSVField idx row.svcCategoryName "Service Category Name"
+      let allowedSeats :: Maybe Int = readMaybeCSVField idx row.svcCategoryAllowedSeats "Allowed seats"
+          availableSeats :: Maybe Int = readMaybeCSVField idx row.svcCategoryAvailableSeats "Available seats"
+          svcCategoryId = svcCategoryName <> separator <> bTypeId.getId
+      let serviceCategory =
+            ServiceCategory
+              { id = Id svcCategoryId,
+                name = svcCategoryName,
+                description = svcCategoryDescription,
+                peopleCategory = [],
+                merchantOperatingCityId = Just merchantOperatingCityId,
+                placeId = Nothing,
+                rules = Nothing,
+                isClosed = False,
+                remainingActions = Nothing,
+                inclusionPoints = Nothing,
+                maxSelection = Nothing,
+                ..
+              }
+
+      --------------- Service People Category ------------------------------------------------
+      peopleCategoryDescription <- cleanCSVField idx row.peopleCategoryDescription "People Category Description"
+      peopleCategoryName <- cleanCSVField idx row.peopleCategoryName "People Category Name"
+      priceAmount :: HighPrecMoney <- readCSVField idx row.priceAmount "Price Amount"
+      pricingType :: PricingType <- readCSVField idx row.pricingType "Pricing Type"
+      priceCurrency :: Currency <- readCSVField idx row.priceCurrency "Price Currency"
+      let vendorSplitDetails = map Payment.roundVendorFee <$> (cleanField row.vendorSplitDetails >>= JSON.decodeStrict . encodeUtf8)
+          pricePerUnit = Price (round priceAmount) priceAmount priceCurrency
+          mbPeakTimings = cleanField row.peakTimings
+          svcPeopleCategoryId = peopleCategoryName <> separator <> svcCategoryId
+          mbCancellationType = cleanField row.cancellationType
+      timeBounds <-
+        case mbPeakTimings of
+          Nothing -> return Unbounded
+          _ -> do
+            peakTimings :: [(TimeOfDay, TimeOfDay)] <- readCSVField idx row.peakTimings "Peak Timings"
+            peakDaysRaw :: [Text] <- readCSVField idx row.peakDays "Peak Days"
+            let parsedDays = mapMaybe parseDayOrWeekday peakDaysRaw
+                weekdays = [dow | Left dow <- parsedDays]
+                specificDays = [day | Right day <- parsedDays]
+
+            if null weekdays && null specificDays
+              then return Unbounded
+              else
+                if null specificDays
+                  then do
+                    let bounds =
+                          BoundedPeaks
+                            { monday = if Monday `elem` weekdays then peakTimings else [],
+                              tuesday = if Tuesday `elem` weekdays then peakTimings else [],
+                              wednesday = if Wednesday `elem` weekdays then peakTimings else [],
+                              thursday = if Thursday `elem` weekdays then peakTimings else [],
+                              friday = if Friday `elem` weekdays then peakTimings else [],
+                              saturday = if Saturday `elem` weekdays then peakTimings else [],
+                              sunday = if Sunday `elem` weekdays then peakTimings else []
+                            }
+                    return $ BoundedByWeekday bounds
+                  else do
+                    let bounds = map (\d -> (d, peakTimings)) specificDays
+                    return $ BoundedByDay bounds
+      cancellationCharges <-
+        case mbCancellationType of
+          Nothing -> return Nothing
+          _ -> do
+            cancelationTypeTxt <- cleanCSVField idx row.cancellationType "Cancellation Type"
+            let cancelationType =
+                  T.strip cancelationTypeTxt
+                    & T.dropAround (`elem` ['[', ']'])
+                    & T.splitOn (T.pack ",")
+                    & map T.strip
+            cancellationTime :: [Seconds] <- readCSVField idx row.cancellationTime "Cancellation Time"
+            cancellationFee :: [HighPrecMoney] <- readCSVField idx row.cancellationFee "Cancellation Fee"
+            let len = length cancelationType
+            if length cancellationTime == len && length cancellationFee == len
+              then
+                let maybeCharges = zipWith3 toCancellationCharge cancelationType cancellationTime cancellationFee
+                 in if all isJust maybeCharges
+                      then return $ Just (catMaybes maybeCharges)
+                      else return Nothing
+              else return Nothing
+      let servicePeopleCategory =
+            ServicePeopleCategory
+              { id = Id svcPeopleCategoryId,
+                name = peopleCategoryName,
+                description = peopleCategoryDescription,
+                merchantOperatingCityId = Just merchantOperatingCityId,
+                placeId = Nothing,
+                rules = Nothing,
+                isClosed = False,
+                ..
+              }
+      return (ticketPlace, ticketService, businessHour, serviceCategory, servicePeopleCategory)
+
+    toCancellationCharge :: Text -> Seconds -> HighPrecMoney -> Maybe CancellationCharge
+    toCancellationCharge type_ time fee =
+      case T.toLower type_ of
+        "flatfee" -> Just $ CancellationCharge (FlatFee fee) time
+        "percentage" -> Just $ CancellationCharge (Percentage (round fee)) time
+        _ -> Nothing
+
+    parseDayOrWeekday :: Text -> Maybe (Either DayOfWeek Day)
+    parseDayOrWeekday txt =
+      case parseDayOfWeek txt of
+        Just dow -> Just (Left dow)
+        Nothing -> Right <$> parseDate txt
+
+    parseDayOfWeek :: Text -> Maybe DayOfWeek
+    parseDayOfWeek "Monday" = Just Monday
+    parseDayOfWeek "Tuesday" = Just Tuesday
+    parseDayOfWeek "Wednesday" = Just Wednesday
+    parseDayOfWeek "Thursday" = Just Thursday
+    parseDayOfWeek "Friday" = Just Friday
+    parseDayOfWeek "Saturday" = Just Saturday
+    parseDayOfWeek "Sunday" = Just Sunday
+    parseDayOfWeek _ = Nothing
+
+    parseDate :: Text -> Maybe Day
+    parseDate = parseTimeM True defaultTimeLocale "%Y-%m-%d" . T.unpack
+
+----------------------------------------------- CSV Util Functions -----------------------------------------------
+replaceEmpty :: Text -> Maybe Text
+replaceEmpty = \case
+  "" -> Nothing
+  "no constraint" -> Nothing
+  "no_constraint" -> Nothing
+  x -> Just x
+
+cleanField :: Text -> Maybe Text
+cleanField = replaceEmpty . T.strip
+
+readCSVField :: Read a => Int -> Text -> Text -> Flow a
+readCSVField idx fieldValue fieldName =
+  cleanField fieldValue >>= readMaybe . T.unpack & fromMaybeM (InvalidRequest $ "Invalid " <> fieldName <> ": " <> show fieldValue <> " at row: " <> show idx)
+
+readMaybeCSVField :: Read a => Int -> Text -> Text -> Maybe a
+readMaybeCSVField _ fieldValue _ =
+  cleanField fieldValue >>= readMaybe . T.unpack
+
+cleanCSVField :: Int -> Text -> Text -> Flow Text
+cleanCSVField idx fieldValue fieldName =
+  cleanField fieldValue & fromMaybeM (InvalidRequest $ "Invalid " <> fieldName <> ": " <> show fieldValue <> " at row: " <> show idx)
+
+cleanMaybeCSVField :: Int -> Text -> Text -> Maybe Text
+cleanMaybeCSVField _ fieldValue _ = cleanField fieldValue
+
+parseJsonMap :: Maybe Text -> Maybe (Map.Map Text Int)
+parseJsonMap mbT = do
+  t <- mbT >>= cleanField
+  JSON.decodeStrict (TE.encodeUtf8 t)
+
+parseJsonTextMap :: Maybe Text -> Maybe (Map.Map Text Text)
+parseJsonTextMap mbT = do
+  t <- mbT >>= cleanField
+  JSON.decodeStrict (TE.encodeUtf8 t)
+
+parseBoolMap :: Maybe Text -> Maybe (Map.Map Text Bool)
+parseBoolMap mbT = do
+  t <- mbT >>= cleanField
+  JSON.decodeStrict (TE.encodeUtf8 t)
+
+parseGateTags :: Text -> Maybe [Text]
+parseGateTags fieldValue =
+  case cleanField fieldValue of
+    Nothing -> Nothing
+    Just tags ->
+      let tagList = filter (not . T.null) $ map T.strip $ T.splitOn "," tags
+       in if null tagList then Nothing else Just tagList
+
+-- | Resolve the payment-modes CSV cell, throwing on an invalid token. Returns 'Nothing' when the cell is omitted/blank so the
+--   merge step can distinguish "not provided" (preserve existing / default on create)
+--   from an explicit value. Parsing/normalization live in 'SL.parsePaymentModes'.
+resolvePaymentModes :: Int -> Maybe Text -> Flow (Maybe [SL.PaymentMode])
+resolvePaymentModes idx mbFieldValue =
+  case SL.parsePaymentModes mbFieldValue of
+    Left badToken -> throwError $ InvalidRequest $ "Invalid payment mode: " <> badToken <> " at row: " <> show idx
+    Right mbModes -> pure mbModes
+
+--------------------------------------------------------------------------------------------------------------------
+
+data SpecialLocationCSVRow = SpecialLocationCSVRow
+  { city :: Text,
+    locationName :: Text,
+    enabled :: Text,
+    locationFileName :: Text,
+    locationType :: Text,
+    category :: Text,
+    gateInfoName :: Text,
+    gateInfoFileName :: Text,
+    gateInfoLat :: Text,
+    gateInfoLon :: Text,
+    gateInfoDefaultDriverExtra :: Text,
+    gateInfoAddress :: Text,
+    gateInfoHasGeom :: Text,
+    gateInfoCanQueueUpOnGate :: Text,
+    gateInfoType :: Text,
+    gateInfoGateTags :: Text,
+    gateInfoWalkDescription :: Text,
+    priority :: Text,
+    pickupPriority :: Text,
+    dropPriority :: Text,
+    specialLocationId :: Text,
+    isQueueEnabled :: Maybe Text,
+    supportNumber :: Maybe Text,
+    gateInfoEntryFeeAmount :: Maybe Text,
+    gateInfoMinDriverThreshold :: Maybe Text,
+    gateInfoDemandThreshold :: Maybe Text,
+    gateInfoNotificationCooldownInSec :: Maybe Text,
+    gateInfoMaxRideSkipsBeforeQueueRemoval :: Maybe Text,
+    gateInfoPickupZoneArrivalTimeoutInSec :: Maybe Text,
+    gateInfoPickupRequestResponseTimeoutInSec :: Maybe Text,
+    gateInfoMaxDriverThreshold :: Maybe Text,
+    gateInfoMinDriverThresholdsJson :: Maybe Text,
+    gateInfoMaxDriverThresholdsJson :: Maybe Text,
+    gateInfoDemandThresholdsJson :: Maybe Text,
+    gateInfoNavigationInstructionsJson :: Maybe Text,
+    gateInfoId :: Maybe Text,
+    gateInfoNotificationActiveTillInSec :: Maybe Text,
+    enforceTollRoute :: Maybe Text,
+    render :: Maybe Text,
+    fetchAllGateFareProduct :: Maybe Text,
+    enableQueueFilter :: Maybe Text,
+    paymentModes :: Maybe Text,
+    fareSettlementType :: Maybe Text
+  }
+  deriving (Show)
+
+instance FromNamedRecord SpecialLocationCSVRow where
+  -- do-notation (not a single <$>/<*> chain) so GHC typechecks the fields linearly
+  -- instead of quadratically; the long applicative chain made this module take >15 min.
+  parseNamedRecord r = do
+    city <- r .: "city"
+    locationName <- r .: "location_name"
+    enabled <- r .: "enabled"
+    locationFileName <- r .: "location_file_name"
+    locationType <- r .: "location_type"
+    category <- r .: "category"
+    gateInfoName <- r .: "gate_info_name"
+    gateInfoFileName <- r .: "gate_info_file_name"
+    gateInfoLat <- r .: "gate_info_lat"
+    gateInfoLon <- r .: "gate_info_lon"
+    gateInfoDefaultDriverExtra <- r .: "gate_info_default_driver_extra"
+    gateInfoAddress <- r .: "gate_info_address"
+    gateInfoHasGeom <- r .: "gate_info_has_geom"
+    gateInfoCanQueueUpOnGate <- r .: "gate_info_can_queue_up_on_gate"
+    gateInfoType <- r .: "gate_info_type"
+    gateInfoGateTags <- r .: "gate_info_tags"
+    gateInfoWalkDescription <- r .: "gate_info_walk_description"
+    priority <- r .: "priority"
+    pickupPriority <- r .: "pickup_priority"
+    dropPriority <- r .: "drop_priority"
+    specialLocationId <- r .: "special_location_id"
+    isQueueEnabled <- optional (r .: "is_queue_enabled")
+    supportNumber <- optional (r .: "support_number")
+    gateInfoEntryFeeAmount <- optional (r .: "gate_info_entry_fee_amount")
+    gateInfoMinDriverThreshold <- optional (r .: "gate_info_min_driver_threshold")
+    gateInfoDemandThreshold <- optional (r .: "gate_info_demand_threshold")
+    gateInfoNotificationCooldownInSec <- optional (r .: "gate_info_notification_cooldown_in_sec")
+    gateInfoMaxRideSkipsBeforeQueueRemoval <- optional (r .: "gate_info_max_ride_skips_before_queue_removal")
+    gateInfoPickupZoneArrivalTimeoutInSec <- optional (r .: "gate_info_pickup_zone_arrival_timeout_in_sec")
+    gateInfoPickupRequestResponseTimeoutInSec <- optional (r .: "gate_info_pickup_request_response_timeout_in_sec")
+    gateInfoMaxDriverThreshold <- optional (r .: "gate_info_max_driver_threshold")
+    gateInfoMinDriverThresholdsJson <- optional (r .: "gate_info_min_driver_thresholds")
+    gateInfoMaxDriverThresholdsJson <- optional (r .: "gate_info_max_driver_thresholds")
+    gateInfoDemandThresholdsJson <- optional (r .: "gate_info_demand_thresholds")
+    gateInfoNavigationInstructionsJson <- optional (r .: "gate_info_navigation_instructions")
+    gateInfoId <- optional (r .: "gate_info_id")
+    gateInfoNotificationActiveTillInSec <- optional (r .: "gate_info_notification_active_till_in_sec")
+    enforceTollRoute <- optional (r .: "enforce_toll_route")
+    render <- optional (r .: "render")
+    fetchAllGateFareProduct <- optional (r .: "fetch_all_gate_fare_product")
+    enableQueueFilter <- optional (r .: "enable_queue_filter")
+    paymentModes <- optional (r .: "payment_modes")
+    fareSettlementType <- optional (r .: "fare_settlement_type")
+    pure SpecialLocationCSVRow {..}
+
+postMerchantConfigSpecialLocationUpsert :: ShortId DM.Merchant -> Context.City -> Common.UpsertSpecialLocationCsvReq -> Flow Common.APISuccessWithUnprocessedEntities
+postMerchantConfigSpecialLocationUpsert merchantShortId opCity req = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCity <- CQMOC.findByMerchantIdAndCity merchant.id opCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show opCity)
+  flatSpecialLocationAndGateInfo <- readCsv req.file req.locationGeoms req.gateGeoms merchantOpCity
+  let groupedSpecialLocationAndGateInfo = groupSpecialLocationAndGates flatSpecialLocationAndGateInfo
+  unprocessedEntities <-
+    foldlM
+      ( \unprocessedEntities specialLocationAndGates -> do
+          withTryCatch
+            "processSpecialLocationAndGatesGroup"
+            (processSpecialLocationAndGatesGroup merchantOpCity specialLocationAndGates)
+            >>= \case
+              Left err -> return $ unprocessedEntities <> ["Unable to add special location : " <> show err]
+              Right _ -> return unprocessedEntities
+      )
+      []
+      groupedSpecialLocationAndGateInfo
+  -- If upsertInDriverApp from multipart form is true, call the driver app with CSV data
+  driverAppUnprocessed <-
+    if fromMaybe False req.upsertInDriverApp
+      then do
+        result <- withTryCatch "callDriverAppSpecialLocationUpsert" $ do
+          CallBPPInternal.upsertSpecialLocation merchant opCity req.file req.locationGeoms req.gateGeoms
+        case result of
+          Left err -> return ["Driver app upsert failed: " <> show err]
+          Right resp -> return resp.unprocessedEntities
+      else return []
+  return $ Common.APISuccessWithUnprocessedEntities (unprocessedEntities <> driverAppUnprocessed)
+  where
+    readCsv csvFile locationGeomFiles gateGeomFiles merchantOpCity = do
+      csvData <- L.runIO $ BS.readFile csvFile
+      case (decodeByName $ LBS.fromStrict csvData :: Either String (Header, V.Vector SpecialLocationCSVRow)) of
+        Left err -> throwError (InvalidRequest $ show err)
+        Right (_, v) -> V.imapM (makeSpecialLocation locationGeomFiles gateGeomFiles merchantOpCity) v >>= (pure . V.toList)
+
+    makeSpecialLocation :: [(Text, FilePath)] -> [(Text, FilePath)] -> DMOC.MerchantOperatingCity -> Int -> SpecialLocationCSVRow -> Flow (Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Maybe Text)
+    makeSpecialLocation locationGeomFiles gateGeomFiles merchantOpCity idx row = do
+      now <- getCurrentTime
+      city :: Context.City <- readCSVField idx row.city "City"
+      locationName :: Text <- cleanCSVField idx row.locationName "Location Name"
+      locationFileName :: Text <- cleanCSVField idx row.locationFileName "Location File Name"
+      (_, locationGeomFile) <- find (\(geomFileName, _) -> locationFileName == geomFileName) locationGeomFiles & fromMaybeM (InvalidRequest $ "KML file missing for location: " <> locationName)
+      locationGeom <- getGeomFromKML locationGeomFile >>= fromMaybeM (InvalidRequest $ "Not able to convert the given KML to PostGis geom for location: " <> locationName)
+      locationGeomGeoJson <- GGeom.getGeoJsonFromKML locationGeomFile >>= fromMaybeM (InvalidRequest $ "Not able to convert the given KML to GeoJSON for location: " <> locationName)
+      category :: Text <- cleanCSVField idx row.category "Category"
+      let locationType :: Maybe SL.SpecialLocationType = readMaybeCSVField idx row.locationType "Location Type"
+          priority :: Maybe Int = readMaybeCSVField idx row.priority "Priority"
+          mbSpecialLocationId :: Maybe Text = cleanField row.specialLocationId
+          mbIsQueueEnabled :: Maybe Bool = readMaybeCSVField idx (fromMaybe "" row.isQueueEnabled) "Is Queue Enabled"
+          supportNumber :: Maybe Text = cleanMaybeCSVField idx (fromMaybe "" row.supportNumber) "Support Number"
+          mbRender :: Maybe DSL.RenderType = readMaybeCSVField idx (fromMaybe "" row.render) "Render"
+          mbFareSettlementType :: Maybe DSL.FareSettlementType = readMaybeCSVField idx (fromMaybe "" row.fareSettlementType) "Payment Collection Mode"
+          mbFetchAllGateFareProduct :: Maybe Bool = readMaybeCSVField idx (fromMaybe "" row.fetchAllGateFareProduct) "Fetch All Gate Fare Product"
+      enabled :: Bool <- readCSVField idx row.enabled "Enabled"
+      resolvedPaymentModes <- resolvePaymentModes idx row.paymentModes
+      gateInfoId <- maybe generateGUID (pure . Id) (cleanField =<< row.gateInfoId)
+      gateInfoName :: Text <- cleanCSVField idx row.gateInfoName "Gate Info (name)"
+      gateInfoLat :: Double <- readCSVField idx row.gateInfoLat "Gate Info (latitude)"
+      gateInfoLon :: Double <- readCSVField idx row.gateInfoLon "Gate Info (longitude)"
+      let gateInfoDefaultDriverExtra :: Maybe Int = readMaybeCSVField idx row.gateInfoDefaultDriverExtra "Gate Info (default_driver_extra)"
+          gateInfoAddress :: Maybe Text = cleanMaybeCSVField idx row.gateInfoAddress "Gate Info (address)"
+          gateInfoGateTags :: Maybe [Text] = parseGateTags row.gateInfoGateTags
+          gateInfoWalkDescription :: Maybe Text = cleanMaybeCSVField idx row.gateInfoWalkDescription "Gate Info (walk_description)"
+      gateInfoType :: DGI.GateType <- readCSVField idx row.gateInfoType "Gate Info (type)"
+      gateInfoHasGeom :: Bool <- readCSVField idx row.gateInfoHasGeom "Gate Info (geom)"
+      gateInfoCanQueueUpOnGate :: Bool <- readCSVField idx row.gateInfoCanQueueUpOnGate "Gate Info (can_queue_up_on_gate)"
+      let mbEnforceTollRoute :: Maybe Bool = readMaybeCSVField idx (fromMaybe "" row.enforceTollRoute) "Enforce Toll Route"
+      gateInfoGeom <- do
+        if gateInfoHasGeom
+          then do
+            gateInfoFileName :: Text <- cleanCSVField idx row.gateInfoFileName "Gate Info (file_name)"
+            (_, gateInfoGeomFile) <- find (\(gateFileName, _) -> gateInfoFileName == gateFileName) gateGeomFiles & fromMaybeM (InvalidRequest $ "KML file missing for gateInfo: " <> gateInfoName)
+            gateGeom <- GGeom.getGeoJsonFromKML gateInfoGeomFile >>= fromMaybeM (InvalidRequest $ "Not able to convert the given KML to GeoJSON for gateInfo: " <> gateInfoName)
+            return $ Just gateGeom
+          else return Nothing
+      let specialLocation =
+            DSL.SpecialLocation
+              { id = Id locationName,
+                enabled = enabled,
+                isOpenMarketEnabled = True,
+                locationName = locationName,
+                category = category,
+                merchantId = Just (cast merchantOpCity.merchantId),
+                merchantOperatingCityId = Just (cast merchantOpCity.id),
+                linkedLocationsIds = [],
+                gates = [],
+                locationType = fromMaybe SL.Open locationType,
+                geom = Just $ T.pack locationGeom,
+                geomGeoJson = Just locationGeomGeoJson,
+                priority = fromMaybe 0 priority,
+                createdAt = now,
+                updatedAt = now,
+                isQueueEnabled = mbIsQueueEnabled,
+                enforceTollRoute = mbEnforceTollRoute,
+                render = mbRender,
+                fetchAllGateFareProduct = mbFetchAllGateFareProduct,
+                supportNumber = supportNumber,
+                paymentModes = resolvedPaymentModes,
+                fareSettlementType = mbFareSettlementType,
+                boothSpecificFleet = Nothing
+              }
+          gateInfo =
+            DGI.GateInfo
+              { id = gateInfoId,
+                point = LatLong {lat = gateInfoLat, lon = gateInfoLon},
+                specialLocationId = Id locationName,
+                defaultDriverExtra = gateInfoDefaultDriverExtra,
+                name = gateInfoName,
+                address = gateInfoAddress,
+                geomGeoJson = gateInfoGeom,
+                canQueueUpOnGate = gateInfoCanQueueUpOnGate,
+                gateType = gateInfoType,
+                merchantId = Just (cast merchantOpCity.merchantId),
+                merchantOperatingCityId = Just (cast merchantOpCity.id),
+                createdAt = now,
+                updatedAt = now,
+                gateTags = gateInfoGateTags,
+                walkDescription = gateInfoWalkDescription,
+                entryFeeAmount = row.gateInfoEntryFeeAmount >>= \v -> readMaybeCSVField idx v "Gate Info (entry_fee_amount)",
+                minDriverThresholds = parseJsonMap row.gateInfoMinDriverThresholdsJson,
+                maxDriverThresholds = parseJsonMap row.gateInfoMaxDriverThresholdsJson,
+                demandThresholds = parseJsonMap row.gateInfoDemandThresholdsJson,
+                navigationInstructions = parseJsonTextMap row.gateInfoNavigationInstructionsJson,
+                defaultMinDriverThreshold = readMaybeCSVField idx (fromMaybe "" row.gateInfoMinDriverThreshold) "Gate Info (min_driver_threshold)",
+                defaultMaxDriverThreshold = readMaybeCSVField idx (fromMaybe "" row.gateInfoMaxDriverThreshold) "Gate Info (max_driver_threshold)",
+                defaultDemandThreshold = readMaybeCSVField idx (fromMaybe "" row.gateInfoDemandThreshold) "Gate Info (demand_threshold)",
+                notificationCooldownInSec = readMaybeCSVField idx (fromMaybe "" row.gateInfoNotificationCooldownInSec) "Gate Info (notification_cooldown_in_sec)",
+                maxRideSkipsBeforeQueueRemoval = readMaybeCSVField idx (fromMaybe "" row.gateInfoMaxRideSkipsBeforeQueueRemoval) "Gate Info (max_ride_skips_before_queue_removal)",
+                pickupZoneArrivalTimeoutInSec = readMaybeCSVField idx (fromMaybe "" row.gateInfoPickupZoneArrivalTimeoutInSec) "Gate Info (pickup_zone_arrival_timeout_in_sec)",
+                pickupRequestResponseTimeoutInSec = readMaybeCSVField idx (fromMaybe "" row.gateInfoPickupRequestResponseTimeoutInSec) "Gate Info (pickup_request_response_timeout_in_sec)",
+                notificationActiveTillInSec = readMaybeCSVField idx (fromMaybe "" row.gateInfoNotificationActiveTillInSec) "Gate Info (notification_active_till_in_sec)",
+                enableQueueFilter = parseBoolMap row.enableQueueFilter
+              }
+      return (city, locationName, (specialLocation, gateInfo), mbSpecialLocationId)
+
+    groupSpecialLocationAndGates :: [(Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Maybe Text)] -> [[(Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Maybe Text)]]
+    groupSpecialLocationAndGates = DL.groupBy (\a b -> fst2 a == fst2 b) . DL.sortBy (compare `on` fst2)
+      where
+        fst2 (c, l, _, _) = (c, l)
+
+    runValidationOnSpecialLocationAndGatesGroup :: DMOC.MerchantOperatingCity -> [(Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Maybe Text)] -> Flow ()
+    runValidationOnSpecialLocationAndGatesGroup _ [] = throwError $ InvalidRequest "Empty Special Location Group"
+    runValidationOnSpecialLocationAndGatesGroup _merchantOpCity (x : _) = do
+      let (city, _locationName, (_specialLocation, _), _) = x
+      if city /= opCity
+        then throwError $ InvalidRequest ("Can't process special location for different city: " <> show city <> ", please login with this city in dashboard")
+        else do
+          -- TODO :: Add Validation for Overlapping Geometries
+          return ()
+
+    processSpecialLocationAndGatesGroup :: DMOC.MerchantOperatingCity -> [(Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Maybe Text)] -> Flow ()
+    processSpecialLocationAndGatesGroup _ [] = throwError $ InvalidRequest "Empty Special Location Group"
+    processSpecialLocationAndGatesGroup merchantOpCity specialLocationAndGates@(x : _) = do
+      void $ runValidationOnSpecialLocationAndGatesGroup merchantOpCity specialLocationAndGates
+      let (_city, locationName, (specialLocation, _), mbSpecialLocationIdFromCsv) = x
+      mbExisting <-
+        case mbSpecialLocationIdFromCsv of
+          Just splId -> QSL.findById (Id splId)
+          Nothing -> QSL.findByLocationNameAndCity locationName merchantOpCity.id.getId |<|>| QSL.findByLocationName locationName
+      existingGatesByName <- case mbExisting of
+        Just spl -> do
+          gates <- QGI.findAllGatesBySpecialLocationIdWithoutGeoJson spl.id
+          return $ Map.fromList [(g.name, g) | g <- gates]
+        Nothing -> return Map.empty
+      existingGatesById <-
+        fmap (Map.fromList . catMaybes) $
+          forM specialLocationAndGates $ \(_, _, (_, gi), _) -> do
+            mbGate <- QGI.findById gi.id
+            pure $ (gi.id,) <$> mbGate
+      whenJust mbExisting $ \spl -> do
+        void $ runTransaction $ QSL.deleteById spl.id
+        QGI.deleteAll spl.id
+      specialLocationId <- case mbSpecialLocationIdFromCsv of
+        Just splIdFromCsv -> return $ Id splIdFromCsv
+        Nothing -> maybe generateGUID (return . (.id)) mbExisting
+      let mergedSL = mergeSpecialLocationWithExisting specialLocation mbExisting
+      void $ runTransaction $ QSLG.create $ mergedSL {DSL.id = specialLocationId}
+      mapM_
+        ( \(_, _, (_, gateInfo), _) -> do
+            let mbExistingGate =
+                  Map.lookup gateInfo.id existingGatesById
+                    <|> Map.lookup gateInfo.name existingGatesByName
+                merged = mergeGateInfoWithExisting gateInfo mbExistingGate
+            QGI.create $ (merged :: DGI.GateInfo) {DGI.specialLocationId = specialLocationId}
+        )
+        specialLocationAndGates
+      QSL.clearSpecialZoneInMemCache
+
+    mergeSpecialLocationWithExisting :: DSL.SpecialLocation -> Maybe DSL.SpecialLocation -> DSL.SpecialLocation
+    mergeSpecialLocationWithExisting new Nothing =
+      new{DSL.paymentModes = new.paymentModes <|> Just SL.defaultPaymentModes}
+    mergeSpecialLocationWithExisting new (Just old) =
+      new{DSL.isQueueEnabled = new.isQueueEnabled <|> old.isQueueEnabled,
+          DSL.paymentModes = new.paymentModes <|> old.paymentModes
+         }
+
+    mergeGateInfoWithExisting :: DGI.GateInfo -> Maybe DGI.GateInfo -> DGI.GateInfo
+    mergeGateInfoWithExisting new Nothing = new
+    mergeGateInfoWithExisting new (Just old) =
+      new{DGI.entryFeeAmount = new.entryFeeAmount <|> old.entryFeeAmount,
+          DGI.minDriverThresholds = new.minDriverThresholds <|> old.minDriverThresholds,
+          DGI.maxDriverThresholds = new.maxDriverThresholds <|> old.maxDriverThresholds,
+          DGI.demandThresholds = new.demandThresholds <|> old.demandThresholds,
+          DGI.navigationInstructions = new.navigationInstructions <|> old.navigationInstructions,
+          DGI.defaultMinDriverThreshold = new.defaultMinDriverThreshold <|> old.defaultMinDriverThreshold,
+          DGI.defaultMaxDriverThreshold = new.defaultMaxDriverThreshold <|> old.defaultMaxDriverThreshold,
+          DGI.defaultDemandThreshold = new.defaultDemandThreshold <|> old.defaultDemandThreshold,
+          DGI.notificationCooldownInSec = new.notificationCooldownInSec <|> old.notificationCooldownInSec,
+          DGI.maxRideSkipsBeforeQueueRemoval = new.maxRideSkipsBeforeQueueRemoval <|> old.maxRideSkipsBeforeQueueRemoval,
+          DGI.pickupZoneArrivalTimeoutInSec = new.pickupZoneArrivalTimeoutInSec <|> old.pickupZoneArrivalTimeoutInSec,
+          DGI.pickupRequestResponseTimeoutInSec = new.pickupRequestResponseTimeoutInSec <|> old.pickupRequestResponseTimeoutInSec,
+          -- Preserve operator-configured active-till on CSV re-upserts when not in the file.
+          DGI.notificationActiveTillInSec = new.notificationActiveTillInSec <|> old.notificationActiveTillInSec,
+          DGI.enableQueueFilter = new.enableQueueFilter <|> old.enableQueueFilter
+         }
+
+postMerchantConfigTollUpsert :: ShortId DM.Merchant -> Context.City -> Common.UpsertTollCsvReq -> Flow Common.APISuccessWithUnprocessedEntities
+postMerchantConfigTollUpsert merchantShortId opCity req = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCity <- CQMOC.findByMerchantIdAndCity merchant.id opCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show opCity)
+  unprocessedEntities <-
+    withTryCatch "upsertTollsFromCsv" (TU.upsertTollsFromCsv opCity merchantOpCity req.file) >>= \case
+      Left err -> pure ["Unable to add toll: " <> show err]
+      Right (Common.APISuccessWithUnprocessedEntities riderUnprocessed) -> pure riderUnprocessed
+  driverAppUnprocessed <-
+    if fromMaybe False req.upsertInDriverApp
+      then do
+        result <- withTryCatch "callDriverAppTollUpsert" $ CallBPPInternal.upsertTollsFromCsv merchant opCity req.file
+        case result of
+          Left err -> pure ["Driver app toll upsert failed: " <> show err]
+          Right resp -> pure resp.unprocessedEntities
+      else pure []
+  pure $ Common.APISuccessWithUnprocessedEntities (unprocessedEntities <> driverAppUnprocessed)
+
+postMerchantTollUpsert :: ShortId DM.Merchant -> Context.City -> Maybe (Id Toll.Toll) -> Common.UpsertTollReq -> Flow APISuccess
+postMerchantTollUpsert merchantShortId opCity mbTollId request = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCity <- CQMOC.findByMerchantIdAndCity merchant.id opCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show opCity)
+  mbExisting <- maybe (return Nothing) QToll.findByPrimaryKey mbTollId
+  whenJust mbExisting $ \toll ->
+    when (toll.merchantOperatingCityId /= Just merchantOpCity.id.getId) $
+      throwError $ InvalidRequest "Toll does not belong to this merchant operating city"
+  tollId <- maybe generateGUID (return . (.id)) mbExisting
+  now <- getCurrentTime
+  let toll =
+        mkTollFromUpsertReq
+          request
+          tollId
+          now
+          merchantOpCity.id.getId
+          merchant.id.getId
+          mbExisting
+  void $
+    if isJust mbExisting
+      then QToll.updateByPrimaryKey toll
+      else QToll.create toll
+  invalidateTollCache merchantOpCity.id.getId
+  pure Success
+
+deleteMerchantTollDelete :: ShortId DM.Merchant -> Context.City -> Id Toll.Toll -> Flow APISuccess
+deleteMerchantTollDelete merchantShortId opCity tollId = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCity <- CQMOC.findByMerchantIdAndCity merchant.id opCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show opCity)
+  toll <- QToll.findByPrimaryKey tollId >>= fromMaybeM (InvalidRequest "Toll with given id not found")
+  when (toll.merchantOperatingCityId /= Just merchantOpCity.id.getId) $
+    throwError $ InvalidRequest "Toll does not belong to this merchant operating city"
+  QTollExtra.deleteById tollId
+  invalidateTollCache merchantOpCity.id.getId
+  pure Success
+
+getMerchantConfigTollList :: ShortId DM.Merchant -> Context.City -> Maybe Int -> Maybe Int -> Flow [Common.TollAPIEntity]
+getMerchantConfigTollList merchantShortId opCity mbLimit mbOffset = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCity <- CQMOC.findByMerchantIdAndCity merchant.id opCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show opCity)
+  riderTolls <- CQToll.findAllTollsByMerchantOperatingCity merchantOpCity.id.getId
+  let riderTollEntities = map tollToAPIEntity $ applyPagination mbLimit mbOffset riderTolls
+  mbDriverTolls <- CallBPPInternal.getTollList merchant opCity mbLimit mbOffset
+  pure $ riderTollEntities <> fromMaybe [] mbDriverTolls
+
+getMerchantConfigSpecialLocationList :: ShortId DM.Merchant -> Context.City -> Maybe Int -> Maybe Int -> Maybe SL.SpecialLocationType -> Maybe [SL.SpecialLocationType] -> Flow [Common.SpecialLocationWithPlatform]
+getMerchantConfigSpecialLocationList merchantShortId opCity mbLimit mbOffset mbSpecialLocationType mbSpecialLocationTypes = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCity <- CQMOC.findByMerchantIdAndCity merchant.id opCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show opCity)
+
+  let finalSpecialLocationTypes = case mbSpecialLocationType of
+        Just slType -> Just [slType]
+        Nothing -> mbSpecialLocationTypes
+  -- Fetch rider special locations
+  riderLocations <- QSL.findAllSpecialLocationsWithGeoJSON merchantOpCity.id.getId mbLimit mbOffset finalSpecialLocationTypes
+  let riderLocationsWithPlatform = map (\loc -> Common.SpecialLocationWithPlatform {location = loc, platform = Common.Rider}) riderLocations
+
+  -- Fetch driver special locations via internal API
+  mbDriverLocations <- CallBPPInternal.getSpecialLocationList merchant opCity mbLimit mbOffset finalSpecialLocationTypes
+  let driverLocationsWithPlatform = maybe [] (map (\loc -> Common.SpecialLocationWithPlatform {location = loc, platform = Common.Driver})) mbDriverLocations
+
+  return $ riderLocationsWithPlatform <> driverLocationsWithPlatform
+
+postMerchantSchedulerTrigger :: ShortId DM.Merchant -> Context.City -> Common.SchedulerTriggerReq -> Flow APISuccess
+postMerchantSchedulerTrigger merchantShortId opCity req = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCity <- CQMOC.findByMerchantIdAndCity merchant.id opCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show opCity)
+  now <- getCurrentTime
+  case req.scheduledAt of
+    Just utcTime -> do
+      let diffTimeS = diffUTCTime utcTime now
+      triggerScheduler req.jobName req.jobData diffTimeS merchant merchantOpCity
+    _ -> throwError $ InternalError "invalid scheduled at time"
+  where
+    triggerScheduler :: Maybe Common.JobName -> Text -> NominalDiffTime -> DM.Merchant -> DMOC.MerchantOperatingCity -> Flow APISuccess
+    triggerScheduler jobName _ diffTimeS merchant merchantOpCity = do
+      case jobName of
+        Just Common.NyRegularMasterTrigger -> do
+          let jobData' = Just ()
+          case jobData' of
+            Just jobData -> do
+              let mbMerchantOpCityId = Just merchantOpCity.id
+                  merchantId = Just merchant.id
+              createJobIn @_ @'NyRegularMaster merchantId mbMerchantOpCityId diffTimeS jobData
+              pure Success
+            Nothing -> throwError $ InternalError "invalid job data"
+        Just Common.PartnerInvoiceDataExportTrigger -> do
+          let jobData =
+                PartnerInvoiceDataExportJobData
+                  { merchantId = merchant.id,
+                    merchantOperatingCityId = merchantOpCity.id,
+                    scheduleItself = False
+                  }
+          createJobIn @_ @'PartnerInvoiceDataExport (Just merchant.id) (Just merchantOpCity.id) diffTimeS jobData
+          pure Success
+        Just Common.DailyPassStatusUpdateTrigger -> do
+          let jobData =
+                DailyPassStatusUpdateJobData
+                  { merchantId = merchant.id,
+                    merchantOperatingCityId = merchantOpCity.id,
+                    autoSchedule = True
+                  }
+          createJobIn @_ @'DailyPassStatusUpdate (Just merchant.id) (Just merchantOpCity.id) diffTimeS jobData
+          pure Success
+        Just Common.PassExpiryReminderMasterTrigger -> do
+          let jobData = PassExpiryReminderMasterJobData {cursor = Just 0}
+          createJobIn @_ @'PassExpiryReminderMaster (Just merchant.id) (Just merchantOpCity.id) diffTimeS jobData
+          pure Success
+        Nothing -> throwError $ InternalError "invalid job name"
+
+-- create the EP here
+
+postMerchantConfigOperatingCityWhiteList :: ShortId DM.Merchant -> Context.City -> Common.WhiteListOperatingCityReq -> Flow Common.WhiteListOperatingCityRes
+postMerchantConfigOperatingCityWhiteList _ _ req = do
+  let merchantId = req.bapMerchantId
+      merchantOperatingCityId = req.bapMerchantOperatingCityId
+      bppSubDomain = req.bppSubscriberDomain
+  now <- getCurrentTime
+  whiteListOrgId <- generateGUID
+  let whiteListOrgReq =
+        WLO.WhiteListOrg
+          { domain = bppSubDomain,
+            id = whiteListOrgId,
+            merchantId = Id merchantId,
+            merchantOperatingCityId = Id merchantOperatingCityId,
+            subscriberId = req.bppSubscriberId,
+            createdAt = now,
+            updatedAt = now
+          }
+  existingWhiteListOrg <- QWLO.findBySubscriberIdDomainMerchantIdAndMerchantOperatingCityId req.bppSubscriberId bppSubDomain (Id merchantId) (Id merchantOperatingCityId)
+  when (isNothing existingWhiteListOrg) $ QWLO.create whiteListOrgReq
+
+  let bppSubscriberId = req.bppSubscriberId.getShortId
+  QValueAddNP.findByPrimaryKey bppSubscriberId >>= \case
+    Just existing ->
+      unless existing.enabled $
+        QValueAddNP.updateByPrimaryKey existing {DValueAddNP.enabled = True, DValueAddNP.updatedAt = now}
+    Nothing ->
+      QValueAddNP.create
+        DValueAddNP.ValueAddNP
+          { enabled = True,
+            subscriberId = bppSubscriberId,
+            createdAt = now,
+            updatedAt = now
+          }
+
+  pure $
+    Common.WhiteListOperatingCityRes
+      { whiteListSuccess = True,
+        whiteListMessage = "Success",
+        whiteListError = Nothing
+      }
+
+getMerchantConfigGeometryList :: ShortId DM.Merchant -> Context.City -> Maybe Int -> Maybe Int -> Maybe Bool -> Flow Common.GeometryResp
+getMerchantConfigGeometryList merchantShortId opCity mbLimit mbOffset mbAllCities = do
+  merchant <- findMerchantByShortId merchantShortId
+  void $ CQMOC.findByMerchantIdAndCity merchant.id opCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show opCity)
+
+  -- Fetch rider geometries (for all cities if allCities=true)
+  riderGeoms <- case mbAllCities of
+    Just True -> QGEO.findAllGeometriesForMerchant merchant.id mbLimit mbOffset
+    _ -> QGEO.findAllGeometries opCity mbLimit mbOffset
+  let riderResponse = map (toResponseFromGeom Common.Rider) riderGeoms
+
+  -- Fetch driver geometries via internal API
+  mbDriverGeoms <- CallBPPInternal.getGeometryList merchant opCity mbLimit mbOffset mbAllCities
+  let driverResponse = maybe [] (map (toResponseFromInternal Common.Driver)) mbDriverGeoms
+
+  return $ riderResponse <> driverResponse
+  where
+    toResponseFromGeom :: Common.Platform -> DGEO.Geometry -> Common.GeometryAPIEntity
+    toResponseFromGeom sourcePlatform geom =
+      Common.GeometryAPIEntity
+        { region = geom.region,
+          state = geom.state,
+          city = geom.city,
+          geom = geom.geom,
+          platform = sourcePlatform
+        }
+
+    toResponseFromInternal :: Common.Platform -> CallBPPInternal.GeometryAPIEntity -> Common.GeometryAPIEntity
+    toResponseFromInternal sourcePlatform geom =
+      Common.GeometryAPIEntity
+        { region = geom.region,
+          state = geom.state,
+          city = geom.city,
+          geom = geom.geom,
+          platform = sourcePlatform
+        }
+
+putMerchantConfigGeometryUpdate :: ShortId DM.Merchant -> Context.City -> Common.UpdateGeometryReq -> Flow APISuccess
+putMerchantConfigGeometryUpdate merchantShortId opCity req = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCity <- CQMOC.findByMerchantIdAndCity merchant.id opCity >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show opCity)
+  let cityParam = merchantOpCity.city
+      stateParam = merchantOpCity.state
+  newGeom <- getGeomFromKML req.file >>= fromMaybeM (InvalidRequest "Not able to convert the given KML to PostGis geom")
+  newGeomGeoJson <- GGeom.getGeoJsonFromKML req.file >>= fromMaybeM (InvalidRequest "Not able to convert the given KML to GeoJSON")
+
+  -- Update rider geometry
+  QGEO.updateGeometry cityParam stateParam req.region (T.pack newGeom) (Just newGeomGeoJson)
+
+  -- If updateInDriver from multipart form is true, also update driver geometry via internal API
+  when (fromMaybe False req.updateInDriver) $ do
+    void $ CallBPPInternal.updateGeometry merchant opCity req.region (T.pack newGeom) (Just newGeomGeoJson)
+
+  return Success
+
+---------------------------------------------------------------------
+getMerchantRiderConfigEstimatesOrder ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  Flow Common.RiderConfigEstimatesOrderRes
+getMerchantRiderConfigEstimatesOrder merchantShortId city = do
+  merchantOperatingCity <-
+    CQMOC.findByMerchantShortIdAndCity merchantShortId city
+      >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city)
+
+  riderConfig <-
+    getConfig (RiderConfigDimensions {merchantOperatingCityId = merchantOperatingCity.id.getId}) (Just (QRC.findByMerchantOperatingCityId merchantOperatingCity.id))
+      >>= fromMaybeM (InvalidRequest "RiderConfig not found for this merchant operating city")
+
+  pure $
+    Common.RiderConfigEstimatesOrderRes
+      { userServiceTierOrderConfig = map toCommonVehicleServiceTierOrderConfig riderConfig.userServiceTierOrderConfig,
+        defaultServiceTierOrderConfig = riderConfig.defaultServiceTierOrderConfig,
+        noOfRideRequestsConfig = riderConfig.noOfRideRequestsConfig
+      }
+
+postMerchantRiderConfigEstimatesOrderUpdate ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  Common.UpdateRiderConfigEstimatesOrderReq ->
+  Flow APISuccess
+postMerchantRiderConfigEstimatesOrderUpdate merchantShortId city req = do
+  merchantOperatingCity <-
+    CQMOC.findByMerchantShortIdAndCity merchantShortId city
+      >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city)
+
+  riderConfig <-
+    getConfig (RiderConfigDimensions {merchantOperatingCityId = merchantOperatingCity.id.getId}) (Just (QRC.findByMerchantOperatingCityId merchantOperatingCity.id))
+      >>= fromMaybeM (InvalidRequest "RiderConfig not found for this merchant operating city")
+
+  let updatedConfig =
+        riderConfig
+          { DRC.userServiceTierOrderConfig = maybe riderConfig.userServiceTierOrderConfig (map toDomainVehicleServiceTierOrderConfig) req.userServiceTierOrderConfig,
+            DRC.defaultServiceTierOrderConfig = fromMaybe riderConfig.defaultServiceTierOrderConfig req.defaultServiceTierOrderConfig,
+            DRC.noOfRideRequestsConfig = fromMaybe riderConfig.noOfRideRequestsConfig req.noOfRideRequestsConfig
+          }
+
+  QRC.updateByPrimaryKey updatedConfig
+  QRC.clearCache merchantOperatingCity.id
+  invalidateConfigInMem LYT.RiderConfig
+
+  logTagInfo "dashboard -> postMerchantRiderConfigEstimatesOrderUpdate : " (show merchantOperatingCity.id)
+  pure Success
+
+-- Type conversion helpers for VehicleServiceTierOrderConfig
+toCommonVehicleServiceTierOrderConfig :: DRC.VehicleServiceTierOrderConfig -> Common.VehicleServiceTierOrderConfig
+toCommonVehicleServiceTierOrderConfig domainConfig =
+  Common.VehicleServiceTierOrderConfig
+    { orderArray = domainConfig.orderArray,
+      vehicle = domainConfig.vehicle
+    }
+
+toDomainVehicleServiceTierOrderConfig :: Common.VehicleServiceTierOrderConfig -> DRC.VehicleServiceTierOrderConfig
+toDomainVehicleServiceTierOrderConfig commonConfig =
+  DRC.VehicleServiceTierOrderConfig
+    { orderArray = commonConfig.orderArray,
+      vehicle = commonConfig.vehicle
+    }
+
+---------------------------------------------------------------------
+postMerchantConfigDebugLogUpdate ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  DebugLog.SetJsonLogicDebugReq ->
+  Flow APISuccess
+postMerchantConfigDebugLogUpdate merchantShortId city req = do
+  _merchant <- findMerchantByShortId merchantShortId
+  merchantOperatingCity <- CQMOC.findByMerchantShortIdAndCity merchantShortId city >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city)
+  DebugLog.setJsonLogicDebugFlags (cast merchantOperatingCity.id) req
+  pure Success
+
+getMerchantMerchantMessageCatalog ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  Flow Common.RiderMerchantMessageCatalogResp
+getMerchantMerchantMessageCatalog _merchantShortId _city = do
+  let values = map show [minBound .. maxBound :: DMM.MessageKey]
+  pure $ Common.RiderMerchantMessageCatalogResp {values}
+
+postMerchantMerchantMessageUpsert ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  Common.UpsertRiderMerchantMessageReq ->
+  Flow APISuccess
+postMerchantMerchantMessageUpsert merchantShortId city req = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCity <- CQMOC.findByMerchantShortIdAndCity merchantShortId city >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city)
+  messageKey <- readMaybe (T.unpack req.messageKey) & fromMaybeM (InvalidRequest $ "Invalid messageKey: " <> req.messageKey)
+  mbExisting <- CQMM.findByMerchantOperatingCityIdAndMessageKey merchantOpCity.id messageKey Nothing
+  now <- getCurrentTime
+  case mbExisting of
+    Nothing -> do
+      parsedJsonData <-
+        case req.jsonData of
+          Nothing -> pure def
+          Just v -> DAT.parseMaybe JSON.parseJSON v & fromMaybeM (InvalidRequest "Invalid jsonData payload")
+      let merchantMessage =
+            DMM.MerchantMessage
+              { merchantId = merchant.id,
+                merchantOperatingCityId = merchantOpCity.id,
+                messageKey = messageKey,
+                message = req.message,
+                templateId = req.templateId,
+                containsUrlButton = req.containsUrlButton,
+                jsonData = parsedJsonData,
+                messageType = req.messageType,
+                senderHeader = req.senderHeader,
+                createdAt = now,
+                updatedAt = now
+              }
+      QMM.create merchantMessage
+      CQMM.clearCache merchantOpCity.id messageKey
+    Just existing -> do
+      parsedJsonData <-
+        case req.jsonData of
+          Nothing -> pure existing.jsonData
+          Just v -> DAT.parseMaybe JSON.parseJSON v & fromMaybeM (InvalidRequest "Invalid jsonData payload")
+      let updated =
+            existing
+              { DMM.message = req.message,
+                DMM.templateId = req.templateId,
+                DMM.containsUrlButton = req.containsUrlButton,
+                DMM.jsonData = parsedJsonData,
+                DMM.messageType = req.messageType,
+                DMM.senderHeader = req.senderHeader,
+                DMM.updatedAt = now
+              }
+      QMM.updateByPrimaryKey updated
+      CQMM.clearCache merchantOpCity.id messageKey
+  pure Success
+
+deleteMerchantMerchantMessage ::
+  ShortId DM.Merchant ->
+  Context.City ->
+  Text ->
+  Flow APISuccess
+deleteMerchantMerchantMessage merchantShortId city messageKeyText = do
+  merchantOpCity <- CQMOC.findByMerchantShortIdAndCity merchantShortId city >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchantShortId: " <> merchantShortId.getShortId <> " ,city: " <> show city)
+  messageKey <- readMaybe (T.unpack messageKeyText) & fromMaybeM (InvalidRequest $ "Invalid messageKey: " <> messageKeyText)
+  _ <- CQMM.findByMerchantOperatingCityIdAndMessageKey merchantOpCity.id messageKey Nothing >>= fromMaybeM (InvalidRequest $ "MerchantMessage not found for messageKey: " <> show messageKey)
+  QMM.deleteByMerchantOperatingCityIdAndMessageKey merchantOpCity.id messageKey
+  CQMM.clearCache merchantOpCity.id messageKey
+  pure Success

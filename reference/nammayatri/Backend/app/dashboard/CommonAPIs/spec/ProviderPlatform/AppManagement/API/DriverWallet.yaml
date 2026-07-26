@@ -1,0 +1,118 @@
+imports:
+  Driver: Domain.Types.Person
+  WalletBalanceResponse: API.Types.UI.DriverWallet
+  WalletSummaryResponse: API.Types.UI.DriverWallet
+  WalletTransactionHistoryResponse: API.Types.UI.DriverWallet
+  TopUpRequest: API.Types.UI.DriverWallet
+  PayoutHistoryResponse: API.Types.UI.DriverWallet
+  AggregationLevel: API.Types.UI.DriverWallet
+  PlanSubscribeRes: Domain.Action.UI.Plan
+  APISuccess: Kernel.Types.APISuccess
+  PayoutRequestStatus: Lib.Payment.Domain.Types.PayoutRequest
+  HighPrecMoney: Kernel.Types.Common
+
+importPackageOverrides:
+  API.Types.UI.DriverWallet: "dynamic-offer-driver-app"
+  Domain.Action.UI.Plan: "dynamic-offer-driver-app"
+  Domain.Types.Person: "dynamic-offer-driver-app"
+  Lib.Payment.Domain.Types.PayoutRequest: payment
+
+module: DriverWallet
+
+apis:
+  - GET:
+      endpoint: /wallet/{driverId}/balance
+      auth: ApiAuthV2
+      params:
+        driverId: Id Driver
+      response:
+        type: WalletBalanceResponse
+  - GET:
+      endpoint: /wallet/{driverId}/transactions
+      auth: ApiAuthV2
+      params:
+        driverId: Id Driver
+      query:
+        - fromDate: UTCTime
+        - toDate: UTCTime
+        - aggBy: AggregationLevel
+      response:
+        type: WalletSummaryResponse
+  - POST:
+      endpoint: /wallet/{driverId}/payout
+      auth: ApiAuthV2
+      params:
+        driverId: Id Driver
+      response:
+        type: APISuccess
+      helperApi:
+        - POST:
+            endpoint: /wallet/{driverId}/payout
+            auth: ApiAuthV2
+            params:
+              driverId: Id Driver
+            query:
+              - requestorId: Text
+            response:
+              type: APISuccess
+  - POST:
+      endpoint: /wallet/{driverId}/topup
+      auth: ApiAuthV2
+      params:
+        driverId: Id Driver
+      request:
+        type: TopUpRequest
+      response:
+        type: PlanSubscribeRes
+  - POST:
+      endpoint: /wallet/{driverId}/airportCashRecharge
+      auth: ApiAuthV2
+      params:
+        driverId: Id Driver
+      request:
+        type: AirportCashRechargeRequest
+      response:
+        type: APISuccess
+      helperApi:
+        - POST:
+            endpoint: /wallet/{driverId}/airportCashRecharge
+            auth: ApiAuthV2
+            params:
+              driverId: Id Driver
+            query:
+              - requestorId: Text
+            request:
+              type: AirportCashRechargeRequest
+            response:
+              type: APISuccess
+  - GET:
+      endpoint: /wallet/{driverId}/payoutHistory
+      auth: ApiAuthV2
+      params:
+        driverId: Id Driver
+      query:
+        - from: UTCTime
+        - to: UTCTime
+        - status: "[PayoutRequestStatus]"
+        - limit: Int
+        - offset: Int
+      response:
+        type: PayoutHistoryResponse
+  - GET:
+      endpoint: /wallet/{driverId}/transactionHistory
+      auth: ApiAuthV2
+      params:
+        driverId: Id Driver
+      query:
+        - fromDate: UTCTime
+        - toDate: UTCTime
+        - limit: Int
+        - offset: Int
+      response:
+        type: WalletTransactionHistoryResponse
+
+types:
+  AirportCashRechargeRequest:
+    - amount: HighPrecMoney
+    - referenceId: Text
+    - derive: "'HideSecrets"

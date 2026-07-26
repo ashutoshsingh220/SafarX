@@ -1,0 +1,204 @@
+imports:
+  UTCTime: Kernel.Prelude
+  Day: Data.Time.Calendar
+  HighPrecMoney: Kernel.Types.Common
+  Currency: Kernel.Types.Common
+  PayoutStatus: Lib.Payment.Domain.Types.Common
+  Value: Data.Aeson
+  OfferState: Kernel.External.Payment.Interface.Types
+
+Offer:
+  tableName: offer
+  derives: "Generic, Show"
+  excludedFields:
+    - merchantId
+    - merchantOperatingCityId
+  fields:
+    id: Id Offer
+    offerCode: Text
+    offerType: OfferType
+    discountType: DiscountType
+    discountValue: HighPrecMoney
+    maxDiscount: Maybe HighPrecMoney
+    title: Maybe Text
+    description: Maybe Text
+    sponsoredBy: Maybe Text
+    tnc: Maybe Text
+    offerEligibilityJsonLogic: Maybe Value
+    currency: Currency
+    validTill: Maybe UTCTime
+    isActive: Bool
+    merchantId: Text
+    merchantOperatingCityId: Text
+    createdAt: UTCTime
+    updatedAt: UTCTime
+
+  types:
+    OfferType:
+      enum: "DISCOUNT, CASHBACK"
+    DiscountType:
+      enum: "FLAT, PERCENTAGE"
+
+  sqlType:
+    offerEligibilityJsonLogic: json
+
+  constraints:
+    id: PrimaryKey
+    offerCode: SecondaryKey
+
+  extraIndexes:
+    - columns: [merchantId, merchantOperatingCityId, isActive]
+
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
+    findByOfferCode:
+      kvFunction: findOneWithKV
+      where: offerCode
+    findAllActiveByMerchant:
+      kvFunction: findAllWithKV
+      where:
+        and: [merchantId, merchantOperatingCityId, isActive]
+
+  defaultQueryTypeConstraint: "(Lib.Payment.Storage.Beam.BeamFlow.BeamFlow m r)"
+  beamInstance: MakeTableInstancesGenericSchema
+
+OfferStats:
+  tableName: person_offer_stats
+  derives: "Generic, Show, Read, ToJSON, FromJSON"
+  fields:
+    id: Id OfferStats
+    offerId: Id Offer
+    entityId: Text
+    entityType: OfferStatsEntityType
+    offerAppliedCount: Int
+    createdAt: UTCTime
+    updatedAt: UTCTime
+
+  excludedFields:
+    - merchantId
+    - merchantOperatingCityId
+
+  types:
+    OfferStatsEntityType:
+      enum: "Person, StaticPerson, Device, Offer"
+
+  beamFields:
+    entityId:
+      personId: Text
+
+  beamType:
+    entityType: Maybe OfferStatsEntityType
+
+  default:
+    entityType: "'Person'"
+
+  toTType:
+    entityType: Kernel.Prelude.Just|I
+
+  fromTType:
+    entityType: Kernel.Prelude.fromMaybe Lib.Payment.Domain.Types.OfferStats.Person entityType|E
+
+  sqlType:
+    entityType: "text"
+
+  constraints:
+    id: PrimaryKey
+
+  extraIndexes:
+    - columns: [offerId, personId, entityType]
+      unique: true
+    - columns: [personId, entityType]
+      unique: false
+
+  queries:
+    findByOfferIdAndEntityIdAndEntityType:
+      kvFunction: findOneWithKV
+      where:
+        and: [offerId, entityId, entityType]
+    findAllByEntityIdAndEntityType:
+      kvFunction: findAllWithKV
+      where:
+        and: [entityId, entityType]
+
+  defaultQueryTypeConstraint: "(Lib.Payment.Storage.Beam.BeamFlow.BeamFlow m r)"
+  beamInstance: MakeTableInstancesGenericSchema
+
+PersonDailyOfferStats:
+  tableName: person_daily_offer_stats
+  derives: "Generic, Show, ToJSON, FromJSON"
+  excludedFields:
+    - merchantId
+    - merchantOperatingCityId
+  fields:
+    id: Id PersonDailyOfferStats
+    personId: Text
+    date: Day
+    totalDiscountAmount: HighPrecMoney
+    totalCashbackAmount: HighPrecMoney
+    offerCount: Int
+    payoutStatus: PayoutStatus
+    currency: Currency
+    merchantId: Text
+    merchantOperatingCityId: Text
+    createdAt: UTCTime
+    updatedAt: UTCTime
+
+  constraints:
+    id: PrimaryKey
+
+  extraIndexes:
+    - columns: [personId, date]
+    - columns: [date]
+    - columns: [date, payoutStatus]
+
+  queries:
+    findByPersonIdAndDate:
+      kvFunction: findOneWithKV
+      where:
+        and: [personId, date]
+    findAllByDate:
+      kvFunction: findAllWithKV
+      where: date
+    findAllByDateAndPayoutStatus:
+      kvFunction: findAllWithKV
+      where:
+        and: [date, payoutStatus]
+
+  defaultQueryTypeConstraint: "(Lib.Payment.Storage.Beam.BeamFlow.BeamFlow m r)"
+  beamInstance: MakeTableInstancesGenericSchema
+
+OfflineOffer:
+  tableName: offline_offer
+  derives: "Generic"
+  fields:
+    id: Id OfflineOffer
+    referenceId: Text
+    offerId: Text
+    offerCode: Text
+    discountAmount: Maybe HighPrecMoney
+    payoutAmount: Maybe HighPrecMoney
+    status: OfferState
+    merchantId: Text
+    merchantOperatingCityId: Text
+    createdAt: UTCTime
+    updatedAt: UTCTime
+
+  constraints:
+    id: PrimaryKey
+    referenceId: SecondaryKey
+
+  extraIndexes:
+    - columns: [referenceId, offerId]
+
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
+    findByReferenceId:
+      kvFunction: findAllWithKV
+      where: referenceId
+
+  defaultQueryTypeConstraint: "(Lib.Payment.Storage.Beam.BeamFlow.BeamFlow m r)"
+  beamInstance: MakeTableInstancesGenericSchema

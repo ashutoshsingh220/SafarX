@@ -1,0 +1,70 @@
+{-# LANGUAGE StandaloneDeriving #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
+module Lib.Finance.Storage.Beam.Invoice where
+
+import qualified Data.Aeson
+import qualified Database.Beam as B
+import qualified Domain.Types.Invoice
+import Kernel.External.Encryption
+import Kernel.Prelude
+import qualified Kernel.Prelude
+import qualified Kernel.Types.Common
+import qualified Lib.Finance.Core.Types
+import qualified Lib.Finance.Domain.Types.Invoice
+import Tools.Beam.UtilsTH
+
+data InvoiceT f = InvoiceT
+  { createdAt :: (B.C f Kernel.Prelude.UTCTime),
+    createdBy :: (B.C f (Kernel.Prelude.Maybe Lib.Finance.Core.Types.ActorType)),
+    createdById :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    currency :: (B.C f Kernel.Types.Common.Currency),
+    dueAt :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.UTCTime)),
+    entityReferenceId :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    id :: (B.C f Kernel.Prelude.Text),
+    invoiceNumber :: (B.C f Kernel.Prelude.Text),
+    invoiceType :: (B.C f Domain.Types.Invoice.InvoiceType),
+    irn :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    issuedAt :: (B.C f Kernel.Prelude.UTCTime),
+    issuedByAddress :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    issuedById :: (B.C f Kernel.Prelude.Text),
+    issuedByName :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    issuedByType :: (B.C f Kernel.Prelude.Text),
+    issuedToAddress :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    issuedToId :: (B.C f Kernel.Prelude.Text),
+    issuedToName :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    issuedToType :: (B.C f Domain.Types.Invoice.IssuedToType),
+    lineItems :: (B.C f Data.Aeson.Value),
+    merchantGstin :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    merchantId :: (B.C f Kernel.Prelude.Text),
+    merchantOperatingCityId :: (B.C f Kernel.Prelude.Text),
+    paymentMode :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    periodEnd :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.UTCTime)),
+    periodStart :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.UTCTime)),
+    referenceId :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    referenceInvoiceNumber :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    signedQRCode :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    status :: (B.C f Lib.Finance.Domain.Types.Invoice.InvoiceStatus),
+    subtotal :: (B.C f Kernel.Types.Common.HighPrecMoney),
+    supplierAddress :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    supplierGSTIN :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    supplierId :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    supplierName :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    supplierTaxNo :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    taxBreakdown :: (B.C f (Kernel.Prelude.Maybe Data.Aeson.Value)),
+    totalAmount :: (B.C f Kernel.Types.Common.HighPrecMoney),
+    updatedBy :: (B.C f (Kernel.Prelude.Maybe Lib.Finance.Core.Types.ActorType)),
+    updatedById :: (B.C f (Kernel.Prelude.Maybe Kernel.Prelude.Text)),
+    updatedAt :: (B.C f Kernel.Prelude.UTCTime)
+  }
+  deriving (Generic, B.Beamable)
+
+instance B.Table InvoiceT where
+  data PrimaryKey InvoiceT f = InvoiceId (B.C f Kernel.Prelude.Text) deriving (Generic, B.Beamable)
+  primaryKey = InvoiceId . id
+
+type Invoice = InvoiceT Identity
+
+$(enableKVPG (''InvoiceT) [('id)] [[('entityReferenceId)], [('invoiceNumber)], [('issuedToId)], [('referenceId)], [('supplierId)]])
+
+$(mkTableInstancesGenericSchema (''InvoiceT) "finance_invoice")

@@ -1,0 +1,156 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wwarn=unused-imports #-}
+
+module Domain.Action.Dashboard.RideBooking.MultiModal (getMultiModalList, postMultiModalSendMessage, postMultiModalSendDirectMessage, postMultiModalAddComment, getMultiModalGetComments) where
+
+import qualified API.Types.Dashboard.RideBooking.MultiModal
+import Data.Aeson
+import qualified Data.Bifunctor as BF
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as DT
+import qualified Domain.Action.UI.Booking as DBooking
+import qualified "this" Domain.Action.UI.Booking
+import qualified "this" Domain.Types.Booking.API
+import qualified Domain.Types.BookingStatus
+import Domain.Types.EmptyDynamicParam
+import qualified "this" Domain.Types.Journey
+import qualified Domain.Types.Merchant
+import qualified Email.Flow as Email
+import qualified Environment
+import EulerHS.Prelude hiding (id)
+import Kernel.External.Encryption (decrypt)
+import qualified Kernel.External.Notification as Notification
+import qualified Kernel.Prelude
+import qualified Kernel.Types.APISuccess
+import qualified Kernel.Types.Beckn.Context
+import Kernel.Types.Common
+import Kernel.Types.Error
+import qualified Kernel.Types.Id
+import Kernel.Utils.Error
+import Lib.ConfigPilot.Interface.Types (getConfig)
+import Servant hiding (throwError)
+import SharedLogic.Merchant (findMerchantByShortId)
+import SharedLogic.MessageBuilder (buildMessageWithKey, buildSendSmsReq)
+import qualified Storage.CachedQueries.Merchant.MerchantMessage as QMM
+import qualified Storage.CachedQueries.Merchant.MerchantOperatingCity as CQMOC
+import qualified Storage.CachedQueries.Merchant.RiderConfig as CQRC
+import Storage.ConfigPilot.Config.RiderConfig (RiderConfigDimensions (..))
+import qualified Storage.Queries.Person as QPerson
+import Tools.Error (RiderError (RiderConfigDoesNotExist))
+import qualified Tools.Notifications as TNotifications
+import Tools.SMS as Sms hiding (Success)
+import qualified Tools.Whatsapp as Whatsapp
+
+getMultiModalList :: (Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant -> Kernel.Types.Beckn.Context.City -> Kernel.Prelude.Maybe EulerHS.Prelude.Integer -> Kernel.Prelude.Maybe EulerHS.Prelude.Integer -> Kernel.Prelude.Maybe EulerHS.Prelude.Integer -> Kernel.Prelude.Maybe EulerHS.Prelude.Integer -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> Kernel.Prelude.Maybe EulerHS.Prelude.Integer -> Kernel.Prelude.Maybe EulerHS.Prelude.Integer -> Kernel.Prelude.Maybe [Domain.Types.BookingStatus.BookingStatus] -> Kernel.Prelude.Maybe [Domain.Types.Journey.JourneyStatus] -> Kernel.Prelude.Maybe Kernel.Prelude.Bool -> Kernel.Prelude.Maybe Domain.Types.Booking.API.BookingRequestType -> Maybe Text -> Environment.Flow Domain.Action.UI.Booking.BookingListResV2)
+getMultiModalList merchantShortId _opCity limit offset bookingOffset journeyOffset customerPhoneNo countryCode email fromDate toDate rideStatus journeyStatus isPaymentSuccess bookingRequestType customerId = do
+  m <- findMerchantByShortId merchantShortId
+  DBooking.bookingListV2ByCustomerLookup m.id limit offset bookingOffset journeyOffset fromDate toDate [] [] rideStatus journeyStatus isPaymentSuccess bookingRequestType customerPhoneNo countryCode email customerId
+
+postMultiModalSendMessage :: (Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant -> Kernel.Types.Beckn.Context.City -> Kernel.Prelude.Text -> API.Types.Dashboard.RideBooking.MultiModal.CustomerSendMessageReq -> Environment.Flow Kernel.Types.APISuccess.APISuccess)
+postMultiModalSendMessage _merchantShortId _opCity customerId req = do
+  notifyCustomerFromDashboard customerId req
+  pure Kernel.Types.APISuccess.Success
+
+postMultiModalSendDirectMessage :: (Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant -> Kernel.Types.Beckn.Context.City -> API.Types.Dashboard.RideBooking.MultiModal.CustomerSendDirectMessageReq -> Environment.Flow Kernel.Types.APISuccess.APISuccess)
+postMultiModalSendDirectMessage merchantShortId opCity req = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCityId <- CQMOC.getMerchantOpCityId merchant (Just opCity)
+  case req.channel of
+    API.Types.Dashboard.RideBooking.MultiModal.WHATSAPP -> do
+      merchantMessage <-
+        QMM.findByMerchantOperatingCityIdAndMessageKey merchantOpCityId req.messageKey Nothing
+          >>= fromMaybeM (InvalidRequest $ "No WhatsApp template found for messageKey: " <> show req.messageKey)
+      let variables = map (Just . snd) (fromMaybe [] req.variables)
+      void $
+        Whatsapp.whatsAppSendMessageWithTemplateIdAPI merchant.id merchantOpCityId $
+          Whatsapp.SendWhatsAppMessageWithTemplateIdApIReq req.destination merchantMessage.templateId variables Nothing Nothing
+    API.Types.Dashboard.RideBooking.MultiModal.EMAIL -> do
+      riderConfig <-
+        getConfig (RiderConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (CQRC.findByMerchantOperatingCityId merchantOpCityId))
+          >>= fromMaybeM (RiderConfigDoesNotExist merchantOpCityId.getId)
+      let fromEmail = maybe "noreply@nammayatri.in" (.fromEmail) riderConfig.emailOtpConfig
+      emailServiceConfig <- asks (.emailServiceConfig)
+      let vars = fromMaybe [] req.variables
+      body <-
+        buildMessageWithKey merchantOpCityId req.messageKey vars
+          >>= fromMaybeM (InvalidRequest $ "No email template found for messageKey: " <> show req.messageKey)
+      subject <-
+        maybe
+          (pure "")
+          (\k -> buildMessageWithKey merchantOpCityId k vars >>= fromMaybeM (InvalidRequest $ "No email template found for messageKey: " <> show k))
+          req.titleKey
+      liftIO $ Email.sendPlainEmail emailServiceConfig fromEmail [req.destination] subject body
+    _ -> throwError $ InvalidRequest "Unsupported channel for sendDirectMessage; only WHATSAPP and EMAIL are supported"
+  pure Kernel.Types.APISuccess.Success
+
+notifyCustomerFromDashboard ::
+  Text ->
+  API.Types.Dashboard.RideBooking.MultiModal.CustomerSendMessageReq ->
+  Environment.Flow ()
+notifyCustomerFromDashboard customerId req = do
+  person <- QPerson.findById (Kernel.Types.Id.Id customerId) >>= fromMaybeM (PersonNotFound customerId)
+  case req.channel of
+    API.Types.Dashboard.RideBooking.MultiModal.WHATSAPP -> do
+      whenJust req.messageKey $ \messageKey -> do
+        mbMerchantMessage <- QMM.findByMerchantOperatingCityIdAndMessageKey person.merchantOperatingCityId messageKey Nothing
+        whenJust mbMerchantMessage $ \merchantMessage -> do
+          mbPhoneNumber <- decrypt `mapM` person.mobileNumber
+          whenJust mbPhoneNumber $ \phoneNumber -> do
+            let variables = map (Just . snd) (fromMaybe [] req.variables)
+            void $ Whatsapp.whatsAppSendMessageWithTemplateIdAPI person.merchantId person.merchantOperatingCityId (Whatsapp.SendWhatsAppMessageWithTemplateIdApIReq phoneNumber merchantMessage.templateId variables Nothing Nothing)
+    API.Types.Dashboard.RideBooking.MultiModal.SMS -> do
+      whenJust req.messageKey $ \messageKey -> do
+        mbMerchantMessage <- QMM.findByMerchantOperatingCityIdAndMessageKey person.merchantOperatingCityId messageKey Nothing
+        whenJust mbMerchantMessage $ \merchantMessage -> do
+          mbPhoneNumber <- decrypt `mapM` person.mobileNumber
+          whenJust mbPhoneNumber $ \phoneNumber -> do
+            let countryCode = fromMaybe "+91" person.mobileCountryCode
+                phoneNumberWithCountryCode = countryCode <> phoneNumber
+            withLogTag ("sending SMS" <> Kernel.Types.Id.getId person.id) $ do
+              buildSmsReq <- buildSendSmsReq merchantMessage (fromMaybe [] req.variables)
+              Sms.sendSMS person.merchantId person.merchantOperatingCityId (buildSmsReq phoneNumberWithCountryCode)
+                >>= Sms.checkSmsResult
+    API.Types.Dashboard.RideBooking.MultiModal.PUSH_NOTIFICATION -> do
+      let notificationData =
+            Notification.NotificationReq
+              { category = Notification.TRIGGER_FCM,
+                subCategory = Nothing,
+                showNotification = Notification.SHOW,
+                messagePriority = Nothing,
+                entity = Notification.Entity Notification.Person person.id.getId EmptyDynamicParam,
+                body = req.message,
+                title = req.title,
+                dynamicParams = EmptyDynamicParam,
+                auth = Notification.Auth person.id.getId person.deviceToken person.notificationToken,
+                ttl = Nothing,
+                sound = Nothing
+              }
+      TNotifications.notifyPerson person.merchantId person.merchantOperatingCityId person.id notificationData Nothing
+    API.Types.Dashboard.RideBooking.MultiModal.EMAIL ->
+      throwError $ InvalidRequest "EMAIL channel is not supported for sendMessage; use sendDirectMessage"
+
+postMultiModalAddComment :: (Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant -> Kernel.Types.Beckn.Context.City -> Kernel.Prelude.Text -> API.Types.Dashboard.RideBooking.MultiModal.CustomerCommentReq -> Environment.Flow Kernel.Types.APISuccess.APISuccess)
+postMultiModalAddComment _merchantShortId _opCity customerId req = do
+  person <- QPerson.findById (Kernel.Types.Id.Id customerId) >>= fromMaybeM (PersonDoesNotExist customerId)
+  let existingComments = person.comments
+  let updatedComments = case existingComments of
+        Just existingComments' -> Just $ req.body : existingComments'
+        Nothing -> Just [req.body]
+  QPerson.updatePersonComments (Kernel.Types.Id.Id customerId) updatedComments
+  pure Kernel.Types.APISuccess.Success
+
+getMultiModalGetComments :: (Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant -> Kernel.Types.Beckn.Context.City -> Kernel.Prelude.Text -> Environment.Flow API.Types.Dashboard.RideBooking.MultiModal.CustomerCommentsResp)
+getMultiModalGetComments _merchantShortId _opCity customerId = do
+  person <- QPerson.findById (Kernel.Types.Id.Id customerId) >>= fromMaybeM (PersonDoesNotExist customerId)
+  pure API.Types.Dashboard.RideBooking.MultiModal.CustomerCommentsResp {comments = person.comments, customerId = person.id}
+
+instance FromHttpApiData [Domain.Types.Journey.JourneyStatus] where
+  parseUrlPiece = parseHeader . DT.encodeUtf8
+  parseQueryParam = parseUrlPiece
+  parseHeader bs = BF.first T.pack . eitherDecode . BSL.fromStrict $ bs
+
+instance ToHttpApiData [Domain.Types.Journey.JourneyStatus] where
+  toUrlPiece = DT.decodeUtf8 . toHeader
+  toQueryParam = toUrlPiece
+  toHeader = BSL.toStrict . encode

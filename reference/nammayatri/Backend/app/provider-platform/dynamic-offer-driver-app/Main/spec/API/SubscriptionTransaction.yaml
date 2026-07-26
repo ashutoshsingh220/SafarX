@@ -1,0 +1,42 @@
+imports:
+  Id: Kernel.Types.Id
+  UTCTime: Data.Time
+  Location: Domain.Types.Location
+  HighPrecMoney: Kernel.Types.Common
+  EntryStatus: Lib.Finance.Domain.Types.LedgerEntry
+  RideTransactionType: Domain.Types.DriverWallet
+
+module: SubscriptionTransaction
+types:
+  SubscriptionTransactionEntity:
+    driverId: Text
+    entityId: Maybe Text
+    transactionType: RideTransactionType
+    amount: HighPrecMoney
+    status: EntryStatus
+    fromLocation: Maybe Location
+    toLocation: Maybe Location
+    createdAt: UTCTime
+    updatedAt: UTCTime
+  SubscriptionTransactionResponse:
+    startingBalance: HighPrecMoney
+    finalBalance: HighPrecMoney
+    currentBalance: HighPrecMoney
+    rideEarning: HighPrecMoney
+    planPurchased: HighPrecMoney
+    expiryDeduction: HighPrecMoney
+    entities: "[SubscriptionTransactionEntity]"
+apis:
+  - GET:
+      endpoint: /subscription/transactions
+      query:
+        fromDate: UTCTime
+        toDate: UTCTime
+        status: EntryStatus
+        minAmount: HighPrecMoney
+        maxAmount: HighPrecMoney
+        limit: Int
+        offset: Int
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: SubscriptionTransactionResponse

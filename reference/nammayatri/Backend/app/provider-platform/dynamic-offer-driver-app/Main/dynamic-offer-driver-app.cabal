@@ -1,0 +1,2146 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.2.
+--
+-- see: https://github.com/sol/hpack
+
+name:           dynamic-offer-driver-app
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/nammayatri/nammayatri#readme>
+homepage:       https://github.com/nammayatri/nammayatri#readme
+bug-reports:    https://github.com/nammayatri/nammayatri/issues
+author:         nammayatri
+maintainer:     nammayatri
+copyright:      2023 Juspay Technologies Private Limited
+license:        AllRightsReserved
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/nammayatri/nammayatri
+
+flag Local
+  description: Enable this flag for faster compile times
+  manual: True
+  default: False
+
+library
+  exposed-modules:
+      API
+      API.Action.UI.TicketKapture
+      API.Beckn
+      API.Beckn.Cancel
+      API.Beckn.Confirm
+      API.Beckn.IGM.Issue
+      API.Beckn.Init
+      API.Beckn.Rating
+      API.Beckn.Search
+      API.Beckn.Select
+      API.Beckn.Status
+      API.Beckn.Track
+      API.Beckn.Update
+      API.Dashboard
+      API.Dashboard.Exotel
+      API.Dashboard.Fleet
+      API.Dashboard.Fleet.Registration
+      API.External.LiveEKD
+      API.FleetEngineToken
+      API.IGM
+      API.Internal
+      API.Internal.Auth
+      API.Internal.BulkLocUpdate
+      API.Internal.Cac
+      API.Internal.CallCustomerFCM
+      API.Internal.CancellationDues
+      API.Internal.CustomerCancellationDues
+      API.Internal.DriverCoordinates
+      API.Internal.DriverInactiveFCM
+      API.Internal.DriverMode
+      API.Internal.DriverReachedDestination
+      API.Internal.DriverReferee
+      API.Internal.DriverSourceDeparted
+      API.Internal.Estimate
+      API.Internal.FavouriteDrivers
+      API.Internal.FeedbackForm
+      API.Internal.FleetBookingInformation
+      API.Internal.FleetVehiclesAssociation
+      API.Internal.GeometryList
+      API.Internal.GeometryUpdate
+      API.Internal.InMemManagement
+      API.Internal.KnowYourDriver
+      API.Internal.MasterCloudForward
+      API.Internal.Multimodal
+      API.Internal.NotificationWebhook
+      API.Internal.PersonCreate
+      API.Internal.PickupInstruction
+      API.Internal.PopulateTipAmount
+      API.Internal.ProdLoopStatus
+      API.Internal.QuoteRespond
+      API.Internal.RefundLedger
+      API.Internal.ReportACIssue
+      API.Internal.ReportIssue
+      API.Internal.Ride
+      API.Internal.SendEmailOTP
+      API.Internal.SendSMS
+      API.Internal.SpecialLocationList
+      API.Internal.SpecialLocationUpsert
+      API.Internal.StopDetection
+      API.Internal.SyncSearch
+      API.Internal.TollList
+      API.Internal.TollUpsert
+      API.Internal.VerifyEmailUpdate
+      API.Internal.ViolationDetection
+      API.Internal.XyneWebhook
+      API.Types.UI.TicketKapture
+      API.UI
+      API.UI.Aarokya
+      API.UI.Call
+      API.UI.CallEvent
+      API.UI.CancellationReason
+      API.UI.City
+      API.UI.Driver
+      API.UI.DriverCoins
+      API.UI.DriverInsurance
+      API.UI.DriverOnboarding
+      API.UI.DriverProfileSummary
+      API.UI.DriverReferral
+      API.UI.ExotelEndRide
+      API.UI.Issue
+      API.UI.KioskLocation
+      API.UI.LeaderBoard
+      API.UI.Maps
+      API.UI.Message
+      API.UI.OnMessage
+      API.UI.OrgAdmin
+      API.UI.Payment
+      API.UI.Performance
+      API.UI.Plan
+      API.UI.QueueRank
+      API.UI.Rating
+      API.UI.Registration
+      API.UI.Ride
+      API.UI.RideRoute
+      API.UI.RideSummary
+      API.UI.Route
+      API.UI.Sos
+      API.UI.Transporter
+      API.UI.Whatsapp
+      API.UnifiedDashboard
+      App
+      App.CrossCloudProxy
+      App.Server
+      Beckn.ACL.Cancel
+      Beckn.ACL.Common
+      Beckn.ACL.Common.Order
+      Beckn.ACL.Confirm
+      Beckn.ACL.IGM.Utils
+      Beckn.ACL.Init
+      Beckn.ACL.OnCancel
+      Beckn.ACL.OnConfirm
+      Beckn.ACL.OnInit
+      Beckn.ACL.OnSearch
+      Beckn.ACL.OnSelect
+      Beckn.ACL.OnStatus
+      Beckn.ACL.OnTrack
+      Beckn.ACL.OnUpdate
+      Beckn.ACL.Rating
+      Beckn.ACL.Search
+      Beckn.ACL.Select
+      Beckn.ACL.Status
+      Beckn.ACL.Track
+      Beckn.ACL.Update
+      Beckn.OnDemand.Transformer.Init
+      Beckn.OnDemand.Transformer.OnSearch
+      Beckn.OnDemand.Transformer.OnUpdate
+      Beckn.OnDemand.Transformer.Search
+      Beckn.OnDemand.Utils.Callback
+      Beckn.OnDemand.Utils.Common
+      Beckn.OnDemand.Utils.Init
+      Beckn.OnDemand.Utils.OnSearch
+      Beckn.OnDemand.Utils.OnUpdate
+      Beckn.OnDemand.Utils.Search
+      Domain.Action.Beckn.Cancel
+      Domain.Action.Beckn.Confirm
+      Domain.Action.Beckn.Init
+      Domain.Action.Beckn.Rating
+      Domain.Action.Beckn.Search
+      Domain.Action.Beckn.Select
+      Domain.Action.Beckn.Status
+      Domain.Action.Beckn.Track
+      Domain.Action.Beckn.Update
+      Domain.Action.Common.PayoutRequest
+      Domain.Action.Common.VehicleDetails
+      Domain.Action.Dashboard.AppManagement.Driver
+      Domain.Action.Dashboard.AppManagement.DriverSubscription
+      Domain.Action.Dashboard.AppManagement.DriverWallet
+      Domain.Action.Dashboard.AppManagement.Overlay
+      Domain.Action.Dashboard.AppManagement.Penalty
+      Domain.Action.Dashboard.AppManagement.Subscription
+      Domain.Action.Dashboard.AppManagement.SubscriptionTransaction
+      Domain.Action.Dashboard.Common
+      Domain.Action.Dashboard.Common.AddressDocumentType
+      Domain.Action.Dashboard.Driver.Notification
+      Domain.Action.Dashboard.Exotel
+      Domain.Action.Dashboard.Fleet.Access
+      Domain.Action.Dashboard.Fleet.Driver
+      Domain.Action.Dashboard.Fleet.LiveMap
+      Domain.Action.Dashboard.Fleet.Onboarding
+      Domain.Action.Dashboard.Fleet.PayoutAccount
+      Domain.Action.Dashboard.Fleet.Referral
+      Domain.Action.Dashboard.Fleet.Registration
+      Domain.Action.Dashboard.Fleet.RegistrationV2
+      Domain.Action.Dashboard.IssueManagement.Issue
+      Domain.Action.Dashboard.Management.Account
+      Domain.Action.Dashboard.Management.Booking
+      Domain.Action.Dashboard.Management.CoinsConfig
+      Domain.Action.Dashboard.Management.Communication
+      Domain.Action.Dashboard.Management.DomainDiscountConfig
+      Domain.Action.Dashboard.Management.Driver
+      Domain.Action.Dashboard.Management.DriverCoins
+      Domain.Action.Dashboard.Management.DriverGoHome
+      Domain.Action.Dashboard.Management.DriverReferral
+      Domain.Action.Dashboard.Management.DriverRegistration
+      Domain.Action.Dashboard.Management.DriverVehicleQuality
+      Domain.Action.Dashboard.Management.EntityInfo
+      Domain.Action.Dashboard.Management.FeedbackForm
+      Domain.Action.Dashboard.Management.FinanceManagement
+      Domain.Action.Dashboard.Management.KnowledgeCenter
+      Domain.Action.Dashboard.Management.Media
+      Domain.Action.Dashboard.Management.MediaFileDocument
+      Domain.Action.Dashboard.Management.Merchant
+      Domain.Action.Dashboard.Management.Message
+      Domain.Action.Dashboard.Management.NammaTag
+      Domain.Action.Dashboard.Management.Payout
+      Domain.Action.Dashboard.Management.PlanManagement
+      Domain.Action.Dashboard.Management.Revenue
+      Domain.Action.Dashboard.Management.Ride
+      Domain.Action.Dashboard.Management.SearchTry
+      Domain.Action.Dashboard.Management.SosMedia
+      Domain.Action.Dashboard.Management.SpecialZoneQueue
+      Domain.Action.Dashboard.Management.System
+      Domain.Action.Dashboard.Management.VehicleDetails
+      Domain.Action.Dashboard.Management.VehicleInfo
+      Domain.Action.Dashboard.Management.Volunteer
+      Domain.Action.Dashboard.Operator.Driver
+      Domain.Action.Dashboard.Operator.FleetManagement
+      Domain.Action.Dashboard.Operator.Registration
+      Domain.Action.Dashboard.PayoutRequest
+      Domain.Action.Dashboard.Ride
+      Domain.Action.Dashboard.RideBooking.Driver
+      Domain.Action.Dashboard.RideBooking.DriverRegistration
+      Domain.Action.Dashboard.RideBooking.Maps
+      Domain.Action.Dashboard.RideBooking.MeterRide
+      Domain.Action.Dashboard.RideBooking.Ride
+      Domain.Action.Dashboard.RideBooking.SearchRequest
+      Domain.Action.Dashboard.RideBooking.Volunteer
+      Domain.Action.Dashboard.RideFlowDebug
+      Domain.Action.External.LiveEKD
+      Domain.Action.Internal.Auth
+      Domain.Action.Internal.BulkLocUpdate
+      Domain.Action.Internal.Cac
+      Domain.Action.Internal.CallCustomerFCM
+      Domain.Action.Internal.CancellationDues
+      Domain.Action.Internal.CustomerCancellationDues
+      Domain.Action.Internal.DriverCoordinates
+      Domain.Action.Internal.DriverInactiveFCM
+      Domain.Action.Internal.DriverMode
+      Domain.Action.Internal.DriverReachedDestination
+      Domain.Action.Internal.DriverReferee
+      Domain.Action.Internal.DriverSourceDeparted
+      Domain.Action.Internal.Estimate
+      Domain.Action.Internal.FavouriteDrivers
+      Domain.Action.Internal.FeedbackForm
+      Domain.Action.Internal.FleetBookingInformation
+      Domain.Action.Internal.FleetVehiclesAssociation
+      Domain.Action.Internal.KnowYourDriver
+      Domain.Action.Internal.NotificationWebhook
+      Domain.Action.Internal.PickupInstruction
+      Domain.Action.Internal.PopulateTipAmount
+      Domain.Action.Internal.ProcessingChangeOnline
+      Domain.Action.Internal.ProdLoopStatus
+      Domain.Action.Internal.QuoteRespond
+      Domain.Action.Internal.RefundLedger
+      Domain.Action.Internal.ReportACIssue
+      Domain.Action.Internal.ReportIssue
+      Domain.Action.Internal.Ride
+      Domain.Action.Internal.SendEmailOTP
+      Domain.Action.Internal.SendSMS
+      Domain.Action.Internal.SpecialLocationUpsert
+      Domain.Action.Internal.StopDetection
+      Domain.Action.Internal.TollUpsert
+      Domain.Action.Internal.VerifyEmailUpdate
+      Domain.Action.Internal.ViolationDetection
+      Domain.Action.UI.Aarokya
+      Domain.Action.UI.Cac
+      Domain.Action.UI.Call
+      Domain.Action.UI.CallEvent
+      Domain.Action.UI.CallFeedback
+      Domain.Action.UI.CallFeedbackFCM
+      Domain.Action.UI.CallStatus
+      Domain.Action.UI.CancellationReason
+      Domain.Action.UI.CancellationReasonLookup
+      Domain.Action.UI.City
+      Domain.Action.UI.DemandHotspots
+      Domain.Action.UI.Driver
+      Domain.Action.UI.DriverCoin
+      Domain.Action.UI.DriverDocument
+      Domain.Action.UI.DriverGoHomeRequest
+      Domain.Action.UI.DriverHomeLocation
+      Domain.Action.UI.DriverIncentiveCoins
+      Domain.Action.UI.DriverOnboarding.AadhaarVerification
+      Domain.Action.UI.DriverOnboarding.BankAccountVerification
+      Domain.Action.UI.DriverOnboarding.CourtRecordCheck
+      Domain.Action.UI.DriverOnboarding.DigiLockerCallback
+      Domain.Action.UI.DriverOnboarding.DocumentRegistration
+      Domain.Action.UI.DriverOnboarding.DriverLicense
+      Domain.Action.UI.DriverOnboarding.GstVerification
+      Domain.Action.UI.DriverOnboarding.HyperVergeWebhook
+      Domain.Action.UI.DriverOnboarding.IdfyWebhook
+      Domain.Action.UI.DriverOnboarding.Image
+      Domain.Action.UI.DriverOnboarding.PanVerification
+      Domain.Action.UI.DriverOnboarding.PullDocument
+      Domain.Action.UI.DriverOnboarding.Referral
+      Domain.Action.UI.DriverOnboarding.Status
+      Domain.Action.UI.DriverOnboarding.SyncVerificationStatus
+      Domain.Action.UI.DriverOnboarding.UdyamVerification
+      Domain.Action.UI.DriverOnboarding.VehicleRegistrationCertificate
+      Domain.Action.UI.DriverOnboardingV2
+      Domain.Action.UI.DriverProfile
+      Domain.Action.UI.DriverProfileQuestions
+      Domain.Action.UI.DriverProfileSummary
+      Domain.Action.UI.DriverReferral
+      Domain.Action.UI.DriverSafetySettings
+      Domain.Action.UI.DriverWallet
+      Domain.Action.UI.EditBooking
+      Domain.Action.UI.ExotelEndRide
+      Domain.Action.UI.Faq
+      Domain.Action.UI.FareCalculator
+      Domain.Action.UI.FeedbackForm
+      Domain.Action.UI.File
+      Domain.Action.UI.FinanceInvoice
+      Domain.Action.UI.FleetDriverAssociation
+      Domain.Action.UI.FleetEngineToken
+      Domain.Action.UI.FleetOwnerList
+      Domain.Action.UI.FRFSFleetOperator
+      Domain.Action.UI.Insurance
+      Domain.Action.UI.Invoice
+      Domain.Action.UI.KioskLocation
+      Domain.Action.UI.LeaderBoard
+      Domain.Action.UI.LmsModule
+      Domain.Action.UI.Location
+      Domain.Action.UI.Maps
+      Domain.Action.UI.Merchant
+      Domain.Action.UI.MerchantDocument
+      Domain.Action.UI.MerchantServiceConfig
+      Domain.Action.UI.Message
+      Domain.Action.UI.MeterRide
+      Domain.Action.UI.OnMessage
+      Domain.Action.UI.OperationHub
+      Domain.Action.UI.Operator
+      Domain.Action.UI.OrgAdmin
+      Domain.Action.UI.Payment
+      Domain.Action.UI.Payout
+      Domain.Action.UI.Penalty
+      Domain.Action.UI.Performance
+      Domain.Action.UI.Person
+      Domain.Action.UI.PersonDefaultEmergencyContact
+      Domain.Action.UI.PickupInstructions
+      Domain.Action.UI.PlaceNameCache
+      Domain.Action.UI.Plan
+      Domain.Action.UI.PriceBreakup
+      Domain.Action.UI.QueueRank
+      Domain.Action.UI.Rating
+      Domain.Action.UI.Reels
+      Domain.Action.UI.ReferralPayout
+      Domain.Action.UI.Registration
+      Domain.Action.UI.Ride
+      Domain.Action.UI.Ride.CancelRide
+      Domain.Action.UI.Ride.CancelRide.Internal
+      Domain.Action.UI.Ride.Common
+      Domain.Action.UI.Ride.EndRide
+      Domain.Action.UI.Ride.EndRide.Internal
+      Domain.Action.UI.Ride.StartRide
+      Domain.Action.UI.Ride.StartRide.Internal
+      Domain.Action.UI.RideDetails
+      Domain.Action.UI.RideRoute
+      Domain.Action.UI.RideSummary
+      Domain.Action.UI.Route
+      Domain.Action.UI.SafetyWebhook
+      Domain.Action.UI.SearchRequestForDriver
+      Domain.Action.UI.SearchRequestLocation
+      Domain.Action.UI.SocialLogin
+      Domain.Action.UI.Sos
+      Domain.Action.UI.SpecialLocation
+      Domain.Action.UI.SpecialLocationWarrior
+      Domain.Action.UI.SpecialZoneQueue
+      Domain.Action.UI.StclMembership
+      Domain.Action.UI.SubscriptionTransaction
+      Domain.Action.UI.TicketKapture
+      Domain.Action.UI.Tokenization
+      Domain.Action.UI.Transporter
+      Domain.Action.UI.VehicleDetails
+      Domain.Action.UI.VehicleInfo
+      Domain.Action.UI.Whatsapp
+      Domain.Action.UI.WMB
+      Domain.Action.UI.XyneWebhook
+      Domain.Action.UnifiedDashboard.Fleet.HealthCheck
+      Domain.Action.UnifiedDashboard.Management.HealthCheck
+      Domain.Action.UnifiedDashboard.Management.Person
+      Domain.Action.UnifiedDashboard.Operator.HealthCheck
+      Domain.Action.UnifiedDashboard.RideBooking.HealthCheck
+      Domain.Types.Beckn.Status
+      Domain.Types.Cac
+      Domain.Types.CacType
+      Domain.Types.City
+      Domain.Types.Coins.CoinHistory
+      Domain.Types.Coins.CoinsConfig
+      Domain.Types.Common
+      Domain.Types.CommonDocumentData
+      Domain.Types.DeliveryDetails
+      Domain.Types.DeliveryPersonDetails
+      Domain.Types.DocStatus
+      Domain.Types.DocsVerificationStatus
+      Domain.Types.DocumentOnboardingStage
+      Domain.Types.Driver.DriverInformation
+      Domain.Types.DriverFlowStatus
+      Domain.Types.DriverLocation
+      Domain.Types.DriverWallet
+      Domain.Types.Event.RideEndedEvent
+      Domain.Types.External.LiveEKD
+      Domain.Types.Extra.ConditionalCharges
+      Domain.Types.Extra.DriverFee
+      Domain.Types.Extra.DriverHomeLocation
+      Domain.Types.Extra.DriverPlan
+      Domain.Types.Extra.IdfyVerification
+      Domain.Types.Extra.Location
+      Domain.Types.Extra.MerchantClientConfig
+      Domain.Types.Extra.MerchantMessage
+      Domain.Types.Extra.MerchantPaymentMethod
+      Domain.Types.Extra.MerchantServiceConfig
+      Domain.Types.Extra.MessageReport
+      Domain.Types.Extra.Notification
+      Domain.Types.Extra.Plan
+      Domain.Types.Extra.TransporterConfig
+      Domain.Types.Extra.WalletTransaction
+      Domain.Types.FareParameters
+      Domain.Types.FarePolicy
+      Domain.Types.FarePolicy.Common
+      Domain.Types.FarePolicy.DriverExtraFeeBounds
+      Domain.Types.FarePolicy.FarePolicyAmbulanceDetails
+      Domain.Types.FarePolicy.FarePolicyInterCityDetails
+      Domain.Types.FarePolicy.FarePolicyInterCityDetailsPricingSlabs
+      Domain.Types.FarePolicy.FarePolicyProgressiveDetails
+      Domain.Types.FarePolicy.FarePolicyProgressiveDetails.FarePolicyProgressiveDetailsPerExtraKmRateSection
+      Domain.Types.FarePolicy.FarePolicyProgressiveDetails.FarePolicyProgressiveDetailsPerMinRateSection
+      Domain.Types.FarePolicy.FarePolicyRentalDetails
+      Domain.Types.FarePolicy.FarePolicyRentalDetails.FarePolicyRentalDetailsDistanceBuffer
+      Domain.Types.FarePolicy.FarePolicyRentalDetails.FarePolicyRentalDetailsPricingSlabs
+      Domain.Types.FarePolicy.FarePolicySlabsDetails
+      Domain.Types.FarePolicy.FarePolicySlabsDetails.FarePolicySlabsDetailsSlab
+      Domain.Types.Feedback.FeedbackForm
+      Domain.Types.FleetOperatorTripAction
+      Domain.Types.Geometry
+      Domain.Types.InterCityTravelCities
+      Domain.Types.LmsEnumTypes
+      Domain.Types.OnCancel
+      Domain.Types.OnUpdate
+      Domain.Types.Quote
+      Domain.Types.RideRoute
+      Domain.Types.TicketKapture
+      Domain.Types.UpgradedTier
+      Domain.Types.UtilsTH
+      Domain.Types.Yudhishthira
+      Environment
+      Lib.DriverCoins.Coins
+      Lib.DriverCoins.IncentiveMetrics
+      Lib.DriverCoins.Types
+      Lib.DriverScore
+      Lib.DriverScore.Types
+      Lib.LocationUpdates
+      Lib.Schema
+      SharedLogic.ActiveDriversList
+      SharedLogic.AirportEntryFee
+      SharedLogic.Allocator
+      SharedLogic.Allocator.Jobs.AggregatedCommissionInvoiceCreation.AggregatedCommissionInvoiceCreation
+      SharedLogic.Allocator.Jobs.Cautio.InstallationStatus
+      SharedLogic.Allocator.Jobs.CongestionCharge.CongestionChargeAvg
+      SharedLogic.Allocator.Jobs.Document.VerificationRetry
+      SharedLogic.Allocator.Jobs.DriverFeeUpdates.BadDebtCalculationScheduler
+      SharedLogic.Allocator.Jobs.DriverFeeUpdates.DriverFee
+      SharedLogic.Allocator.Jobs.FCM.RunScheduledFCMS
+      SharedLogic.Allocator.Jobs.FCM.SoftBlockNotification
+      SharedLogic.Allocator.Jobs.FleetAlert.SendFleetAlert
+      SharedLogic.Allocator.Jobs.Insurance.IffcoTokioInsurance
+      SharedLogic.Allocator.Jobs.Mandate.Execution
+      SharedLogic.Allocator.Jobs.Mandate.Notification
+      SharedLogic.Allocator.Jobs.Mandate.OrderAndNotificationStatusUpdate
+      SharedLogic.Allocator.Jobs.Overlay.SendOverlay
+      SharedLogic.Allocator.Jobs.Payout.DriverReferralPayout
+      SharedLogic.Allocator.Jobs.Payout.ScheduledBatchPayout
+      SharedLogic.Allocator.Jobs.Payout.SpecialZonePayout
+      SharedLogic.Allocator.Jobs.Reconciliation.Reconciliation
+      SharedLogic.Allocator.Jobs.Reconciliation.ReconciliationScheduler
+      SharedLogic.Allocator.Jobs.Reconciliation.ReconciliationSweep
+      SharedLogic.Allocator.Jobs.Reminder.ProcessReminder
+      SharedLogic.Allocator.Jobs.ScheduledRides.CheckExotelCallStatusAndNotifyBAP
+      SharedLogic.Allocator.Jobs.ScheduledRides.ScheduledRideAssignedOnUpdate
+      SharedLogic.Allocator.Jobs.ScheduledRides.ScheduledRideNotificationsToDriver
+      SharedLogic.Allocator.Jobs.SendFeedbackPN
+      SharedLogic.Allocator.Jobs.SendSearchRequestToDrivers
+      SharedLogic.Allocator.Jobs.SendSearchRequestToDrivers.Handle
+      SharedLogic.Allocator.Jobs.SendSearchRequestToDrivers.Handle.Internal
+      SharedLogic.Allocator.Jobs.SendSearchRequestToDrivers.Handle.Internal.DriverPool
+      SharedLogic.Allocator.Jobs.SendSearchRequestToDrivers.Handle.Internal.DriverPool.Config
+      SharedLogic.Allocator.Jobs.SendSearchRequestToDrivers.Handle.Internal.DriverPoolUnified
+      SharedLogic.Allocator.Jobs.SendSearchRequestToDrivers.Handle.Internal.SendSearchRequestToDrivers
+      SharedLogic.Allocator.Jobs.Settlement.SAPReportDispatch
+      SharedLogic.Allocator.Jobs.Settlement.SettlementReportIngestion
+      SharedLogic.Allocator.Jobs.Settlement.SubscriptionTotals
+      SharedLogic.Allocator.Jobs.SpecialZoneQueue.CheckPickupZoneArrival
+      SharedLogic.Allocator.Jobs.SpecialZoneQueue.TriggerSpecialZoneNotify
+      SharedLogic.Allocator.Jobs.Subscription.ExpireSubscriptionPurchase
+      SharedLogic.Allocator.Jobs.SupplyDemand.SupplyDemandRatio
+      SharedLogic.Allocator.Jobs.TDSDistribution.ScheduledTDSDistribution
+      SharedLogic.Allocator.Jobs.UnblockDriverUpdate.UnblockDriver
+      SharedLogic.Allocator.Jobs.Webhook.Webhook
+      SharedLogic.Analytics
+      SharedLogic.AnalyticsExtra
+      SharedLogic.Association.Change
+      SharedLogic.Beckn.Common
+      SharedLogic.BehaviourManagement.CancellationRate
+      SharedLogic.BehaviourManagement.ConsequenceDispatcher
+      SharedLogic.BehaviourManagement.GpsTollBehavior
+      SharedLogic.BehaviourManagement.IssueBreach
+      SharedLogic.BehaviourManagement.IssueBreachMitigation
+      SharedLogic.BehaviourManagement.Visibility
+      SharedLogic.BlockedRouteDetector
+      SharedLogic.Booking
+      SharedLogic.Cac
+      SharedLogic.CallBAP
+      SharedLogic.CallBAPInternal
+      SharedLogic.CallIGMBAP
+      SharedLogic.CallInternalMLPricing
+      SharedLogic.Cancel
+      SharedLogic.CancellationCoins
+      SharedLogic.DeleteDriver
+      SharedLogic.DriverCancellationPenalty
+      SharedLogic.DriverFee
+      SharedLogic.DriverFleetOperatorAssociation
+      SharedLogic.DriverFlowStatus
+      SharedLogic.DriverIdentityInfo
+      SharedLogic.DriverOnboarding
+      SharedLogic.DriverOnboarding.Digilocker
+      SharedLogic.DriverOnboarding.Status
+      SharedLogic.DriverOnboarding.VehicleDocs
+      SharedLogic.DriverPool
+      SharedLogic.DriverPool.Config
+      SharedLogic.DriverPool.DriverPoolData
+      SharedLogic.DriverPool.DriverPoolDataBuilder
+      SharedLogic.DriverPool.DriverPoolMigrations
+      SharedLogic.DriverPool.LTSDataSync
+      SharedLogic.DriverPool.Types
+      SharedLogic.DynamicPricing
+      SharedLogic.EventTracking
+      SharedLogic.External.LocationTrackingService.API.DriverBlockTill
+      SharedLogic.External.LocationTrackingService.API.DriverLocation
+      SharedLogic.External.LocationTrackingService.API.DriversLocation
+      SharedLogic.External.LocationTrackingService.API.EndRide
+      SharedLogic.External.LocationTrackingService.API.ManualQueueAdd
+      SharedLogic.External.LocationTrackingService.API.ManualQueueRemove
+      SharedLogic.External.LocationTrackingService.API.NearBy
+      SharedLogic.External.LocationTrackingService.API.QueueHistory
+      SharedLogic.External.LocationTrackingService.API.RideDetails
+      SharedLogic.External.LocationTrackingService.API.StartRide
+      SharedLogic.External.LocationTrackingService.Flow
+      SharedLogic.External.LocationTrackingService.Types
+      SharedLogic.FareCalculator
+      SharedLogic.FarePolicy
+      SharedLogic.FareProduct
+      SharedLogic.Finance.EInvoice
+      SharedLogic.Finance.InvoiceRegeneration
+      SharedLogic.Finance.Prepaid
+      SharedLogic.Finance.Reconciliation.EntitySync
+      SharedLogic.Finance.Reconciliation.Recipes.PostpaidDriverFeeVsPaymentOrder
+      SharedLogic.Finance.Reconciliation.Recipes.PrepaidDsrVsLedger
+      SharedLogic.Finance.Reconciliation.Recipes.PrepaidDsrVsSubscription
+      SharedLogic.Finance.Reconciliation.Recipes.PrepaidDssrVsSubscription
+      SharedLogic.Finance.Reconciliation.Recipes.PrepaidPgPaymentVsSubscription
+      SharedLogic.Finance.Reconciliation.Recipes.PrepaidPgPayoutVsPayoutRequest
+      SharedLogic.Finance.Reconciliation.Recipes.PrepaidSubscriptionPurchaseVsTransaction
+      SharedLogic.Finance.Reconciliation.SubscriptionMeta
+      SharedLogic.Finance.SubscriptionPurchase
+      SharedLogic.Finance.Wallet
+      SharedLogic.Fleet
+      SharedLogic.FleetEngine
+      SharedLogic.FleetOperatorStats
+      SharedLogic.FleetVehicleStats
+      SharedLogic.GoogleMaps
+      SharedLogic.GoogleMobilityBilling
+      SharedLogic.GoogleTranslate
+      SharedLogic.IffcoTokioInsurance
+      SharedLogic.IntegratedBPPConfig
+      SharedLogic.KaalChakra.Actions
+      SharedLogic.KaalChakra.Chakras
+      SharedLogic.KnowledgeCenter
+      SharedLogic.LocationMapping
+      SharedLogic.MediaFileDocument
+      SharedLogic.Merchant
+      SharedLogic.MerchantPaymentMethod
+      SharedLogic.MessageBuilder
+      SharedLogic.MobileNumberValidation
+      SharedLogic.OTP
+      SharedLogic.Payment
+      SharedLogic.Person
+      SharedLogic.PersonBankAccount
+      SharedLogic.PersonDefaultEmergencyNumber
+      SharedLogic.Pricing
+      SharedLogic.Reminder.Helper
+      SharedLogic.RenderInvoiceFromTemplate
+      SharedLogic.Ride
+      SharedLogic.RideEvents.Publisher
+      SharedLogic.RideFootnotes
+      SharedLogic.RiderDetails
+      SharedLogic.RuleBasedTierUpgrade
+      SharedLogic.ScheduledNotifications
+      SharedLogic.SearchRequestProcessing
+      SharedLogic.SearchTry
+      SharedLogic.SearchTryLocker
+      SharedLogic.SpecialLocationUpsert
+      SharedLogic.SpecialZoneDriverDemand
+      SharedLogic.SyncRide
+      SharedLogic.TollDashboard
+      SharedLogic.TollUpsert
+      SharedLogic.Type
+      SharedLogic.UserCancellationDues
+      SharedLogic.VehicleServiceTier
+      SharedLogic.VehicleServiceTierAreaRestriction
+      SharedLogic.WMB
+      Storage.Beam.BecknRequest
+      Storage.Beam.Coins.CoinHistory
+      Storage.Beam.Coins.CoinsConfig
+      Storage.Beam.Common
+      Storage.Beam.FareParameters
+      Storage.Beam.FareParameters.FareParametersAmbulanceDetails
+      Storage.Beam.FareParameters.FareParametersInterCityDetails
+      Storage.Beam.FareParameters.FareParametersProgressiveDetails
+      Storage.Beam.FareParameters.FareParametersRentalDetails
+      Storage.Beam.FareParameters.FareParametersSlabDetails
+      Storage.Beam.FarePolicy
+      Storage.Beam.FarePolicy.DriverExtraFeeBounds
+      Storage.Beam.FarePolicy.FarePolicyAmbulanceDetailsSlab
+      Storage.Beam.FarePolicy.FarePolicyInterCityDetails
+      Storage.Beam.FarePolicy.FarePolicyInterCityDetailsPricingSlabs
+      Storage.Beam.FarePolicy.FarePolicyProgressiveDetails
+      Storage.Beam.FarePolicy.FarePolicyProgressiveDetails.FarePolicyProgressiveDetailsPerExtraKmRateSection
+      Storage.Beam.FarePolicy.FarePolicyRentalDetails
+      Storage.Beam.FarePolicy.FarePolicyRentalDetails.FarePolicyRentalDetailsDistanceBuffers
+      Storage.Beam.FarePolicy.FarePolicyRentalDetails.FarePolicyRentalDetailsPricingSlabs
+      Storage.Beam.FarePolicy.FarePolicySlabDetails.FarePolicySlabDetailsSlab
+      Storage.Beam.Finance
+      Storage.Beam.Geometry
+      Storage.Beam.Geometry.Geometry
+      Storage.Beam.Geometry.GeometryGeom
+      Storage.Beam.GovtDataRC
+      Storage.Beam.InterCityTravelCities
+      Storage.Beam.InterCityTravelCities.InterCityTravelCities
+      Storage.Beam.InterCityTravelCities.InterCityTravelCitiesGeom
+      Storage.Beam.IssueManagement
+      Storage.Beam.MerchantDocument
+      Storage.Beam.Payment
+      Storage.Beam.Quote
+      Storage.Beam.SchedulerJob
+      Storage.Beam.Sos
+      Storage.Beam.SpecialZone
+      Storage.Beam.SystemConfigs
+      Storage.Beam.Toll
+      Storage.Beam.Webhook
+      Storage.Beam.Yudhishthira
+      Storage.Cac.DriverIntelligentPoolConfig
+      Storage.Cac.DriverPoolConfig
+      Storage.Cac.FarePolicy
+      Storage.Cac.FarePolicy.DriverExtraFeeBounds
+      Storage.Cac.FarePolicy.FarePolicyAmbulanceDetails
+      Storage.Cac.FarePolicy.FarePolicyInterCityDetails
+      Storage.Cac.FarePolicy.FarePolicyInterCityDetailsPricingSlabs
+      Storage.Cac.FarePolicy.FarePolicyProgressiveDetails
+      Storage.Cac.FarePolicy.FarePolicyProgressiveDetails.FarePolicyProgressiveDetailsPerExtraKmRateSection
+      Storage.Cac.FarePolicy.FarePolicyProgressiveDetails.FarePolicyProgressiveDetailsPerMinRateSection
+      Storage.Cac.FarePolicy.FarePolicyRentalDetails
+      Storage.Cac.FarePolicy.FarePolicyRentalDetails.FarePolicyRentalDetailsDistanceBuffers
+      Storage.Cac.FarePolicy.FarePolicyRentalDetails.FarePolicyRentalDetailsPricingSlabs
+      Storage.Cac.FarePolicy.FarePolicySlabsDetails.FarePolicySlabsDetailsSlab
+      Storage.Cac.GoHomeConfig
+      Storage.Cac.MerchantServiceUsageConfig
+      Storage.Cac.TransporterConfig
+      Storage.CachedQueries.BapMetadata
+      Storage.CachedQueries.BecknConfig
+      Storage.CachedQueries.BlackListOrg
+      Storage.CachedQueries.BlockedRoute
+      Storage.CachedQueries.CoinsConfig
+      Storage.CachedQueries.DocumentVerificationConfig
+      Storage.CachedQueries.DomainDiscountConfig
+      Storage.CachedQueries.Driver.DriverImage
+      Storage.CachedQueries.Driver.GoHomeRequest
+      Storage.CachedQueries.Driver.OnBoarding
+      Storage.CachedQueries.DriverBlockReason
+      Storage.CachedQueries.DriverReferral
+      Storage.CachedQueries.Exophone
+      Storage.CachedQueries.FarePolicy
+      Storage.CachedQueries.FareProduct
+      Storage.CachedQueries.FleetOwnerDocumentVerificationConfig
+      Storage.CachedQueries.GoHomeConfig
+      Storage.CachedQueries.InterCityTravelCities
+      Storage.CachedQueries.InvoiceTemplate
+      Storage.CachedQueries.KioskLocation
+      Storage.CachedQueries.KioskLocationTranslation
+      Storage.CachedQueries.LLMPrompt.LLMPrompt
+      Storage.CachedQueries.Lms
+      Storage.CachedQueries.Maps.PlaceNameCache
+      Storage.CachedQueries.Merchant
+      Storage.CachedQueries.Merchant.DriverIntelligentPoolConfig
+      Storage.CachedQueries.Merchant.DriverPoolConfig
+      Storage.CachedQueries.Merchant.LeaderBoardConfig
+      Storage.CachedQueries.Merchant.MerchantMessage
+      Storage.CachedQueries.Merchant.MerchantOperatingCity
+      Storage.CachedQueries.Merchant.MerchantPaymentMethod
+      Storage.CachedQueries.Merchant.MerchantPushNotification
+      Storage.CachedQueries.Merchant.MerchantServiceConfig
+      Storage.CachedQueries.Merchant.MerchantServiceUsageConfig
+      Storage.CachedQueries.Merchant.MerchantState
+      Storage.CachedQueries.Merchant.Overlay
+      Storage.CachedQueries.Merchant.PayoutConfig
+      Storage.CachedQueries.Merchant.TransporterConfig
+      Storage.CachedQueries.MonetaryRewardConfig
+      Storage.CachedQueries.OTPRest.Common
+      Storage.CachedQueries.OTPRest.OTPRest
+      Storage.CachedQueries.PlanExtra
+      Storage.CachedQueries.PlanTranslation
+      Storage.CachedQueries.ReelsData
+      Storage.CachedQueries.RegistryMapFallback
+      Storage.CachedQueries.RideRelatedNotificationConfig
+      Storage.CachedQueries.Route
+      Storage.CachedQueries.SubscriptionConfig
+      Storage.CachedQueries.UiDriverConfig
+      Storage.CachedQueries.ValueAddNP
+      Storage.CachedQueries.VehicleDetails
+      Storage.CachedQueries.VehicleServiceTier
+      Storage.CachedQueries.VendorSplitDetails
+      Storage.CachedQueries.WhiteListOrg
+      Storage.Clickhouse.Booking
+      Storage.Clickhouse.BppTransactionJoin
+      Storage.Clickhouse.DailyStats
+      Storage.Clickhouse.DriverEdaKafka
+      Storage.Clickhouse.DriverFee
+      Storage.Clickhouse.DriverInformation
+      Storage.Clickhouse.DriverOperatorAssociation
+      Storage.Clickhouse.Estimate
+      Storage.Clickhouse.FleetDriverAssociation
+      Storage.Clickhouse.FleetOperatorAssociation
+      Storage.Clickhouse.FleetOperatorDailyStats
+      Storage.Clickhouse.FleetOperatorStats
+      Storage.Clickhouse.FleetOwnerInformation
+      Storage.Clickhouse.FleetRcDailyStats
+      Storage.Clickhouse.JsonLogicTransaction
+      Storage.Clickhouse.LedgerEntry
+      Storage.Clickhouse.Location
+      Storage.Clickhouse.Person
+      Storage.Clickhouse.Ride
+      Storage.Clickhouse.RideDetails
+      Storage.Clickhouse.SearchRequestForDriver
+      Storage.Clickhouse.SubscriptionPurchase
+      Storage.Clickhouse.Vehicle
+      Storage.Clickhouse.VehicleRegistrationCertificate
+      Storage.ConfigPilot.Config.CoinsConfig
+      Storage.ConfigPilot.Config.DocumentVerificationConfig
+      Storage.ConfigPilot.Config.DriverPoolConfig
+      Storage.ConfigPilot.Config.Exophone
+      Storage.ConfigPilot.Config.FleetOwnerDocumentVerificationConfig
+      Storage.ConfigPilot.Config.GoHomeConfig
+      Storage.ConfigPilot.Config.IssueConfig
+      Storage.ConfigPilot.Config.LeaderBoardConfigs
+      Storage.ConfigPilot.Config.MerchantMessage
+      Storage.ConfigPilot.Config.MerchantPushNotification
+      Storage.ConfigPilot.Config.MerchantServiceConfig
+      Storage.ConfigPilot.Config.MerchantServiceUsageConfig
+      Storage.ConfigPilot.Config.Overlay
+      Storage.ConfigPilot.Config.PayoutConfig
+      Storage.ConfigPilot.Config.ReminderConfig
+      Storage.ConfigPilot.Config.RideRelatedNotificationConfig
+      Storage.ConfigPilot.Config.ScheduledPayoutConfig
+      Storage.ConfigPilot.Config.TagActionNotificationConfig
+      Storage.ConfigPilot.Config.Translation
+      Storage.ConfigPilot.Config.TransporterConfig
+      Storage.ConfigPilot.Config.UiDriverConfig
+      Storage.Queries.AadhaarCardExtra
+      Storage.Queries.BackgroundVerificationExtra
+      Storage.Queries.Booking.Internal
+      Storage.Queries.BookingCancellationReasonExtra
+      Storage.Queries.BookingExtra
+      Storage.Queries.BusinessEventExtra
+      Storage.Queries.BusinessLicenseExtra
+      Storage.Queries.CallStatusExtra
+      Storage.Queries.CancellationDuesDetailsExtra
+      Storage.Queries.Coins.CoinHistory
+      Storage.Queries.Coins.CoinsConfig
+      Storage.Queries.Coins.CoinsConfigExtra
+      Storage.Queries.CommonDriverOnboardingDocumentsExtra
+      Storage.Queries.CommunicationDeliveryExtra
+      Storage.Queries.CommunicationExtra
+      Storage.Queries.DailyStatsExtra
+      Storage.Queries.DigilockerVerificationExtra
+      Storage.Queries.DocumentVerificationConfigExtra
+      Storage.Queries.Driver.GoHomeFeature.DriverGoHomeRequest.Internal
+      Storage.Queries.DriverBankAccountExtra
+      Storage.Queries.DriverBlockReasonExtra
+      Storage.Queries.DriverFeeExtra
+      Storage.Queries.DriverGoHomeRequestExtra
+      Storage.Queries.DriverGstinExtra
+      Storage.Queries.DriverHomeLocationExtra
+      Storage.Queries.DriverInformation.Internal
+      Storage.Queries.DriverInformationExtra
+      Storage.Queries.DriverLicenseExtra
+      Storage.Queries.DriverLocation.Internal
+      Storage.Queries.DriverOperatorAssociationExtra
+      Storage.Queries.DriverPanCardExtra
+      Storage.Queries.DriverPlanExtra
+      Storage.Queries.DriverProfileQuestionsExtra
+      Storage.Queries.DriverQuote.Internal
+      Storage.Queries.DriverQuoteExtra
+      Storage.Queries.DriverRCAssociationExtra
+      Storage.Queries.DriverReferralExtra
+      Storage.Queries.DriverSSNExtra
+      Storage.Queries.DriverStatsExtra
+      Storage.Queries.DriverUdyamExtra
+      Storage.Queries.EntityInfoExtra
+      Storage.Queries.ExophoneExtra
+      Storage.Queries.FareParameters
+      Storage.Queries.FareParameters.FareParametersAmbulanceDetails
+      Storage.Queries.FareParameters.FareParametersInterCityDetails
+      Storage.Queries.FareParameters.FareParametersProgressiveDetails
+      Storage.Queries.FareParameters.FareParametersRentalDetails
+      Storage.Queries.FareParameters.FareParametersSlabDetails
+      Storage.Queries.FarePolicy
+      Storage.Queries.FarePolicy.DriverExtraFeeBounds
+      Storage.Queries.FarePolicy.FarePolicyAmbulanceDetailsSlab
+      Storage.Queries.FarePolicy.FarePolicyInterCityDetails
+      Storage.Queries.FarePolicy.FarePolicyInterCityDetailsPricingSlabs
+      Storage.Queries.FarePolicy.FarePolicyProgressiveDetails
+      Storage.Queries.FarePolicy.FarePolicyProgressiveDetails.FarePolicyProgressiveDetailsPerExtraKmRateSection
+      Storage.Queries.FarePolicy.FarePolicyProgressiveDetails.FarePolicyProgressiveDetailsPerMinRateSection
+      Storage.Queries.FarePolicy.FarePolicyRentalDetails
+      Storage.Queries.FarePolicy.FarePolicyRentalDetails.FarePolicyRentalDetailsDistanceBuffers
+      Storage.Queries.FarePolicy.FarePolicyRentalDetails.FarePolicyRentalDetailsPricingSlabs
+      Storage.Queries.FarePolicy.FarePolicySlabsDetails.FarePolicySlabsDetailsSlab
+      Storage.Queries.FareProductExtra
+      Storage.Queries.FeedbackBadgeExtra
+      Storage.Queries.FeedbackExtra
+      Storage.Queries.FeedbackFormExtra
+      Storage.Queries.FleetBadgeAssociationExtra
+      Storage.Queries.FleetBadgeExtra
+      Storage.Queries.FleetBookingAssignmentsExtra
+      Storage.Queries.FleetBookingInformationExtra
+      Storage.Queries.FleetDriverAssociationExtra
+      Storage.Queries.FleetMemberAssociationExtra
+      Storage.Queries.FleetOperatorAssociationExtra
+      Storage.Queries.FleetOperatorDailyStatsExtra
+      Storage.Queries.FleetOwnerInformationExtra
+      Storage.Queries.FleetRCAssociationExtra
+      Storage.Queries.FleetRcDailyStatsExtra
+      Storage.Queries.Geometry
+      Storage.Queries.GeometryGeom
+      Storage.Queries.HyperVergeVerificationExtra
+      Storage.Queries.IdfyVerificationExtra
+      Storage.Queries.IffcoTokioInsuranceExtra
+      Storage.Queries.ImageExtra
+      Storage.Queries.InterCityTravelCities
+      Storage.Queries.InvoiceExtra
+      Storage.Queries.KioskLocationExtra
+      Storage.Queries.LocationExtra
+      Storage.Queries.LocationMappingExtra
+      Storage.Queries.MandateExtra
+      Storage.Queries.MediaFileDocumentExtra
+      Storage.Queries.MerchantClientConfigExtra
+      Storage.Queries.MerchantExtra
+      Storage.Queries.MerchantOperatingCityExtra
+      Storage.Queries.MerchantPaymentMethodExtra
+      Storage.Queries.MerchantServiceConfigExtra
+      Storage.Queries.MessageExtra
+      Storage.Queries.MessageReportExtra
+      Storage.Queries.MonetaryRewardConfigExtra
+      Storage.Queries.NotificationExtra
+      Storage.Queries.OperationHubExtra
+      Storage.Queries.OperationHubRequestsExtra
+      Storage.Queries.PayoutConfigExtra
+      Storage.Queries.Person.GetNearestDrivers
+      Storage.Queries.Person.Internal
+      Storage.Queries.PersonExtra
+      Storage.Queries.PlanExtra
+      Storage.Queries.PurchaseHistoryExtra
+      Storage.Queries.QueriesExtra.BookingLite
+      Storage.Queries.QueriesExtra.RideLite
+      Storage.Queries.QueriesExtra.SearchRequestLite
+      Storage.Queries.Quote
+      Storage.Queries.RatingExtra
+      Storage.Queries.RCStatsExtra
+      Storage.Queries.RegistrationTokenExtra
+      Storage.Queries.ReviewRequestExtra
+      Storage.Queries.RideDetailsExtra
+      Storage.Queries.RideExtra
+      Storage.Queries.RiderDetailsExtra
+      Storage.Queries.RouteExtra
+      Storage.Queries.ScheduledPayoutExtra
+      Storage.Queries.SearchRequestExtra
+      Storage.Queries.SearchRequestForDriverExtra
+      Storage.Queries.SearchTryExtra
+      Storage.Queries.SpecialZoneQueueRequestExtra
+      Storage.Queries.StationExtra
+      Storage.Queries.Status
+      Storage.Queries.StclMembershipExtra
+      Storage.Queries.SubscriptionPurchaseExtra
+      Storage.Queries.TDSDistributionPdfFileExtra
+      Storage.Queries.TDSDistributionRecordExtra
+      Storage.Queries.Transformers.Booking
+      Storage.Queries.Transformers.BookingLocation
+      Storage.Queries.Transformers.CancellationReason
+      Storage.Queries.Transformers.DailyStats
+      Storage.Queries.Transformers.DocumentVerificationConfig
+      Storage.Queries.Transformers.DriverFee
+      Storage.Queries.Transformers.DriverInformation
+      Storage.Queries.Transformers.DriverPlan
+      Storage.Queries.Transformers.DriverQuote
+      Storage.Queries.Transformers.DriverStats
+      Storage.Queries.Transformers.Estimate
+      Storage.Queries.Transformers.FleetOperatorDailyStats
+      Storage.Queries.Transformers.FleetOperatorStats
+      Storage.Queries.Transformers.FleetOwnerInformation
+      Storage.Queries.Transformers.FleetRcDailyStats
+      Storage.Queries.Transformers.IntegratedBPPConfig
+      Storage.Queries.Transformers.Invoice
+      Storage.Queries.Transformers.Location
+      Storage.Queries.Transformers.MerchantClientConfig
+      Storage.Queries.Transformers.MerchantMessage
+      Storage.Queries.Transformers.MerchantPaymentMethod
+      Storage.Queries.Transformers.MerchantServiceConfig
+      Storage.Queries.Transformers.Message
+      Storage.Queries.Transformers.MessageReport
+      Storage.Queries.Transformers.Notification
+      Storage.Queries.Transformers.Person
+      Storage.Queries.Transformers.Plan
+      Storage.Queries.Transformers.QuestionInformation
+      Storage.Queries.Transformers.ReelsData
+      Storage.Queries.Transformers.RegistrationToken
+      Storage.Queries.Transformers.Ride
+      Storage.Queries.Transformers.SearchRequest
+      Storage.Queries.Transformers.SearchRequestForDriver
+      Storage.Queries.Transformers.SearchTry
+      Storage.Queries.Transformers.SubscriptionConfigParser
+      Storage.Queries.Transformers.TransporterConfig
+      Storage.Queries.TranslationsExtra
+      Storage.Queries.TransporterConfigExtra
+      Storage.Queries.TripAlertRequestExtra
+      Storage.Queries.TripTransactionExtra
+      Storage.Queries.UiDriverConfigExtra
+      Storage.Queries.Vehicle.Internal
+      Storage.Queries.VehicleDetailsExtra
+      Storage.Queries.VehicleExtra
+      Storage.Queries.VehicleInsuranceExtra
+      Storage.Queries.VehicleRegistrationCertificateExtra
+      Storage.Queries.VehicleRouteMappingExtra
+      Storage.Queries.VendorFeeExtra
+      Storage.Queries.VolunteerExtra
+      Storage.Queries.WalletTransactionExtra
+      Storage.Queries.WhiteListOrgExtra
+      Tools.AadhaarVerification
+      Tools.ActorInfo
+      Tools.Auth
+      Tools.BackgroundVerification
+      Tools.Beam.UtilsTH
+      Tools.Call
+      Tools.ChallanSearch
+      Tools.ChatCompletion
+      Tools.ConfigPilot
+      Tools.Constants
+      Tools.Csv
+      Tools.Dashcam
+      Tools.DriverBackgroundVerification
+      Tools.Encryption
+      Tools.Error
+      Tools.Event
+      Tools.FieldParse
+      Tools.Maps
+      Tools.MarketingEvents
+      Tools.Metrics
+      Tools.Metrics.ARDUBPPMetrics
+      Tools.Metrics.ARDUBPPMetrics.Types
+      Tools.Metrics.DriverSearchRequestResponseMetrics
+      Tools.Metrics.DriverSearchRequestResponseMetrics.Types
+      Tools.Metrics.SendSearchRequestToDriverMetrics
+      Tools.Metrics.SendSearchRequestToDriverMetrics.Types
+      Tools.Notifications
+      Tools.OpenAPIInstances
+      Tools.PartnerSdk
+      Tools.Payment
+      Tools.PaymentNudge
+      Tools.Payout
+      Tools.Plasma
+      Tools.SignatureAuth
+      Tools.SMS
+      Tools.Ticket
+      Tools.Utils
+      Tools.Verification
+      Tools.Whatsapp
+      API.Action.Dashboard.AppManagement
+      API.Action.Dashboard.AppManagement.Driver
+      API.Action.Dashboard.AppManagement.DriverSubscription
+      API.Action.Dashboard.AppManagement.DriverWallet
+      API.Action.Dashboard.AppManagement.Overlay
+      API.Action.Dashboard.AppManagement.Penalty
+      API.Action.Dashboard.AppManagement.Subscription
+      API.Action.Dashboard.AppManagement.SubscriptionTransaction
+      API.Action.Dashboard.Fleet
+      API.Action.Dashboard.Fleet.Driver
+      API.Action.Dashboard.Fleet.LiveMap
+      API.Action.Dashboard.Fleet.Onboarding
+      API.Action.Dashboard.Fleet.PayoutAccount
+      API.Action.Dashboard.Fleet.RegistrationV2
+      API.Action.Dashboard.IssueManagement
+      API.Action.Dashboard.IssueManagement.Issue
+      API.Action.Dashboard.Management
+      API.Action.Dashboard.Management.Account
+      API.Action.Dashboard.Management.Booking
+      API.Action.Dashboard.Management.CoinsConfig
+      API.Action.Dashboard.Management.Communication
+      API.Action.Dashboard.Management.DomainDiscountConfig
+      API.Action.Dashboard.Management.Driver
+      API.Action.Dashboard.Management.DriverCoins
+      API.Action.Dashboard.Management.DriverGoHome
+      API.Action.Dashboard.Management.DriverReferral
+      API.Action.Dashboard.Management.DriverRegistration
+      API.Action.Dashboard.Management.DriverVehicleQuality
+      API.Action.Dashboard.Management.EntityInfo
+      API.Action.Dashboard.Management.FeedbackForm
+      API.Action.Dashboard.Management.FinanceManagement
+      API.Action.Dashboard.Management.KnowledgeCenter
+      API.Action.Dashboard.Management.Media
+      API.Action.Dashboard.Management.MediaFileDocument
+      API.Action.Dashboard.Management.Merchant
+      API.Action.Dashboard.Management.Message
+      API.Action.Dashboard.Management.NammaTag
+      API.Action.Dashboard.Management.Payout
+      API.Action.Dashboard.Management.PlanManagement
+      API.Action.Dashboard.Management.Revenue
+      API.Action.Dashboard.Management.Ride
+      API.Action.Dashboard.Management.SearchTry
+      API.Action.Dashboard.Management.SosMedia
+      API.Action.Dashboard.Management.SpecialZoneQueue
+      API.Action.Dashboard.Management.System
+      API.Action.Dashboard.Management.VehicleDetails
+      API.Action.Dashboard.Management.VehicleInfo
+      API.Action.Dashboard.Management.Volunteer
+      API.Action.Dashboard.Operator
+      API.Action.Dashboard.Operator.Driver
+      API.Action.Dashboard.Operator.FleetManagement
+      API.Action.Dashboard.Operator.Registration
+      API.Action.Dashboard.RideBooking
+      API.Action.Dashboard.RideBooking.Driver
+      API.Action.Dashboard.RideBooking.DriverRegistration
+      API.Action.Dashboard.RideBooking.Maps
+      API.Action.Dashboard.RideBooking.MeterRide
+      API.Action.Dashboard.RideBooking.Ride
+      API.Action.Dashboard.RideBooking.SearchRequest
+      API.Action.Dashboard.RideBooking.Volunteer
+      API.Action.UI.Cac
+      API.Action.UI.CallFeedback
+      API.Action.UI.CancellationReasonLookup
+      API.Action.UI.DemandHotspots
+      API.Action.UI.DriverDocument
+      API.Action.UI.DriverIncentiveCoins
+      API.Action.UI.DriverOnboardingV2
+      API.Action.UI.DriverProfile
+      API.Action.UI.DriverProfileQuestions
+      API.Action.UI.DriverSafetySettings
+      API.Action.UI.DriverWallet
+      API.Action.UI.EditBooking
+      API.Action.UI.Faq
+      API.Action.UI.FareCalculator
+      API.Action.UI.File
+      API.Action.UI.FinanceInvoice
+      API.Action.UI.FleetOwnerList
+      API.Action.UI.FRFSFleetOperator
+      API.Action.UI.Insurance
+      API.Action.UI.Invoice
+      API.Action.UI.LmsModule
+      API.Action.UI.Merchant
+      API.Action.UI.MerchantDocument
+      API.Action.UI.MeterRide
+      API.Action.UI.OperationHub
+      API.Action.UI.Operator
+      API.Action.UI.PayoutDriverStatus
+      API.Action.UI.Penalty
+      API.Action.UI.PersonDefaultEmergencyContact
+      API.Action.UI.PickupInstructions
+      API.Action.UI.PriceBreakup
+      API.Action.UI.Reels
+      API.Action.UI.ReferralPayout
+      API.Action.UI.SocialLogin
+      API.Action.UI.Sos
+      API.Action.UI.SpecialLocation
+      API.Action.UI.SpecialLocationWarrior
+      API.Action.UI.SpecialZoneQueue
+      API.Action.UI.StclMembership
+      API.Action.UI.SubscriptionTransaction
+      API.Action.UI.Tokenization
+      API.Action.UI.VehicleDetails
+      API.Action.UI.VehicleInfo
+      API.Action.UI.WMB
+      API.Action.UnifiedDashboard.Fleet
+      API.Action.UnifiedDashboard.Fleet.HealthCheck
+      API.Action.UnifiedDashboard.Management
+      API.Action.UnifiedDashboard.Management.HealthCheck
+      API.Action.UnifiedDashboard.Management.Person
+      API.Action.UnifiedDashboard.Operator
+      API.Action.UnifiedDashboard.Operator.HealthCheck
+      API.Action.UnifiedDashboard.RideBooking
+      API.Action.UnifiedDashboard.RideBooking.HealthCheck
+      API.Types.Dashboard.AppManagement
+      API.Types.Dashboard.AppManagement.Driver
+      API.Types.Dashboard.AppManagement.DriverSubscription
+      API.Types.Dashboard.AppManagement.DriverWallet
+      API.Types.Dashboard.AppManagement.Endpoints.Driver
+      API.Types.Dashboard.AppManagement.Endpoints.DriverSubscription
+      API.Types.Dashboard.AppManagement.Endpoints.DriverWallet
+      API.Types.Dashboard.AppManagement.Endpoints.Overlay
+      API.Types.Dashboard.AppManagement.Endpoints.Penalty
+      API.Types.Dashboard.AppManagement.Endpoints.Subscription
+      API.Types.Dashboard.AppManagement.Endpoints.SubscriptionTransaction
+      API.Types.Dashboard.AppManagement.Overlay
+      API.Types.Dashboard.AppManagement.Penalty
+      API.Types.Dashboard.AppManagement.Subscription
+      API.Types.Dashboard.AppManagement.SubscriptionTransaction
+      API.Types.Dashboard.RideBooking
+      API.Types.Dashboard.RideBooking.Driver
+      API.Types.Dashboard.RideBooking.DriverRegistration
+      API.Types.Dashboard.RideBooking.Endpoints.Driver
+      API.Types.Dashboard.RideBooking.Endpoints.DriverRegistration
+      API.Types.Dashboard.RideBooking.Endpoints.Maps
+      API.Types.Dashboard.RideBooking.Endpoints.MeterRide
+      API.Types.Dashboard.RideBooking.Endpoints.Ride
+      API.Types.Dashboard.RideBooking.Endpoints.SearchRequest
+      API.Types.Dashboard.RideBooking.Endpoints.Volunteer
+      API.Types.Dashboard.RideBooking.Maps
+      API.Types.Dashboard.RideBooking.MeterRide
+      API.Types.Dashboard.RideBooking.Ride
+      API.Types.Dashboard.RideBooking.SearchRequest
+      API.Types.Dashboard.RideBooking.Volunteer
+      API.Types.UI.CallFeedback
+      API.Types.UI.CancellationReasonLookup
+      API.Types.UI.DemandHotspots
+      API.Types.UI.DriverIncentiveCoins
+      API.Types.UI.DriverOnboardingV2
+      API.Types.UI.DriverProfile
+      API.Types.UI.DriverProfileQuestions
+      API.Types.UI.DriverSafetySettings
+      API.Types.UI.DriverWallet
+      API.Types.UI.EditBooking
+      API.Types.UI.Faq
+      API.Types.UI.FareCalculator
+      API.Types.UI.FinanceInvoice
+      API.Types.UI.FleetOwnerList
+      API.Types.UI.FRFSFleetOperator
+      API.Types.UI.Insurance
+      API.Types.UI.Invoice
+      API.Types.UI.LmsModule
+      API.Types.UI.Merchant
+      API.Types.UI.MerchantDocument
+      API.Types.UI.MeterRide
+      API.Types.UI.OperationHub
+      API.Types.UI.Penalty
+      API.Types.UI.PersonDefaultEmergencyContact
+      API.Types.UI.PickupInstructions
+      API.Types.UI.PriceBreakup
+      API.Types.UI.Reels
+      API.Types.UI.ReferralPayout
+      API.Types.UI.SocialLogin
+      API.Types.UI.Sos
+      API.Types.UI.SpecialLocationWarrior
+      API.Types.UI.SpecialZoneQueue
+      API.Types.UI.StclMembership
+      API.Types.UI.SubscriptionTransaction
+      API.Types.UI.Tokenization
+      API.Types.UI.VehicleDetails
+      API.Types.UI.VehicleInfo
+      API.Types.UI.WMB
+      API.Types.UnifiedDashboard.Fleet
+      API.Types.UnifiedDashboard.Fleet.Endpoints.HealthCheck
+      API.Types.UnifiedDashboard.Fleet.HealthCheck
+      API.Types.UnifiedDashboard.Management
+      API.Types.UnifiedDashboard.Management.Endpoints.HealthCheck
+      API.Types.UnifiedDashboard.Management.Endpoints.Person
+      API.Types.UnifiedDashboard.Management.HealthCheck
+      API.Types.UnifiedDashboard.Management.Person
+      API.Types.UnifiedDashboard.Operator
+      API.Types.UnifiedDashboard.Operator.Endpoints.HealthCheck
+      API.Types.UnifiedDashboard.Operator.HealthCheck
+      API.Types.UnifiedDashboard.RideBooking
+      API.Types.UnifiedDashboard.RideBooking.Endpoints.HealthCheck
+      API.Types.UnifiedDashboard.RideBooking.HealthCheck
+      Domain.Types.AadhaarCard
+      Domain.Types.AadhaarOtpReq
+      Domain.Types.AadhaarOtpVerify
+      Domain.Types.AlertRequest
+      Domain.Types.BackgroundVerification
+      Domain.Types.BapMetadata
+      Domain.Types.BecknConfig
+      Domain.Types.BlackListOrg
+      Domain.Types.BlockedRoute
+      Domain.Types.Booking
+      Domain.Types.BookingCancellationReason
+      Domain.Types.BookingLocation
+      Domain.Types.BookingUpdateRequest
+      Domain.Types.BusinessEvent
+      Domain.Types.BusinessLicense
+      Domain.Types.CallFeedback
+      Domain.Types.CallFeedbackOptions
+      Domain.Types.CallStatus
+      Domain.Types.CancellationCharges
+      Domain.Types.CancellationDuesDetails
+      Domain.Types.CancellationFarePolicy
+      Domain.Types.CancellationReason
+      Domain.Types.Client
+      Domain.Types.CommonDriverOnboardingDocuments
+      Domain.Types.Communication
+      Domain.Types.CommunicationDelivery
+      Domain.Types.ConditionalCharges
+      Domain.Types.DailyStats
+      Domain.Types.DigilockerVerification
+      Domain.Types.DocumentReminderHistory
+      Domain.Types.DocumentVerificationConfig
+      Domain.Types.DomainDiscountConfig
+      Domain.Types.DriverBankAccount
+      Domain.Types.DriverBlockReason
+      Domain.Types.DriverBlockTransactions
+      Domain.Types.DriverFee
+      Domain.Types.DriverGoHomeRequest
+      Domain.Types.DriverGstin
+      Domain.Types.DriverGullakAssociation
+      Domain.Types.DriverHomeLocation
+      Domain.Types.DriverIdentityInfo
+      Domain.Types.DriverInformation
+      Domain.Types.DriverIntelligentPoolConfig
+      Domain.Types.DriverLicense
+      Domain.Types.DriverModuleCompletion
+      Domain.Types.DriverOperatorAssociation
+      Domain.Types.DriverPanCard
+      Domain.Types.DriverPlan
+      Domain.Types.DriverPoolConfig
+      Domain.Types.DriverProfileQuestions
+      Domain.Types.DriverQuote
+      Domain.Types.DriverRCAssociation
+      Domain.Types.DriverReferral
+      Domain.Types.DriverRidePayoutBankAccount
+      Domain.Types.DriverSSN
+      Domain.Types.DriverStats
+      Domain.Types.DriverUdyam
+      Domain.Types.EntityInfo
+      Domain.Types.Estimate
+      Domain.Types.Exophone
+      Domain.Types.Faq
+      Domain.Types.FareProduct
+      Domain.Types.Feedback
+      Domain.Types.FeedbackBadge
+      Domain.Types.FeedbackForm
+      Domain.Types.FleetBadge
+      Domain.Types.FleetBadgeAssociation
+      Domain.Types.FleetBookingAssignments
+      Domain.Types.FleetBookingInformation
+      Domain.Types.FleetConfig
+      Domain.Types.FleetDriverAssociation
+      Domain.Types.FleetMemberAssociation
+      Domain.Types.FleetOperatorAssociation
+      Domain.Types.FleetOperatorDailyStats
+      Domain.Types.FleetOperatorStats
+      Domain.Types.FleetOwnerDocumentVerificationConfig
+      Domain.Types.FleetOwnerInformation
+      Domain.Types.FleetRCAssociation
+      Domain.Types.FleetRcDailyStats
+      Domain.Types.FleetRouteAssociation
+      Domain.Types.FullFarePolicyProgressiveDetailsPerMinRateSection
+      Domain.Types.GoHomeConfig
+      Domain.Types.HyperVergeSdkLogs
+      Domain.Types.HyperVergeVerification
+      Domain.Types.IdfyVerification
+      Domain.Types.IffcoTokioInsurance
+      Domain.Types.Image
+      Domain.Types.IntegratedBPPConfig
+      Domain.Types.Invoice
+      Domain.Types.KioskLocation
+      Domain.Types.KioskLocationTranslation
+      Domain.Types.KnowledgeCenter
+      Domain.Types.LeaderBoardConfigs
+      Domain.Types.LlmPrompt
+      Domain.Types.LmsCertificate
+      Domain.Types.LmsModule
+      Domain.Types.LmsModuleTranslation
+      Domain.Types.LmsModuleVideoInformation
+      Domain.Types.LmsVideoTranslation
+      Domain.Types.Location
+      Domain.Types.LocationMapping
+      Domain.Types.Mandate
+      Domain.Types.MediaFileDocument
+      Domain.Types.Merchant
+      Domain.Types.MerchantClientConfig
+      Domain.Types.MerchantMessage
+      Domain.Types.MerchantOperatingCity
+      Domain.Types.MerchantPaymentMethod
+      Domain.Types.MerchantPushNotification
+      Domain.Types.MerchantServiceConfig
+      Domain.Types.MerchantServiceUsageConfig
+      Domain.Types.MerchantState
+      Domain.Types.Message
+      Domain.Types.MessageDictionary
+      Domain.Types.MessageReport
+      Domain.Types.MessageTranslation
+      Domain.Types.MetaData
+      Domain.Types.ModuleCompletionInformation
+      Domain.Types.MonetaryRewardConfig
+      Domain.Types.MorthVerification
+      Domain.Types.Notification
+      Domain.Types.OperationHub
+      Domain.Types.OperationHubRequests
+      Domain.Types.Overlay
+      Domain.Types.PayoutConfig
+      Domain.Types.PayoutStatusHistory
+      Domain.Types.Person
+      Domain.Types.PlaceNameCache
+      Domain.Types.Plan
+      Domain.Types.PlanTranslation
+      Domain.Types.PurchaseHistory
+      Domain.Types.QuestionInformation
+      Domain.Types.QuestionModuleMapping
+      Domain.Types.Rating
+      Domain.Types.RCStats
+      Domain.Types.RCValidationRules
+      Domain.Types.ReelsData
+      Domain.Types.RegistrationToken
+      Domain.Types.RegistryMapFallback
+      Domain.Types.Reminder
+      Domain.Types.ReminderConfig
+      Domain.Types.ReviewRequest
+      Domain.Types.Ride
+      Domain.Types.RideDetails
+      Domain.Types.RiderDetails
+      Domain.Types.RiderDriverCorrelation
+      Domain.Types.RideRelatedNotificationConfig
+      Domain.Types.Route
+      Domain.Types.RouteTripStopMapping
+      Domain.Types.ScheduledPayout
+      Domain.Types.ScheduledPayoutConfig
+      Domain.Types.SearchReqLocation
+      Domain.Types.SearchRequest
+      Domain.Types.SearchRequestForDriver
+      Domain.Types.SearchTry
+      Domain.Types.SpecialZoneQueueRequest
+      Domain.Types.Station
+      Domain.Types.StclMembership
+      Domain.Types.StopInformation
+      Domain.Types.SubscriptionConfig
+      Domain.Types.SubscriptionPurchase
+      Domain.Types.SurgePricing
+      Domain.Types.TDSDistributionPdfFile
+      Domain.Types.TDSDistributionRecord
+      Domain.Types.Translations
+      Domain.Types.TransporterConfig
+      Domain.Types.TripAlertRequest
+      Domain.Types.TripTransaction
+      Domain.Types.UiDriverConfig
+      Domain.Types.ValueAddNP
+      Domain.Types.Vehicle
+      Domain.Types.VehicleDetails
+      Domain.Types.VehicleFitnessCertificate
+      Domain.Types.VehicleInfo
+      Domain.Types.VehicleInsurance
+      Domain.Types.VehicleNOC
+      Domain.Types.VehiclePermit
+      Domain.Types.VehiclePUC
+      Domain.Types.VehicleRegistrationCertificate
+      Domain.Types.VehicleRouteMapping
+      Domain.Types.VehicleServiceTier
+      Domain.Types.VendorFee
+      Domain.Types.VendorSplitDetails
+      Domain.Types.Volunteer
+      Domain.Types.WalletTransaction
+      Domain.Types.WhiteListOrg
+      Storage.Beam.AadhaarCard
+      Storage.Beam.AadhaarOtpReq
+      Storage.Beam.AadhaarOtpVerify
+      Storage.Beam.AlertRequest
+      Storage.Beam.BackgroundVerification
+      Storage.Beam.BapMetadata
+      Storage.Beam.BecknConfig
+      Storage.Beam.BlackListOrg
+      Storage.Beam.BlockedRoute
+      Storage.Beam.Booking
+      Storage.Beam.BookingCancellationReason
+      Storage.Beam.BookingLocation
+      Storage.Beam.BookingUpdateRequest
+      Storage.Beam.BusinessEvent
+      Storage.Beam.BusinessLicense
+      Storage.Beam.CallFeedback
+      Storage.Beam.CallFeedbackOptions
+      Storage.Beam.CallStatus
+      Storage.Beam.CancellationCharges
+      Storage.Beam.CancellationDuesDetails
+      Storage.Beam.CancellationFarePolicy
+      Storage.Beam.CancellationReason
+      Storage.Beam.Client
+      Storage.Beam.CommonDriverOnboardingDocuments
+      Storage.Beam.Communication
+      Storage.Beam.CommunicationDelivery
+      Storage.Beam.ConditionalCharges
+      Storage.Beam.DailyStats
+      Storage.Beam.DigilockerVerification
+      Storage.Beam.DocumentReminderHistory
+      Storage.Beam.DocumentVerificationConfig
+      Storage.Beam.DomainDiscountConfig
+      Storage.Beam.DriverBankAccount
+      Storage.Beam.DriverBlockReason
+      Storage.Beam.DriverBlockTransactions
+      Storage.Beam.DriverFee
+      Storage.Beam.DriverGoHomeRequest
+      Storage.Beam.DriverGstin
+      Storage.Beam.DriverGullakAssociation
+      Storage.Beam.DriverHomeLocation
+      Storage.Beam.DriverIdentityInfo
+      Storage.Beam.DriverInformation
+      Storage.Beam.DriverIntelligentPoolConfig
+      Storage.Beam.DriverLicense
+      Storage.Beam.DriverModuleCompletion
+      Storage.Beam.DriverOperatorAssociation
+      Storage.Beam.DriverPanCard
+      Storage.Beam.DriverPlan
+      Storage.Beam.DriverPoolConfig
+      Storage.Beam.DriverProfileQuestions
+      Storage.Beam.DriverQuote
+      Storage.Beam.DriverRCAssociation
+      Storage.Beam.DriverReferral
+      Storage.Beam.DriverRidePayoutBankAccount
+      Storage.Beam.DriverSSN
+      Storage.Beam.DriverStats
+      Storage.Beam.DriverUdyam
+      Storage.Beam.EntityInfo
+      Storage.Beam.Estimate
+      Storage.Beam.Exophone
+      Storage.Beam.Faq
+      Storage.Beam.FareProduct
+      Storage.Beam.Feedback
+      Storage.Beam.FeedbackBadge
+      Storage.Beam.FeedbackForm
+      Storage.Beam.FleetBadge
+      Storage.Beam.FleetBadgeAssociation
+      Storage.Beam.FleetBookingAssignments
+      Storage.Beam.FleetBookingInformation
+      Storage.Beam.FleetConfig
+      Storage.Beam.FleetDriverAssociation
+      Storage.Beam.FleetMemberAssociation
+      Storage.Beam.FleetOperatorAssociation
+      Storage.Beam.FleetOperatorDailyStats
+      Storage.Beam.FleetOperatorStats
+      Storage.Beam.FleetOwnerDocumentVerificationConfig
+      Storage.Beam.FleetOwnerInformation
+      Storage.Beam.FleetRCAssociation
+      Storage.Beam.FleetRcDailyStats
+      Storage.Beam.FleetRouteAssociation
+      Storage.Beam.FullFarePolicyProgressiveDetailsPerMinRateSection
+      Storage.Beam.GoHomeConfig
+      Storage.Beam.HyperVergeSdkLogs
+      Storage.Beam.HyperVergeVerification
+      Storage.Beam.IdfyVerification
+      Storage.Beam.IffcoTokioInsurance
+      Storage.Beam.Image
+      Storage.Beam.IntegratedBPPConfig
+      Storage.Beam.Invoice
+      Storage.Beam.KioskLocation
+      Storage.Beam.KioskLocationTranslation
+      Storage.Beam.KnowledgeCenter
+      Storage.Beam.LeaderBoardConfigs
+      Storage.Beam.LlmPrompt
+      Storage.Beam.LmsCertificate
+      Storage.Beam.LmsModule
+      Storage.Beam.LmsModuleTranslation
+      Storage.Beam.LmsModuleVideoInformation
+      Storage.Beam.LmsVideoTranslation
+      Storage.Beam.Location
+      Storage.Beam.LocationMapping
+      Storage.Beam.Mandate
+      Storage.Beam.MediaFileDocument
+      Storage.Beam.Merchant
+      Storage.Beam.MerchantClientConfig
+      Storage.Beam.MerchantMessage
+      Storage.Beam.MerchantOperatingCity
+      Storage.Beam.MerchantPaymentMethod
+      Storage.Beam.MerchantPushNotification
+      Storage.Beam.MerchantServiceConfig
+      Storage.Beam.MerchantServiceUsageConfig
+      Storage.Beam.MerchantState
+      Storage.Beam.Message
+      Storage.Beam.MessageDictionary
+      Storage.Beam.MessageReport
+      Storage.Beam.MessageTranslation
+      Storage.Beam.MetaData
+      Storage.Beam.ModuleCompletionInformation
+      Storage.Beam.MonetaryRewardConfig
+      Storage.Beam.MorthVerification
+      Storage.Beam.Notification
+      Storage.Beam.OperationHub
+      Storage.Beam.OperationHubRequests
+      Storage.Beam.Overlay
+      Storage.Beam.PayoutConfig
+      Storage.Beam.PayoutStatusHistory
+      Storage.Beam.Person
+      Storage.Beam.PlaceNameCache
+      Storage.Beam.Plan
+      Storage.Beam.PlanTranslation
+      Storage.Beam.PurchaseHistory
+      Storage.Beam.QuestionInformation
+      Storage.Beam.QuestionModuleMapping
+      Storage.Beam.Rating
+      Storage.Beam.RCStats
+      Storage.Beam.RCValidationRules
+      Storage.Beam.ReelsData
+      Storage.Beam.RegistrationToken
+      Storage.Beam.RegistryMapFallback
+      Storage.Beam.Reminder
+      Storage.Beam.ReminderConfig
+      Storage.Beam.ReviewRequest
+      Storage.Beam.Ride
+      Storage.Beam.RideDetails
+      Storage.Beam.RiderDetails
+      Storage.Beam.RiderDriverCorrelation
+      Storage.Beam.RideRelatedNotificationConfig
+      Storage.Beam.Route
+      Storage.Beam.RouteTripStopMapping
+      Storage.Beam.ScheduledPayout
+      Storage.Beam.ScheduledPayoutConfig
+      Storage.Beam.SearchReqLocation
+      Storage.Beam.SearchRequest
+      Storage.Beam.SearchRequestForDriver
+      Storage.Beam.SearchTry
+      Storage.Beam.SpecialZoneQueueRequest
+      Storage.Beam.Station
+      Storage.Beam.StclMembership
+      Storage.Beam.StopInformation
+      Storage.Beam.SubscriptionConfig
+      Storage.Beam.SubscriptionPurchase
+      Storage.Beam.SurgePricing
+      Storage.Beam.TDSDistributionPdfFile
+      Storage.Beam.TDSDistributionRecord
+      Storage.Beam.Translations
+      Storage.Beam.TransporterConfig
+      Storage.Beam.TripAlertRequest
+      Storage.Beam.TripTransaction
+      Storage.Beam.UiDriverConfig
+      Storage.Beam.ValueAddNP
+      Storage.Beam.Vehicle
+      Storage.Beam.VehicleDetails
+      Storage.Beam.VehicleFitnessCertificate
+      Storage.Beam.VehicleInfo
+      Storage.Beam.VehicleInsurance
+      Storage.Beam.VehicleNOC
+      Storage.Beam.VehiclePermit
+      Storage.Beam.VehiclePUC
+      Storage.Beam.VehicleRegistrationCertificate
+      Storage.Beam.VehicleRouteMapping
+      Storage.Beam.VehicleServiceTier
+      Storage.Beam.VendorFee
+      Storage.Beam.VendorSplitDetails
+      Storage.Beam.Volunteer
+      Storage.Beam.WalletTransaction
+      Storage.Beam.WhiteListOrg
+      Storage.CachedQueries.CancellationFarePolicy
+      Storage.CachedQueries.FeedbackForm
+      Storage.CachedQueries.FleetBadgeAssociation
+      Storage.CachedQueries.Plan
+      Storage.CachedQueries.SurgePricing
+      Storage.Queries.AadhaarCard
+      Storage.Queries.AadhaarOtpReq
+      Storage.Queries.AadhaarOtpVerify
+      Storage.Queries.AlertRequest
+      Storage.Queries.BackgroundVerification
+      Storage.Queries.BapMetadata
+      Storage.Queries.BecknConfig
+      Storage.Queries.BlackListOrg
+      Storage.Queries.BlockedRoute
+      Storage.Queries.Booking
+      Storage.Queries.BookingCancellationReason
+      Storage.Queries.BookingLocation
+      Storage.Queries.BookingUpdateRequest
+      Storage.Queries.BusinessEvent
+      Storage.Queries.BusinessLicense
+      Storage.Queries.CallFeedback
+      Storage.Queries.CallFeedbackOptions
+      Storage.Queries.CallStatus
+      Storage.Queries.CancellationCharges
+      Storage.Queries.CancellationDuesDetails
+      Storage.Queries.CancellationFarePolicy
+      Storage.Queries.CancellationReason
+      Storage.Queries.Client
+      Storage.Queries.CommonDriverOnboardingDocuments
+      Storage.Queries.Communication
+      Storage.Queries.CommunicationDelivery
+      Storage.Queries.ConditionalCharges
+      Storage.Queries.DailyStats
+      Storage.Queries.DigilockerVerification
+      Storage.Queries.DocumentReminderHistory
+      Storage.Queries.DocumentVerificationConfig
+      Storage.Queries.DomainDiscountConfig
+      Storage.Queries.DriverBankAccount
+      Storage.Queries.DriverBlockReason
+      Storage.Queries.DriverBlockTransactions
+      Storage.Queries.DriverFee
+      Storage.Queries.DriverGoHomeRequest
+      Storage.Queries.DriverGstin
+      Storage.Queries.DriverGullakAssociation
+      Storage.Queries.DriverHomeLocation
+      Storage.Queries.DriverIdentityInfo
+      Storage.Queries.DriverInformation
+      Storage.Queries.DriverIntelligentPoolConfig
+      Storage.Queries.DriverLicense
+      Storage.Queries.DriverModuleCompletion
+      Storage.Queries.DriverOperatorAssociation
+      Storage.Queries.DriverPanCard
+      Storage.Queries.DriverPlan
+      Storage.Queries.DriverPoolConfig
+      Storage.Queries.DriverProfileQuestions
+      Storage.Queries.DriverQuote
+      Storage.Queries.DriverRCAssociation
+      Storage.Queries.DriverReferral
+      Storage.Queries.DriverRidePayoutBankAccount
+      Storage.Queries.DriverSSN
+      Storage.Queries.DriverStats
+      Storage.Queries.DriverUdyam
+      Storage.Queries.EntityInfo
+      Storage.Queries.Estimate
+      Storage.Queries.Exophone
+      Storage.Queries.Faq
+      Storage.Queries.FareProduct
+      Storage.Queries.Feedback
+      Storage.Queries.FeedbackBadge
+      Storage.Queries.FeedbackForm
+      Storage.Queries.FleetBadge
+      Storage.Queries.FleetBadgeAssociation
+      Storage.Queries.FleetBookingAssignments
+      Storage.Queries.FleetBookingInformation
+      Storage.Queries.FleetConfig
+      Storage.Queries.FleetDriverAssociation
+      Storage.Queries.FleetMemberAssociation
+      Storage.Queries.FleetOperatorAssociation
+      Storage.Queries.FleetOperatorDailyStats
+      Storage.Queries.FleetOperatorStats
+      Storage.Queries.FleetOwnerDocumentVerificationConfig
+      Storage.Queries.FleetOwnerInformation
+      Storage.Queries.FleetRCAssociation
+      Storage.Queries.FleetRcDailyStats
+      Storage.Queries.FleetRouteAssociation
+      Storage.Queries.FullFarePolicyProgressiveDetailsPerMinRateSection
+      Storage.Queries.GoHomeConfig
+      Storage.Queries.HyperVergeSdkLogs
+      Storage.Queries.HyperVergeVerification
+      Storage.Queries.IdfyVerification
+      Storage.Queries.IffcoTokioInsurance
+      Storage.Queries.Image
+      Storage.Queries.IntegratedBPPConfig
+      Storage.Queries.Invoice
+      Storage.Queries.KioskLocation
+      Storage.Queries.KioskLocationTranslation
+      Storage.Queries.KnowledgeCenter
+      Storage.Queries.LeaderBoardConfigs
+      Storage.Queries.LlmPrompt
+      Storage.Queries.LmsCertificate
+      Storage.Queries.LmsModule
+      Storage.Queries.LmsModuleTranslation
+      Storage.Queries.LmsModuleVideoInformation
+      Storage.Queries.LmsVideoTranslation
+      Storage.Queries.Location
+      Storage.Queries.LocationMapping
+      Storage.Queries.Mandate
+      Storage.Queries.MediaFileDocument
+      Storage.Queries.Merchant
+      Storage.Queries.MerchantClientConfig
+      Storage.Queries.MerchantMessage
+      Storage.Queries.MerchantOperatingCity
+      Storage.Queries.MerchantPaymentMethod
+      Storage.Queries.MerchantPushNotification
+      Storage.Queries.MerchantServiceConfig
+      Storage.Queries.MerchantServiceUsageConfig
+      Storage.Queries.MerchantState
+      Storage.Queries.Message
+      Storage.Queries.MessageDictionary
+      Storage.Queries.MessageReport
+      Storage.Queries.MessageTranslation
+      Storage.Queries.MetaData
+      Storage.Queries.ModuleCompletionInformation
+      Storage.Queries.MonetaryRewardConfig
+      Storage.Queries.MorthVerification
+      Storage.Queries.Notification
+      Storage.Queries.OperationHub
+      Storage.Queries.OperationHubRequests
+      Storage.Queries.OrphanInstances.AadhaarCard
+      Storage.Queries.OrphanInstances.AlertRequest
+      Storage.Queries.OrphanInstances.BackgroundVerification
+      Storage.Queries.OrphanInstances.Booking
+      Storage.Queries.OrphanInstances.BookingCancellationReason
+      Storage.Queries.OrphanInstances.BusinessEvent
+      Storage.Queries.OrphanInstances.CallStatus
+      Storage.Queries.OrphanInstances.CancellationDuesDetails
+      Storage.Queries.OrphanInstances.CancellationReason
+      Storage.Queries.OrphanInstances.Communication
+      Storage.Queries.OrphanInstances.CommunicationDelivery
+      Storage.Queries.OrphanInstances.DailyStats
+      Storage.Queries.OrphanInstances.DigilockerVerification
+      Storage.Queries.OrphanInstances.DocumentVerificationConfig
+      Storage.Queries.OrphanInstances.DriverBankAccount
+      Storage.Queries.OrphanInstances.DriverBlockReason
+      Storage.Queries.OrphanInstances.DriverFee
+      Storage.Queries.OrphanInstances.DriverGoHomeRequest
+      Storage.Queries.OrphanInstances.DriverGstin
+      Storage.Queries.OrphanInstances.DriverHomeLocation
+      Storage.Queries.OrphanInstances.DriverInformation
+      Storage.Queries.OrphanInstances.DriverLicense
+      Storage.Queries.OrphanInstances.DriverOperatorAssociation
+      Storage.Queries.OrphanInstances.DriverPanCard
+      Storage.Queries.OrphanInstances.DriverPlan
+      Storage.Queries.OrphanInstances.DriverProfileQuestions
+      Storage.Queries.OrphanInstances.DriverQuote
+      Storage.Queries.OrphanInstances.DriverRCAssociation
+      Storage.Queries.OrphanInstances.DriverReferral
+      Storage.Queries.OrphanInstances.DriverSSN
+      Storage.Queries.OrphanInstances.DriverStats
+      Storage.Queries.OrphanInstances.Exophone
+      Storage.Queries.OrphanInstances.FareProduct
+      Storage.Queries.OrphanInstances.Feedback
+      Storage.Queries.OrphanInstances.FeedbackBadge
+      Storage.Queries.OrphanInstances.FeedbackForm
+      Storage.Queries.OrphanInstances.FleetBadge
+      Storage.Queries.OrphanInstances.FleetBadgeAssociation
+      Storage.Queries.OrphanInstances.FleetBookingAssignments
+      Storage.Queries.OrphanInstances.FleetBookingInformation
+      Storage.Queries.OrphanInstances.FleetDriverAssociation
+      Storage.Queries.OrphanInstances.FleetMemberAssociation
+      Storage.Queries.OrphanInstances.FleetOperatorAssociation
+      Storage.Queries.OrphanInstances.FleetOwnerInformation
+      Storage.Queries.OrphanInstances.FleetRCAssociation
+      Storage.Queries.OrphanInstances.FleetRcDailyStats
+      Storage.Queries.OrphanInstances.IffcoTokioInsurance
+      Storage.Queries.OrphanInstances.Image
+      Storage.Queries.OrphanInstances.IntegratedBPPConfig
+      Storage.Queries.OrphanInstances.Invoice
+      Storage.Queries.OrphanInstances.KioskLocation
+      Storage.Queries.OrphanInstances.KnowledgeCenter
+      Storage.Queries.OrphanInstances.Location
+      Storage.Queries.OrphanInstances.LocationMapping
+      Storage.Queries.OrphanInstances.Mandate
+      Storage.Queries.OrphanInstances.MediaFileDocument
+      Storage.Queries.OrphanInstances.Merchant
+      Storage.Queries.OrphanInstances.MerchantClientConfig
+      Storage.Queries.OrphanInstances.MerchantOperatingCity
+      Storage.Queries.OrphanInstances.MerchantPaymentMethod
+      Storage.Queries.OrphanInstances.MerchantServiceConfig
+      Storage.Queries.OrphanInstances.Message
+      Storage.Queries.OrphanInstances.MessageReport
+      Storage.Queries.OrphanInstances.MonetaryRewardConfig
+      Storage.Queries.OrphanInstances.Notification
+      Storage.Queries.OrphanInstances.OperationHub
+      Storage.Queries.OrphanInstances.OperationHubRequests
+      Storage.Queries.OrphanInstances.PayoutConfig
+      Storage.Queries.OrphanInstances.Person
+      Storage.Queries.OrphanInstances.Plan
+      Storage.Queries.OrphanInstances.PurchaseHistory
+      Storage.Queries.OrphanInstances.Rating
+      Storage.Queries.OrphanInstances.RegistrationToken
+      Storage.Queries.OrphanInstances.ReviewRequest
+      Storage.Queries.OrphanInstances.Ride
+      Storage.Queries.OrphanInstances.RideDetails
+      Storage.Queries.OrphanInstances.RiderDetails
+      Storage.Queries.OrphanInstances.RiderDriverCorrelation
+      Storage.Queries.OrphanInstances.Route
+      Storage.Queries.OrphanInstances.SearchRequest
+      Storage.Queries.OrphanInstances.SearchRequestForDriver
+      Storage.Queries.OrphanInstances.SearchTry
+      Storage.Queries.OrphanInstances.SpecialZoneQueueRequest
+      Storage.Queries.OrphanInstances.Station
+      Storage.Queries.OrphanInstances.StclMembership
+      Storage.Queries.OrphanInstances.SubscriptionPurchase
+      Storage.Queries.OrphanInstances.TDSDistributionPdfFile
+      Storage.Queries.OrphanInstances.Translations
+      Storage.Queries.OrphanInstances.TransporterConfig
+      Storage.Queries.OrphanInstances.TripAlertRequest
+      Storage.Queries.OrphanInstances.TripTransaction
+      Storage.Queries.OrphanInstances.UiDriverConfig
+      Storage.Queries.OrphanInstances.Vehicle
+      Storage.Queries.OrphanInstances.VehicleDetails
+      Storage.Queries.OrphanInstances.VehicleInsurance
+      Storage.Queries.OrphanInstances.VehicleRegistrationCertificate
+      Storage.Queries.OrphanInstances.VehicleRouteMapping
+      Storage.Queries.OrphanInstances.VendorFee
+      Storage.Queries.OrphanInstances.Volunteer
+      Storage.Queries.OrphanInstances.WalletTransaction
+      Storage.Queries.OrphanInstances.WhiteListOrg
+      Storage.Queries.Overlay
+      Storage.Queries.PayoutConfig
+      Storage.Queries.PayoutStatusHistory
+      Storage.Queries.Person
+      Storage.Queries.PlaceNameCache
+      Storage.Queries.Plan
+      Storage.Queries.PlanTranslation
+      Storage.Queries.PurchaseHistory
+      Storage.Queries.QuestionInformation
+      Storage.Queries.QuestionModuleMapping
+      Storage.Queries.Rating
+      Storage.Queries.RCStats
+      Storage.Queries.RCValidationRules
+      Storage.Queries.ReelsData
+      Storage.Queries.RegistrationToken
+      Storage.Queries.RegistryMapFallback
+      Storage.Queries.Reminder
+      Storage.Queries.ReminderConfig
+      Storage.Queries.ReviewRequest
+      Storage.Queries.Ride
+      Storage.Queries.RideDetails
+      Storage.Queries.RiderDetails
+      Storage.Queries.RiderDriverCorrelation
+      Storage.Queries.RideRelatedNotificationConfig
+      Storage.Queries.Route
+      Storage.Queries.RouteTripStopMapping
+      Storage.Queries.ScheduledPayout
+      Storage.Queries.ScheduledPayoutConfig
+      Storage.Queries.SearchReqLocation
+      Storage.Queries.SearchRequest
+      Storage.Queries.SearchRequestForDriver
+      Storage.Queries.SearchTry
+      Storage.Queries.SpecialZoneQueueRequest
+      Storage.Queries.Station
+      Storage.Queries.StclMembership
+      Storage.Queries.StopInformation
+      Storage.Queries.SubscriptionConfig
+      Storage.Queries.SubscriptionPurchase
+      Storage.Queries.SurgePricing
+      Storage.Queries.TDSDistributionPdfFile
+      Storage.Queries.TDSDistributionRecord
+      Storage.Queries.Translations
+      Storage.Queries.TransporterConfig
+      Storage.Queries.TripAlertRequest
+      Storage.Queries.TripTransaction
+      Storage.Queries.UiDriverConfig
+      Storage.Queries.ValueAddNP
+      Storage.Queries.Vehicle
+      Storage.Queries.VehicleDetails
+      Storage.Queries.VehicleFitnessCertificate
+      Storage.Queries.VehicleInfo
+      Storage.Queries.VehicleInsurance
+      Storage.Queries.VehicleNOC
+      Storage.Queries.VehiclePermit
+      Storage.Queries.VehiclePUC
+      Storage.Queries.VehicleRegistrationCertificate
+      Storage.Queries.VehicleRouteMapping
+      Storage.Queries.VehicleServiceTier
+      Storage.Queries.VendorFee
+      Storage.Queries.VendorSplitDetails
+      Storage.Queries.Volunteer
+      Storage.Queries.WalletTransaction
+      Storage.Queries.WhiteListOrg
+  other-modules:
+      Paths_dynamic_offer_driver_app
+  hs-source-dirs:
+      src
+      src-read-only
+  default-extensions:
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DerivingStrategies
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      NoImplicitPrelude
+      OverloadedStrings
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      BlockArguments
+      TypeSynonymInstances
+      UndecidableInstances
+      StandaloneDeriving
+      PackageImports
+      TemplateHaskell
+  ghc-options: -fwrite-ide-info -hiedir=.hie -fplugin=RecordDotPreprocessor -Wall -Wcompat -Widentities -fhide-source-paths -Werror -Wwarn=ambiguous-fields
+  build-depends:
+      JuicyPixels
+    , JuicyPixels-extra
+    , aeson
+    , base >=4.7 && <5
+    , base64-bytestring
+    , beam-core
+    , beam-mysql
+    , beam-postgres
+    , beckn-services
+    , beckn-spec
+    , behavior-engine
+    , behavior-tracker
+    , bytestring
+    , casing
+    , cassava
+    , cereal
+    , communication-engine
+    , config-pilot
+    , consequence-engine
+    , containers
+    , cryptonite
+    , cryptostore >=0.2.3.0
+    , dashboard-helper-api
+    , dashcam
+    , data-default-class
+    , directory
+    , either
+    , esqueleto
+    , euler-hs
+    , exceptions
+    , external
+    , extra
+    , finance-kernel
+    , generic-lens
+    , geohash ==1.0.1
+    , gtfs-data-server
+    , hashable
+    , haskell-cac
+    , hedis
+    , hex-text
+    , hspec
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , http-types
+    , json-logic-hs
+    , jwt >=0.11
+    , lens
+    , lens-aeson
+    , location-updates
+    , memory
+    , mobility-core
+    , network-uri
+    , openapi3
+    , passetto-client
+    , passetto-lib
+    , payment
+    , persistent
+    , postgresql-simple
+    , prometheus-client
+    , pureMD5
+    , random
+    , record-dot-preprocessor
+    , record-hasfield
+    , regex-posix
+    , resource-pool
+    , scheduler
+    , scientific
+    , sequelize
+    , servant
+    , servant-client
+    , servant-client-core
+    , servant-multipart
+    , servant-openapi3
+    , servant-server
+    , servant-xml
+    , sessionizer-metrics
+    , shared-services
+    , singletons
+    , singletons-th
+    , special-zone-a
+    , split
+    , stm
+    , string-conversions
+    , template-haskell
+    , temporary
+    , text
+    , text-conversions
+    , text-format
+    , time
+    , unordered-containers
+    , utils
+    , uuid
+    , vector
+    , wai
+    , wai-extra
+    , warp
+    , webhook
+    , x509
+    , xml-conduit
+    , xmlbf
+    , yudhishthira
+  extra-libraries:
+      cac_client
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4
+
+executable dynamic-offer-driver-app-exe
+  main-is: Main.hs
+  hs-source-dirs:
+      server
+  default-extensions:
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DerivingStrategies
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      NoImplicitPrelude
+      OverloadedStrings
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      BlockArguments
+      TypeSynonymInstances
+      UndecidableInstances
+      StandaloneDeriving
+      PackageImports
+      TemplateHaskell
+  ghc-options: -fwrite-ide-info -hiedir=.hie -fplugin=RecordDotPreprocessor -threaded -rtsopts "-with-rtsopts=-N -T"
+  build-depends:
+      JuicyPixels
+    , JuicyPixels-extra
+    , aeson
+    , base >=4.7 && <5
+    , base64-bytestring
+    , beam-core
+    , beam-mysql
+    , beam-postgres
+    , beckn-services
+    , beckn-spec
+    , behavior-engine
+    , behavior-tracker
+    , bytestring
+    , casing
+    , cassava
+    , cereal
+    , communication-engine
+    , config-pilot
+    , consequence-engine
+    , containers
+    , cryptonite
+    , cryptostore >=0.2.3.0
+    , dashboard-helper-api
+    , data-default-class
+    , directory
+    , dynamic-offer-driver-app
+    , either
+    , esqueleto
+    , euler-hs
+    , exceptions
+    , extra
+    , finance-kernel
+    , generic-lens
+    , geohash ==1.0.1
+    , hashable
+    , haskell-cac
+    , hedis
+    , hex-text
+    , hspec
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , http-types
+    , json-logic-hs
+    , jwt >=0.11
+    , lens
+    , lens-aeson
+    , memory
+    , mobility-core
+    , network-uri
+    , openapi3
+    , passetto-client
+    , passetto-lib
+    , persistent
+    , postgresql-simple
+    , prometheus-client
+    , pureMD5
+    , random
+    , record-dot-preprocessor
+    , record-hasfield
+    , regex-posix
+    , resource-pool
+    , scheduler
+    , scientific
+    , sequelize
+    , servant
+    , servant-client
+    , servant-client-core
+    , servant-multipart
+    , servant-openapi3
+    , servant-server
+    , servant-xml
+    , shared-services
+    , singletons
+    , singletons-th
+    , split
+    , stm
+    , string-conversions
+    , template-haskell
+    , temporary
+    , text
+    , text-conversions
+    , text-format
+    , time
+    , unordered-containers
+    , uuid
+    , vector
+    , wai
+    , wai-extra
+    , warp
+    , x509
+    , xml-conduit
+    , xmlbf
+    , yudhishthira
+  extra-libraries:
+      cac_client
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4

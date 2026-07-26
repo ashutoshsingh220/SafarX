@@ -1,0 +1,142 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
+module Storage.Queries.OperationHubRequestsExtra where
+
+import qualified Data.Text as T
+import qualified Database.Beam as B
+import qualified Database.Beam.Query ()
+import qualified Domain.Types.OperationHub as DOH
+import Domain.Types.OperationHubRequests
+import Domain.Types.Person
+import qualified EulerHS.Language as L
+import Kernel.Beam.Functions
+import Kernel.External.Encryption
+import Kernel.Prelude
+import Kernel.Types.Error
+import Kernel.Types.Id
+import Kernel.Utils.Common (CacheFlow, EsqDBFlow, MonadFlow, fromMaybeM, getCurrentTime, logError)
+import qualified Sequelize as Se
+import qualified Storage.Beam.Common as BeamCommon
+import qualified Storage.Beam.OperationHub as BeamOH
+import qualified Storage.Beam.OperationHubRequests as BeamOHR
+import qualified Storage.Beam.Person as BeamP
+import Storage.Queries.OrphanInstances.OperationHub ()
+import Storage.Queries.OrphanInstances.OperationHubRequests ()
+import Storage.Queries.OrphanInstances.Person ()
+
+-- Extra code goes here --
+findAllRequestsInRange ::
+  (EsqDBFlow m r, MonadFlow m, CacheFlow m r) =>
+  UTCTime ->
+  UTCTime ->
+  Int ->
+  Int ->
+  Maybe DbHash ->
+  Maybe DbHash ->
+  Maybe RequestStatus ->
+  Maybe RequestType ->
+  Maybe Text ->
+  Maybe (Id DOH.OperationHub) ->
+  Maybe Text ->
+  Maybe Text ->
+  Maybe (Id Person) ->
+  m [(OperationHubRequests, Maybe Person, DOH.OperationHub)]
+findAllRequestsInRange from to limit offset mbMobileNumberHash mbDriverMobileNumberHash mbReqStatus mbReqType mbCreatorId mbOperationHubId mbOperationHubName mbRegistrationNo mbDriverId = do
+  dbConf <- getReplicaBeamConfig
+  res <- case mbDriverMobileNumberHash of
+    Just driverMobileNumberHash -> do
+      -- Inner join on person table: only return requests where driver's mobile matches
+      r <-
+        L.runDB dbConf $
+          L.findRows $
+            B.select $
+              B.limit_ (toInteger limit) $
+                B.offset_ (toInteger offset) $
+                  B.orderBy_ (\(operationHubRequests, _, _, _) -> B.desc_ operationHubRequests.updatedAt) $
+                    B.filter_'
+                      ( \(operationHubRequests, creator, operationHub, _driverPerson) ->
+                          commonFilters operationHubRequests creator operationHub
+                      )
+                      do
+                        operationHubRequests <- B.all_ (BeamCommon.operationHubRequests BeamCommon.atlasDB)
+                        operationHub <- B.join_ (BeamCommon.operationHub BeamCommon.atlasDB) (\operationHub -> BeamOHR.operationHubId operationHubRequests B.==. BeamOH.id operationHub)
+                        creator <- B.leftJoin_' (B.all_ (BeamCommon.person BeamCommon.atlasDB)) (\creator -> B.sqlBool_ (BeamOHR.creatorId operationHubRequests B.==. BeamP.id creator))
+                        driverPerson <- B.join_' (BeamCommon.person BeamCommon.atlasDB) (\dp -> BeamOHR.driverId operationHubRequests B.==?. B.just_ (BeamP.id dp) B.&&?. BeamP.mobileNumberHash dp B.==?. B.val_ (Just driverMobileNumberHash))
+                        pure (operationHubRequests, creator, operationHub, driverPerson)
+      pure $ fmap (map (\(a, b, c, _) -> (a, b, c))) r
+    Nothing ->
+      -- No driver mobile filter: skip the join entirely
+      L.runDB dbConf $
+        L.findRows $
+          B.select $
+            B.limit_ (toInteger limit) $
+              B.offset_ (toInteger offset) $
+                B.orderBy_ (\(operationHubRequests, _, _) -> B.desc_ operationHubRequests.updatedAt) $
+                  B.filter_'
+                    ( \(operationHubRequests, creator, operationHub) ->
+                        commonFilters operationHubRequests creator operationHub
+                    )
+                    do
+                      operationHubRequests <- B.all_ (BeamCommon.operationHubRequests BeamCommon.atlasDB)
+                      operationHub <- B.join_ (BeamCommon.operationHub BeamCommon.atlasDB) (\operationHub -> BeamOHR.operationHubId operationHubRequests B.==. BeamOH.id operationHub)
+                      creator <- B.leftJoin_' (B.all_ (BeamCommon.person BeamCommon.atlasDB)) (\creator -> B.sqlBool_ (BeamOHR.creatorId operationHubRequests B.==. BeamP.id creator))
+                      pure (operationHubRequests, creator, operationHub)
+  case res of
+    Right res' -> do
+      finalRes <- forM res' $ \(operationHubRequests, mbPerson, operationHub) -> runMaybeT $ do
+        ohr <- MaybeT $ fromTType' operationHubRequests
+        oh <- MaybeT $ fromTType' operationHub
+        mbCreator <- lift $ maybe (pure Nothing) fromTType' mbPerson
+        pure (ohr, mbCreator, oh)
+      pure $ catMaybes finalRes
+    Left err -> do
+      logError $ "Error in findAllRequestsInRange " <> show err
+      pure []
+  where
+    commonFilters operationHubRequests creator operationHub =
+      B.sqlBool_ (operationHubRequests.createdAt B.>=. B.val_ from)
+        B.&&?. B.sqlBool_ (operationHubRequests.createdAt B.<=. B.val_ to)
+        B.&&?. maybe (B.sqlBool_ $ B.val_ True) (\creatorId -> operationHubRequests.creatorId B.==?. B.val_ creatorId) mbCreatorId
+        B.&&?. maybe (B.sqlBool_ $ B.val_ True) (\reqType -> operationHubRequests.requestType B.==?. B.val_ reqType) mbReqType
+        B.&&?. maybe (B.sqlBool_ $ B.val_ True) (\reqStatus -> operationHubRequests.requestStatus B.==?. B.val_ reqStatus) mbReqStatus
+        B.&&?. maybe (B.sqlBool_ $ B.val_ True) (\mobileNumberSearchStringDB -> B.maybe_ (B.sqlBool_ $ B.val_ False) (\creatorMobileHash -> B.sqlBool_ (creatorMobileHash B.==. B.val_ (Just mobileNumberSearchStringDB))) creator.mobileNumberHash) mbMobileNumberHash
+        B.&&?. maybe (B.sqlBool_ $ B.val_ True) (\operationHubId -> operationHubRequests.operationHubId B.==?. B.val_ operationHubId.getId) mbOperationHubId
+        B.&&?. maybe (B.sqlBool_ $ B.val_ True) (\registrationNo -> B.maybe_ (B.sqlBool_ $ B.val_ False) (\rcNo -> B.sqlBool_ (B.lower_ rcNo `B.like_` (B.val_ ("%" <> T.toLower registrationNo <> "%")))) operationHubRequests.registrationNo) mbRegistrationNo
+        B.&&?. maybe (B.sqlBool_ $ B.val_ True) (\operationHubName -> B.sqlBool_ (B.lower_ operationHub.name `B.like_` (B.val_ ("%" <> T.toLower operationHubName <> "%")))) mbOperationHubName
+        B.&&?. maybe (B.sqlBool_ $ B.val_ True) (\driverId -> operationHubRequests.driverId B.==?. B.val_ (Just driverId.getId)) mbDriverId
+
+-- Custom deletes with Id Person (DB columns are Maybe; avoid Maybe in API)
+deleteByDriverId :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => Id Person -> m ()
+deleteByDriverId driverId = do
+  deleteWithKV [Se.Is BeamOHR.driverId $ Se.Eq (Just $ getId driverId)]
+
+deleteByOperatorId :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => Id Person -> m ()
+deleteByOperatorId operatorId = do
+  deleteWithKV [Se.Is BeamOHR.operatorId $ Se.Eq (Just $ getId operatorId)]
+
+findLatestByDriverIdAndRequestType :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => Id Person -> RequestType -> m (Maybe OperationHubRequests)
+findLatestByDriverIdAndRequestType driverId requestType = do
+  findAllWithOptionsKV
+    [ Se.And
+        [ Se.Is BeamOHR.driverId $ Se.Eq (Just $ getId driverId),
+          Se.Is BeamOHR.requestType $ Se.Eq requestType
+        ]
+    ]
+    (Se.Desc BeamOHR.createdAt)
+    (Just 1)
+    Nothing
+    <&> listToMaybe
+
+findLatestByRegistrationNoAndRequestType :: (EsqDBFlow m r, MonadFlow m, CacheFlow m r) => Text -> RequestType -> m (Maybe OperationHubRequests)
+findLatestByRegistrationNoAndRequestType registrationNo requestType = do
+  findAllWithOptionsKV
+    [ Se.And
+        [ Se.Is BeamOHR.registrationNo $ Se.Eq (Just registrationNo),
+          Se.Is BeamOHR.requestType $ Se.Eq requestType
+        ]
+    ]
+    (Se.Desc BeamOHR.createdAt)
+    (Just 1)
+    Nothing
+    <&> listToMaybe

@@ -1,0 +1,113 @@
+module Domain.Action.Dashboard.AppManagement.DriverWallet
+  ( getDriverWalletWalletBalance,
+    getDriverWalletWalletTransactions,
+    getDriverWalletWalletTransactionHistory,
+    postDriverWalletWalletPayout,
+    postDriverWalletWalletTopup,
+    postDriverWalletWalletAirportCashRecharge,
+    getDriverWalletWalletPayoutHistory,
+  )
+where
+
+import qualified API.Types.Dashboard.AppManagement.DriverWallet as DDashboardDriverWallet
+import qualified API.Types.UI.DriverWallet as DriverWallet
+import qualified Domain.Action.UI.DriverWallet as DDriverWallet
+import qualified Domain.Action.UI.Plan as Plan
+import qualified Domain.Types.Merchant
+import qualified Domain.Types.Person as DP
+import qualified Environment
+import qualified Kernel.Prelude
+import qualified Kernel.Types.APISuccess as APISuccess
+import qualified Kernel.Types.Beckn.Context
+import qualified Kernel.Types.Id
+import qualified Lib.Payment.Domain.Types.PayoutRequest as PR
+import SharedLogic.Merchant (findMerchantByShortId)
+import qualified Storage.CachedQueries.Merchant.MerchantOperatingCity as CQMOC
+import qualified Tools.ActorInfo as ActorInfo
+
+getDriverWalletWalletBalance ::
+  Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant ->
+  Kernel.Types.Beckn.Context.City ->
+  Kernel.Types.Id.Id DP.Person ->
+  Environment.Flow DriverWallet.WalletBalanceResponse
+getDriverWalletWalletBalance merchantShortId opCity driverId = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCityId <- CQMOC.getMerchantOpCityId Kernel.Prelude.Nothing merchant (Kernel.Prelude.Just opCity)
+  DDriverWallet.getWalletBalance (Kernel.Prelude.Just driverId, merchant.id, merchantOpCityId)
+
+getDriverWalletWalletTransactions ::
+  Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant ->
+  Kernel.Types.Beckn.Context.City ->
+  Kernel.Types.Id.Id DP.Person ->
+  Kernel.Prelude.Maybe Kernel.Prelude.UTCTime ->
+  Kernel.Prelude.Maybe Kernel.Prelude.UTCTime ->
+  Kernel.Prelude.Maybe DriverWallet.AggregationLevel ->
+  Environment.Flow DriverWallet.WalletSummaryResponse
+getDriverWalletWalletTransactions merchantShortId opCity driverId mbFromDate mbToDate mbAggBy = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCityId <- CQMOC.getMerchantOpCityId Kernel.Prelude.Nothing merchant (Kernel.Prelude.Just opCity)
+  DDriverWallet.getWalletTransactions (Kernel.Prelude.Just driverId, merchant.id, merchantOpCityId) mbFromDate mbToDate mbAggBy
+
+postDriverWalletWalletPayout ::
+  Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant ->
+  Kernel.Types.Beckn.Context.City ->
+  Kernel.Types.Id.Id DP.Person ->
+  Kernel.Prelude.Maybe Kernel.Prelude.Text ->
+  Environment.Flow APISuccess.APISuccess
+postDriverWalletWalletPayout merchantShortId opCity driverId mbRequestorId = ActorInfo.withDashboardMbPersonIdActorInfo ((Kernel.Types.Id.Id @DP.Person) Kernel.Prelude.<$> mbRequestorId) Kernel.Prelude.$ do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCityId <- CQMOC.getMerchantOpCityId Kernel.Prelude.Nothing merchant (Kernel.Prelude.Just opCity)
+  DDriverWallet.postWalletPayout (Kernel.Prelude.Just driverId, merchant.id, merchantOpCityId)
+
+postDriverWalletWalletTopup ::
+  Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant ->
+  Kernel.Types.Beckn.Context.City ->
+  Kernel.Types.Id.Id DP.Person ->
+  DriverWallet.TopUpRequest ->
+  Environment.Flow Plan.PlanSubscribeRes
+postDriverWalletWalletTopup merchantShortId opCity driverId req = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCityId <- CQMOC.getMerchantOpCityId Kernel.Prelude.Nothing merchant (Kernel.Prelude.Just opCity)
+  DDriverWallet.postWalletTopup (Kernel.Prelude.Just driverId, merchant.id, merchantOpCityId) req
+
+postDriverWalletWalletAirportCashRecharge ::
+  Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant ->
+  Kernel.Types.Beckn.Context.City ->
+  Kernel.Types.Id.Id DP.Person ->
+  Kernel.Prelude.Maybe Kernel.Prelude.Text ->
+  DDashboardDriverWallet.AirportCashRechargeRequest ->
+  Environment.Flow APISuccess.APISuccess
+postDriverWalletWalletAirportCashRecharge merchantShortId opCity driverId mbRequestorId req = ActorInfo.withDashboardMbPersonIdActorInfo ((Kernel.Types.Id.Id @DP.Person) Kernel.Prelude.<$> mbRequestorId) Kernel.Prelude.$ do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCityId <- CQMOC.getMerchantOpCityId Kernel.Prelude.Nothing merchant (Kernel.Prelude.Just opCity)
+  DDriverWallet.recordAirportCashRecharge (driverId, merchant.id, merchantOpCityId) req.amount req.referenceId
+  Kernel.Prelude.pure APISuccess.Success
+
+getDriverWalletWalletPayoutHistory ::
+  Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant ->
+  Kernel.Types.Beckn.Context.City ->
+  Kernel.Types.Id.Id DP.Person ->
+  Kernel.Prelude.Maybe Kernel.Prelude.UTCTime ->
+  Kernel.Prelude.Maybe Kernel.Prelude.UTCTime ->
+  Kernel.Prelude.Maybe [PR.PayoutRequestStatus] ->
+  Kernel.Prelude.Maybe Kernel.Prelude.Int ->
+  Kernel.Prelude.Maybe Kernel.Prelude.Int ->
+  Environment.Flow DriverWallet.PayoutHistoryResponse
+getDriverWalletWalletPayoutHistory merchantShortId opCity driverId mbFrom mbTo mbStatuses mbLimit mbOffset = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCityId <- CQMOC.getMerchantOpCityId Kernel.Prelude.Nothing merchant (Kernel.Prelude.Just opCity)
+  DDriverWallet.getWalletPayoutHistory (Kernel.Prelude.Just driverId, merchant.id, merchantOpCityId) mbFrom mbTo mbStatuses mbLimit mbOffset
+
+getDriverWalletWalletTransactionHistory ::
+  Kernel.Types.Id.ShortId Domain.Types.Merchant.Merchant ->
+  Kernel.Types.Beckn.Context.City ->
+  Kernel.Types.Id.Id DP.Person ->
+  Kernel.Prelude.Maybe Kernel.Prelude.UTCTime ->
+  Kernel.Prelude.Maybe Kernel.Prelude.UTCTime ->
+  Kernel.Prelude.Maybe Kernel.Prelude.Int ->
+  Kernel.Prelude.Maybe Kernel.Prelude.Int ->
+  Environment.Flow DriverWallet.WalletTransactionHistoryResponse
+getDriverWalletWalletTransactionHistory merchantShortId opCity driverId mbFromDate mbToDate mbLimit mbOffset = do
+  merchant <- findMerchantByShortId merchantShortId
+  merchantOpCityId <- CQMOC.getMerchantOpCityId Kernel.Prelude.Nothing merchant (Kernel.Prelude.Just opCity)
+  DDriverWallet.getWalletTransactionHistory (Kernel.Prelude.Just driverId, merchant.id, merchantOpCityId) mbFromDate mbToDate mbLimit mbOffset

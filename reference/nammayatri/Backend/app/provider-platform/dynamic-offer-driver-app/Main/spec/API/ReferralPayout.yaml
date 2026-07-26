@@ -1,0 +1,108 @@
+imports:
+  MerchantOperatingCity: Domain.Types.MerchantOperatingCity
+  Merchant: Domain.Types.Merchant
+  Person: Domain.Types.Person
+  Text: Data.Text
+  Money: Kernel.Types.Common
+  Currency: Kernel.Types.Common
+  PayoutStatus: Domain.Types.DailyStats
+  ClearDuesRes: Domain.Action.UI.Driver
+  PayoutOrderStatusResp: Kernel.External.Payout.Interface.Types
+  TransactionStatus: Kernel.External.Payment.Juspay.Types.Common
+  VpaVerificationMode: Domain.Types.PayoutConfig
+
+module: ReferralPayout
+
+types:
+
+  ReferralEarningsRes:
+    totalReferralCount: Int
+    dailyEarnings : [DailyEarning]
+    vpaId: Maybe Text
+    orderId: Maybe Text
+    orderStatus: Maybe TransactionStatus
+    referralRewardAmountPerRide: HighPrecMoney
+    payoutRegistrationAmount: HighPrecMoney
+    d2dReferralEarnings: Maybe [DailyEarning]
+    d2dReferralCount: Maybe Int
+    d2cReferralEarnings: Maybe [DailyEarning]
+    d2cReferralCount: Maybe Int
+    referralRewardAmountPerRideForD2DPayout: Maybe HighPrecMoney
+    payoutRegAmountRefunded: Maybe HighPrecMoney
+    vpaVerificationMode: VpaVerificationMode
+
+  UpdatePayoutVpaReq:
+    vpa: Text
+
+  DailyEarning:
+    earnings: HighPrecMoney
+    activatedItems: Int
+    earningDate: Day
+    referrals: Int
+    status: PayoutStatus
+    payoutOrderId: Maybe Text
+
+  CreatePayoutOrderReq:
+    orderId: Text
+    amount: HighPrecMoney
+    customerPhone: Text
+    customerEmail: Text
+    customerId: Text
+    orderType: Text
+    remark: Text
+    customerName: Text
+    customerVpa: Maybe Text
+    isDynamicWebhookRequired: Bool
+
+
+apis:
+  # get API for referral earnings
+  - GET:
+      endpoint: payout/referral/earnings
+      auth: TokenAuth PROVIDER_TYPE
+      mandatoryQuery:
+        fromDate: Day
+        toDate: Day
+      response:
+        type: API.Types.UI.ReferralPayout.ReferralEarningsRes
+
+  # post API to delete the existing payout vpa
+  - POST:
+      endpoint: payout/delete/vpa
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: Kernel.Types.APISuccess.APISuccess
+
+  # post API to update payout vpa (API_BASED verification)
+  - POST:
+      endpoint: /payout/update/vpa
+      auth: TokenAuth PROVIDER_TYPE
+      request:
+        type: API.Types.UI.ReferralPayout.UpdatePayoutVpaReq
+      response:
+        type: Kernel.Types.APISuccess.APISuccess
+
+  # get API for payout registration
+  - GET:
+      endpoint: /payout/registration
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: ClearDuesRes
+
+  # post API for create payout order
+  - POST:
+      endpoint: /payout/createOrder
+      auth: TokenAuth PROVIDER_TYPE
+      request:
+        type: CreatePayoutOrderReq
+      response:
+        type: Kernel.Types.APISuccess.APISuccess
+
+  # get API for payout order status
+  - GET:
+      endpoint: /payout/order/status
+      auth: TokenAuth PROVIDER_TYPE
+      mandatoryQuery:
+        orderId: Text
+      response:
+        type: PayoutOrderStatusResp

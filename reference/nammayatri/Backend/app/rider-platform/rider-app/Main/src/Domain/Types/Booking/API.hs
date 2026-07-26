@@ -1,0 +1,692 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+{-# OPTIONS_GHC -Wno-deprecations #-}
+
+module Domain.Types.Booking.API where
+
+-- TODO:Move api entity of booking to UI
+
+import qualified BecknV2.OnDemand.Enums as VehicleCategory
+import Data.Aeson (eitherDecode, encode)
+import Data.OpenApi (ToSchema (..), genericDeclareNamedSchema)
+import qualified Data.Text as T
+import qualified Domain.Action.UI.FareBreakup as DAFareBreakup
+import qualified Domain.Action.UI.Location as SLoc
+import Domain.SharedLogic.RideDiscount (isProjectedFareParamTag)
+import Domain.Types
+import Domain.Types.Booking
+import Domain.Types.BookingCancellationReason
+import Domain.Types.BookingStatus
+import qualified Domain.Types.BppDetails as DBppDetails
+import Domain.Types.CancellationReason
+import qualified Domain.Types.Exophone as DExophone
+import qualified Domain.Types.Extra.MerchantPaymentMethod as DMPM
+import Domain.Types.Extra.Ride (RideAPIEntity (..))
+import Domain.Types.FareBreakup as DFareBreakup
+import qualified Domain.Types.Journey as DJourney
+import Domain.Types.Location (Location, LocationAPIEntity)
+import qualified Domain.Types.MerchantOperatingCity as DMOC
+import qualified Domain.Types.OfferEntity as DOfferEntity
+import Domain.Types.ParcelType as DParcel
+import qualified Domain.Types.Person as Person
+import qualified Domain.Types.Ride as DRide
+import qualified Domain.Types.RideStatus as DRide
+import qualified Domain.Types.ServiceTierType as DVST
+import qualified Domain.Types.StopInformation as DSI
+import qualified Domain.Types.Trip as Trip
+import Domain.Types.VehicleVariant (VehicleVariant (..))
+import EulerHS.Prelude hiding (elem, find, id, length, map, notElem, null)
+import Kernel.Beam.Functions
+import Kernel.External.Encryption (decrypt)
+import qualified Kernel.External.Payment.Interface as Payment
+import Kernel.External.Types (ServiceFlow)
+import Kernel.Prelude
+import Kernel.Storage.Clickhouse.Config (ClickhouseFlow)
+import Kernel.Storage.Esqueleto.Config (EsqDBReplicaFlow)
+import qualified Kernel.Storage.Hedis as Redis
+import qualified Kernel.Types.Beckn.Context as Context
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import Kernel.Utils.TH (mkHttpInstancesForEnum)
+import Lib.ConfigPilot.Interface.Types (getOneConfig)
+import qualified Lib.Payment.Domain.Types.Refunds as DRefunds
+import qualified Lib.Payment.Storage.Beam.BeamFlow as PaymentBeamFlow
+import qualified Lib.Payment.Storage.HistoryQueries.Refunds as HQRefunds
+import qualified Lib.Payment.Storage.Queries.PaymentOrder as QPaymentOrder
+import Lib.Yudhishthira.Storage.Beam.BeamFlow (BeamFlow)
+import qualified Safety.Domain.Types.Sos as SafetyDSos
+import qualified Safety.Storage.CachedQueries.Sos as SafetyCQSos
+import qualified Safety.Storage.Queries.Sos as SafetyQSos
+import SharedLogic.Booking (getfareBreakups)
+import qualified SharedLogic.Offer as SOffer
+import qualified SharedLogic.Type as SLT
+import Storage.Beam.Sos ()
+import qualified Storage.CachedQueries.BppDetails as CQBPP
+import qualified Storage.CachedQueries.Exophone as CQExophone
+import qualified Storage.CachedQueries.Merchant as CQM
+import qualified Storage.CachedQueries.Merchant.RiderConfig as CQRC
+import qualified Storage.CachedQueries.Sos as CQSos
+import qualified Storage.CachedQueries.ValueAddNP as CQVAN
+import Storage.ConfigPilot.Config.Exophone (ExophoneDimensions (..))
+import qualified Storage.Queries.BookingCancellationReason as QBCR
+import qualified Storage.Queries.BookingPartiesLink as QBPL
+import qualified Storage.Queries.JourneyLeg as QJL
+import qualified Storage.Queries.OfferEntity as QOfferEntity
+import qualified Storage.Queries.Person as QP
+import qualified Storage.Queries.QueriesExtra.RideLite as QRideLite
+import qualified Storage.Queries.Ride as QRide
+import qualified Storage.Queries.StopInformation as QSI
+import Tools.Error
+import qualified Tools.JSON as J
+import qualified Tools.Schema as S
+import qualified Tools.SharedRedisKeys as SharedRedisKeys
+
+data BookingAPIEntity = BookingAPIEntity
+  { id :: Id Booking,
+    status :: BookingStatus,
+    agencyName :: Text,
+    agencyNumber :: Maybe Text,
+    riderMobileNumber :: Maybe Text,
+    riderName :: Maybe Text,
+    estimatedFare :: Money,
+    isBookingUpdated :: Bool,
+    discount :: Maybe Money,
+    estimatedTotalFare :: Money,
+    estimatedFareWithCurrency :: PriceAPIEntity,
+    discountWithCurrency :: Maybe PriceAPIEntity,
+    estimatedTotalFareWithCurrency :: PriceAPIEntity,
+    fromLocation :: LocationAPIEntity,
+    initialPickupLocation :: LocationAPIEntity,
+    driversPreviousRideDropLocLat :: Maybe Double,
+    driversPreviousRideDropLocLon :: Maybe Double,
+    rideList :: [RideAPIEntity],
+    hasNightIssue :: Bool,
+    tripTerms :: [Text],
+    estimatedFareBreakup :: [FareBreakupAPIEntity],
+    fareBreakup :: [FareBreakupAPIEntity],
+    bookingDetails :: BookingAPIDetails,
+    tripCategory :: Maybe TripCategory,
+    vehicleCategory :: Maybe VehicleCategory.VehicleCategory,
+    rideScheduledTime :: UTCTime,
+    returnTime :: Maybe UTCTime,
+    rideStartTime :: Maybe UTCTime,
+    rideEndTime :: Maybe UTCTime,
+    duration :: Maybe Seconds,
+    estimatedDuration :: Maybe Seconds,
+    estimatedDistance :: Maybe HighPrecMeters,
+    estimatedDistanceWithUnit :: Maybe Distance,
+    merchantExoPhone :: Text,
+    specialLocationTag :: Maybe Text,
+    specialLocationName :: Maybe Text,
+    paymentMethodId :: Maybe Payment.PaymentMethodId,
+    paymentInstrument :: Maybe DMPM.PaymentInstrument,
+    paymentMode :: Maybe DMPM.PaymentMode,
+    paymentUrl :: Maybe Text,
+    hasDisability :: Maybe Bool,
+    sosStatus :: Maybe SafetyDSos.SosStatus,
+    createdAt :: UTCTime,
+    updatedAt :: UTCTime,
+    isPetRide :: Bool,
+    isValueAddNP :: Bool,
+    vehicleServiceTierType :: DVST.ServiceTierType,
+    vehicleServiceTierSeatingCapacity :: Maybe Int,
+    vehicleServiceTierLuggageCapacity :: Maybe Int,
+    vehicleServiceTierAirConditioned :: Maybe Double,
+    vehicleIconUrl :: Maybe Text,
+    billingCategory :: SLT.BillingCategory,
+    isAirConditioned :: Maybe Bool,
+    serviceTierName :: Maybe Text,
+    serviceTierShortDesc :: Maybe Text,
+    isScheduled :: Bool,
+    isAlreadyFav :: Maybe Bool,
+    favCount :: Maybe Int,
+    cancellationReason :: Maybe BookingCancellationReasonAPIEntity,
+    estimatedEndTimeRange :: Maybe DRide.EstimatedEndTimeRange,
+    isSafetyPlus :: Bool,
+    isInsured :: Maybe Bool,
+    insuredAmount :: Maybe Text,
+    mbJourneyId :: Maybe (Id DJourney.Journey),
+    merchantOperatingCityId :: Id DMOC.MerchantOperatingCity,
+    displayBookingId :: Maybe Text,
+    driverPreference :: Maybe [Text],
+    specialLocationSupportNumber :: Maybe Text,
+    commissionCharge :: Maybe HighPrecMoney,
+    refunds :: [RideRefundInfo]
+  }
+  deriving (Generic, Show, FromJSON, ToJSON, ToSchema)
+
+-- | One row per refund attempt, newest first. A row exists only once a refund was approved and sent
+--   to the gateway, so open and rejected requests never appear. Retries append a row; only the latest
+--   of a retried chain is non-FAILURE.
+data RideRefundInfo = RideRefundInfo
+  { id :: Id DRefunds.Refunds,
+    status :: Payment.RefundStatus,
+    amount :: HighPrecMoney,
+    createdAt :: UTCTime,
+    -- | Bank-traceable reference, assigned up to 7 business days after the refund succeeds and Nothing
+    --   forever when the payment partner has no reference scheme. Reads the refunds.arn column, which
+    --   predates the non-card methods that also populate it.
+    reference :: Maybe Text,
+    referenceType :: Maybe Text -- acquirer_reference_number | stan | rrn; cards only
+  }
+  deriving (Generic, Show, FromJSON, ToJSON, ToSchema)
+
+data BookingCancellationReasonAPIEntity = BookingCancellationReasonAPIEntity
+  { additionalInfo :: Maybe Text,
+    reasonCode :: Maybe CancellationReasonCode,
+    reasonStage :: Maybe CancellationStage,
+    source :: CancellationSource
+  }
+  deriving (Generic, Show, FromJSON, ToJSON, ToSchema)
+
+data BookingStatusAPIEntity = BookingStatusAPIEntity
+  { id :: Id Booking,
+    isBookingUpdated :: Bool,
+    bookingStatus :: BookingStatus,
+    rideStatus :: Maybe DRide.RideStatus,
+    talkedWithDriver :: Bool,
+    estimatedEndTimeRange :: Maybe DRide.EstimatedEndTimeRange,
+    driverArrivalTime :: Maybe UTCTime,
+    destinationReachedAt :: Maybe UTCTime,
+    sosStatus :: Maybe SafetyDSos.SosStatus,
+    driversPreviousRideDropLocLat :: Maybe Double,
+    driversPreviousRideDropLocLon :: Maybe Double,
+    stopInfo :: [DSI.StopInformation],
+    batchConfig :: Maybe BatchConfig,
+    isSafetyPlus :: Bool,
+    cancellationReason :: Maybe BookingCancellationReasonAPIEntity,
+    -- The tip is editable while the ride is running, and mid-ride it is NOT in fareBreakup (that
+    -- list is rebuilt wholesale at ride completion). This is the only way the app can read back
+    -- the tip it currently has set, e.g. after a restart. Mirrors RideAPIEntity.tipAmount.
+    tipAmount :: Maybe PriceAPIEntity
+  }
+  deriving (Generic, Show, FromJSON, ToJSON, ToSchema)
+
+data FavouriteBookingAPIEntity = FavouriteBookingAPIEntity
+  { id :: Id DRide.Ride,
+    rideRating :: Maybe Int,
+    fromLocation :: Location,
+    toLocation :: Maybe Location,
+    totalFare :: Maybe Money,
+    startTime :: Maybe UTCTime,
+    vehicleVariant :: Maybe VehicleVariant
+  }
+  deriving (Generic, Show, FromJSON, ToJSON, ToSchema)
+
+-- do not change constructor names without changing fareProductConstructorModifier
+data BookingAPIDetails
+  = OneWayAPIDetails OneWayBookingAPIDetails
+  | RentalAPIDetails RentalBookingAPIDetails
+  | DriverOfferAPIDetails OneWayBookingAPIDetails
+  | OneWaySpecialZoneAPIDetails OneWaySpecialZoneBookingAPIDetails
+  | InterCityAPIDetails InterCityBookingAPIDetails
+  | AmbulanceAPIDetails AmbulanceBookingAPIDetails
+  | DeliveryAPIDetails DeliveryBookingAPIDetails
+  | MeterRideAPIDetails MeterRideBookingAPIDetails
+  | EasyBookingAPIDetails EasyBookingAPIDetails
+  deriving (Show, Generic)
+
+instance ToJSON BookingAPIDetails where
+  toJSON = genericToJSON J.fareProductOptions
+
+instance FromJSON BookingAPIDetails where
+  parseJSON = genericParseJSON J.fareProductOptions
+
+instance ToSchema BookingAPIDetails where
+  declareNamedSchema = genericDeclareNamedSchema S.fareProductSchemaOptions
+
+data RentalBookingAPIDetails = RentalBookingAPIDetails
+  { stopLocation :: Maybe LocationAPIEntity,
+    otpCode :: Maybe Text
+  }
+  deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
+
+-- EasyBooking reuses Rental's wire shape (same fields), but gets its own
+-- fareProductType tag ("EASY_BOOKING", see Tools/JSON.hs) instead of "RENTAL".
+type EasyBookingAPIDetails = RentalBookingAPIDetails
+
+data OneWayBookingAPIDetails = OneWayBookingAPIDetails
+  { toLocation :: LocationAPIEntity,
+    stops :: [LocationAPIEntity],
+    estimatedDistance :: HighPrecMeters,
+    estimatedDistanceWithUnit :: Distance,
+    isUpgradedToCab :: Maybe Bool
+  }
+  deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
+
+data MeterRideBookingAPIDetails = MeterRideBookingAPIDetails
+  { toLocation :: Maybe LocationAPIEntity,
+    distanceCovered :: Maybe Distance
+  }
+  deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
+
+data InterCityBookingAPIDetails = InterCityBookingAPIDetails
+  { toLocation :: LocationAPIEntity,
+    stops :: [LocationAPIEntity],
+    estimatedDistance :: HighPrecMeters,
+    otpCode :: Maybe Text,
+    estimatedDistanceWithUnit :: Distance
+  }
+  deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
+
+data AmbulanceBookingAPIDetails = AmbulanceBookingAPIDetails
+  { toLocation :: LocationAPIEntity,
+    estimatedDistance :: HighPrecMeters,
+    estimatedDistanceWithUnit :: Distance
+  }
+  deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
+
+data OneWaySpecialZoneBookingAPIDetails = OneWaySpecialZoneBookingAPIDetails
+  { toLocation :: LocationAPIEntity,
+    stops :: [LocationAPIEntity],
+    estimatedDistance :: HighPrecMeters,
+    estimatedDistanceWithUnit :: Distance,
+    otpCode :: Maybe Text
+  }
+  deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
+
+data DeliveryBookingAPIDetails = DeliveryBookingAPIDetails
+  { toLocation :: LocationAPIEntity,
+    estimatedDistance :: HighPrecMeters,
+    estimatedDistanceWithUnit :: Distance,
+    senderDetails :: DeliveryPersonDetailsAPIEntity,
+    receiverDetails :: DeliveryPersonDetailsAPIEntity,
+    requestorPartyRoles :: [Trip.PartyRole],
+    parcelType :: DParcel.ParcelType,
+    parcelQuantity :: Maybe Int
+  }
+  deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
+
+data DeliveryPersonDetailsAPIEntity = DeliveryPersonDetailsAPIEntity
+  { name :: Text,
+    phoneNumber :: Text
+  }
+  deriving (Generic, FromJSON, ToJSON, Show, ToSchema)
+
+makeBookingAPIEntity ::
+  (CacheFlow m r, EsqDBFlow m r, EsqDBReplicaFlow m r, EncFlow m r, ServiceFlow m r, ClickhouseFlow m r, BeamFlow m r) =>
+  Id Person.Person ->
+  Booking ->
+  Maybe DRide.Ride ->
+  [DRide.Ride] ->
+  [FareBreakup] ->
+  [FareBreakup] ->
+  Maybe DExophone.Exophone ->
+  Maybe Payment.PaymentMethodId ->
+  Bool ->
+  Maybe SafetyDSos.SosStatus ->
+  DBppDetails.BppDetails ->
+  Bool ->
+  Bool ->
+  Maybe BookingCancellationReasonAPIEntity ->
+  [RideRefundInfo] ->
+  m BookingAPIEntity
+makeBookingAPIEntity requesterId booking activeRide allRides estimatedFareBreakups fareBreakups mbExophone paymentMethodId hasNightIssue mbSosStatus bppDetails isValueAddNP showPrevDropLocationLatLon mbCancellationReason refunds = do
+  bookingDetails <- mkBookingAPIDetails booking requesterId
+  merchant <- CQM.findById booking.merchantId
+  let isOnlinePayment = maybe False (.onlinePayment) merchant
+  rides <- mapM (buildRideAPIEntity (requesterId, booking, isOnlinePayment)) allRides
+  person <- QP.findById requesterId >>= fromMaybeM (PersonNotFound requesterId.getId)
+  riderMobile <- mapM decrypt person.mobileNumber
+  let riderName =
+        let names = catMaybes [person.firstName, person.middleName, person.lastName]
+         in if null names then Nothing else Just $ T.intercalate " " names
+  let providerNum = fromMaybe "+91" bppDetails.supportNumber
+  mbJourneyLeg <- QJL.findByLegSearchId (Just booking.transactionId)
+  return $
+    BookingAPIEntity
+      { id = booking.id,
+        status = booking.status,
+        agencyName = bppDetails.name,
+        agencyNumber = Just providerNum,
+        riderMobileNumber = riderMobile,
+        riderName = riderName,
+        estimatedFare = booking.estimatedFare.amountInt,
+        discount = booking.discount <&> (.amountInt),
+        estimatedTotalFare = booking.estimatedTotalFare.amountInt,
+        estimatedFareWithCurrency = mkPriceAPIEntity booking.estimatedFare,
+        discountWithCurrency = mkPriceAPIEntity <$> booking.discount,
+        estimatedTotalFareWithCurrency = mkPriceAPIEntity booking.estimatedTotalFare,
+        fromLocation = SLoc.makeLocationAPIEntity booking.fromLocation,
+        initialPickupLocation = SLoc.makeLocationAPIEntity booking.initialPickupLocation,
+        rideList = rides,
+        hasNightIssue = hasNightIssue,
+        tripTerms = [],
+        estimatedFareBreakup = filter (not . isProjectedFareParamTag . (.description)) (DAFareBreakup.mkFareBreakupAPIEntity <$> estimatedFareBreakups),
+        fareBreakup = filter (not . isProjectedFareParamTag . (.description)) (DAFareBreakup.mkFareBreakupAPIEntity <$> fareBreakups),
+        rideScheduledTime = booking.startTime,
+        returnTime = booking.returnTime,
+        bookingDetails,
+        rideStartTime = activeRide >>= (.rideStartTime),
+        rideEndTime = activeRide >>= (.rideEndTime),
+        estimatedDistance = distanceToHighPrecMeters <$> booking.estimatedDistance,
+        estimatedDistanceWithUnit = booking.estimatedDistance,
+        estimatedDuration = booking.estimatedDuration,
+        duration = getRideDuration activeRide,
+        merchantExoPhone = maybe booking.primaryExophone (\exophone -> if not exophone.isPrimaryDown then exophone.primaryPhone else exophone.backupPhone) mbExophone,
+        specialLocationTag = booking.specialLocationTag,
+        specialLocationName = booking.specialLocationName,
+        paymentMethodId = paymentMethodId,
+        paymentInstrument = booking.paymentInstrument,
+        paymentMode = booking.paymentMode,
+        paymentUrl = booking.paymentUrl,
+        createdAt = booking.createdAt,
+        updatedAt = booking.updatedAt,
+        hasDisability = (Just . isJust) booking.disabilityTag,
+        sosStatus = mbSosStatus,
+        isBookingUpdated = booking.isBookingUpdated,
+        isValueAddNP,
+        merchantOperatingCityId = booking.merchantOperatingCityId,
+        isPetRide = booking.isPetRide,
+        vehicleServiceTierType = booking.vehicleServiceTierType,
+        vehicleServiceTierSeatingCapacity = booking.vehicleServiceTierSeatingCapacity,
+        vehicleServiceTierLuggageCapacity = booking.vehicleServiceTierLuggageCapacity,
+        vehicleServiceTierAirConditioned = booking.vehicleServiceTierAirConditioned,
+        isAirConditioned = booking.isAirConditioned,
+        serviceTierName = booking.serviceTierName,
+        serviceTierShortDesc = booking.serviceTierShortDesc,
+        driversPreviousRideDropLocLat = if showPrevDropLocationLatLon then fmap (.lat) (activeRide >>= (.driversPreviousRideDropLoc)) else Nothing,
+        driversPreviousRideDropLocLon = if showPrevDropLocationLatLon then fmap (.lon) (activeRide >>= (.driversPreviousRideDropLoc)) else Nothing,
+        isScheduled = booking.isScheduled,
+        cancellationReason = mbCancellationReason,
+        isAlreadyFav = activeRide >>= (.isAlreadyFav),
+        favCount = activeRide >>= (.favCount),
+        tripCategory = booking.tripCategory,
+        estimatedEndTimeRange = activeRide >>= (.estimatedEndTimeRange),
+        vehicleIconUrl = fmap showBaseUrl booking.vehicleIconUrl,
+        isSafetyPlus = fromMaybe False $ activeRide <&> (.isSafetyPlus),
+        isInsured = Just booking.isInsured,
+        insuredAmount = booking.insuredAmount,
+        billingCategory = booking.billingCategory,
+        vehicleCategory = booking.vehicleCategory,
+        mbJourneyId = mbJourneyLeg <&> (.journeyId),
+        displayBookingId = booking.displayBookingId,
+        driverPreference = booking.driverPreference,
+        specialLocationSupportNumber = booking.specialLocationSupportNumber,
+        commissionCharge = booking.commission,
+        refunds = refunds
+      }
+  where
+    getRideDuration :: Maybe DRide.Ride -> Maybe Seconds
+    getRideDuration mbRide = do
+      ride <- mbRide
+      startTime <- ride.rideStartTime
+      endTime <- ride.rideEndTime
+      return $ nominalDiffTimeToSeconds $ diffUTCTime endTime startTime
+
+mkBookingAPIDetails :: (CacheFlow m r, EsqDBFlow m r, EsqDBReplicaFlow m r, EncFlow m r) => Booking -> Id Person.Person -> m BookingAPIDetails
+mkBookingAPIDetails booking requesterId = case booking.bookingDetails of
+  OneWayDetails details -> return $ OneWayAPIDetails . mkOneWayAPIDetails $ details
+  RentalDetails details -> return $ RentalAPIDetails . mkRentalAPIDetails $ details
+  DriverOfferDetails details -> return $ DriverOfferAPIDetails . mkOneWayAPIDetails $ details
+  OneWaySpecialZoneDetails details -> return $ OneWaySpecialZoneAPIDetails . mkOneWaySpecialZoneAPIDetails $ details
+  InterCityDetails details -> return $ InterCityAPIDetails . mkInterCityAPIDetails $ details
+  AmbulanceDetails details -> return $ AmbulanceAPIDetails . mkAmbulanceAPIDetails $ details
+  DeliveryDetails details -> DeliveryAPIDetails <$> mkDeliveryAPIDetails details
+  MeterRideDetails details -> return $ MeterRideAPIDetails . mkMeterRideAPIDetails $ details
+  EasyBookingDetails details -> return $ EasyBookingAPIDetails . mkRentalAPIDetails $ details
+  where
+    mkOneWayAPIDetails OneWayBookingDetails {..} =
+      OneWayBookingAPIDetails
+        { toLocation = SLoc.makeLocationAPIEntity toLocation,
+          estimatedDistance = distanceToHighPrecMeters distance,
+          estimatedDistanceWithUnit = distance,
+          isUpgradedToCab = isUpgradedToCab,
+          stops = map SLoc.makeLocationAPIEntity stops
+        }
+    mkRentalAPIDetails RentalBookingDetails {..} =
+      RentalBookingAPIDetails
+        { stopLocation = SLoc.makeLocationAPIEntity <$> stopLocation,
+          ..
+        }
+    mkOneWaySpecialZoneAPIDetails OneWaySpecialZoneBookingDetails {..} =
+      OneWaySpecialZoneBookingAPIDetails
+        { toLocation = SLoc.makeLocationAPIEntity toLocation,
+          estimatedDistance = distanceToHighPrecMeters distance,
+          estimatedDistanceWithUnit = distance,
+          stops = map SLoc.makeLocationAPIEntity stops,
+          ..
+        }
+    mkInterCityAPIDetails InterCityBookingDetails {..} =
+      InterCityBookingAPIDetails
+        { toLocation = SLoc.makeLocationAPIEntity toLocation,
+          estimatedDistance = distanceToHighPrecMeters distance,
+          estimatedDistanceWithUnit = distance,
+          stops = map SLoc.makeLocationAPIEntity stops,
+          ..
+        }
+    mkAmbulanceAPIDetails AmbulanceBookingDetails {..} =
+      AmbulanceBookingAPIDetails
+        { toLocation = SLoc.makeLocationAPIEntity toLocation,
+          estimatedDistance = distanceToHighPrecMeters distance,
+          estimatedDistanceWithUnit = distance
+        }
+    mkMeterRideAPIDetails MeterRideBookingDetails {..} =
+      MeterRideBookingAPIDetails
+        { toLocation = SLoc.makeLocationAPIEntity <$> toLocation,
+          ..
+        }
+
+    -- check later if sender info required --
+    mkDeliveryAPIDetails :: (CacheFlow m r, EsqDBFlow m r, EsqDBReplicaFlow m r, EncFlow m r) => DeliveryBookingDetails -> m DeliveryBookingAPIDetails
+    mkDeliveryAPIDetails (DeliveryBookingDetails {..}) = do
+      allBookingParties <- QBPL.findAllByBookingId booking.id
+      senderParty <- fromMaybeM (InternalError "No sender party found") $ find (\party -> party.partyType == Trip.DeliveryParty Trip.Sender) allBookingParties
+      receiverParty <- fromMaybeM (InternalError "No receiver party found") $ find (\party -> party.partyType == Trip.DeliveryParty Trip.Receiver) allBookingParties
+      senderPerson <- QP.findById senderParty.partyId >>= fromMaybeM (InternalError "No sender person found for delivery")
+      receiverPerson <- QP.findById receiverParty.partyId >>= fromMaybeM (InternalError "No receiver person found for delivery")
+      encSenderPhoneNumber <- fromMaybeM (InternalError "No sender phone number found") senderPerson.mobileNumber
+      encReceiverPhoneNumber <- fromMaybeM (InternalError "No receiver phone number found") receiverPerson.mobileNumber
+      decSenderPhoneNumber <- decrypt encSenderPhoneNumber
+      decReceiverPhoneNumber <- decrypt encReceiverPhoneNumber
+      -- accumulate all the party roles for this requestorId --
+      let requestorPartyRoles =
+            [Trip.Initiator | requesterId == booking.riderId]
+              ++ [Trip.DeliveryRoleSender | requesterId == senderParty.partyId]
+              ++ [Trip.DeliveryRoleReceiver | requesterId == receiverParty.partyId]
+      return $
+        DeliveryBookingAPIDetails
+          { toLocation = SLoc.makeLocationAPIEntity toLocation,
+            estimatedDistance = distanceToHighPrecMeters distance,
+            estimatedDistanceWithUnit = distance,
+            senderDetails = DeliveryPersonDetailsAPIEntity {name = senderParty.partyName, phoneNumber = decSenderPhoneNumber},
+            receiverDetails = DeliveryPersonDetailsAPIEntity {name = receiverParty.partyName, phoneNumber = decReceiverPhoneNumber},
+            ..
+          }
+
+makeFavouriteBookingAPIEntity :: DRide.Ride -> FavouriteBookingAPIEntity
+makeFavouriteBookingAPIEntity ride = do
+  FavouriteBookingAPIEntity
+    { id = ride.id,
+      rideRating = ride.rideRating,
+      fromLocation = ride.fromLocation,
+      toLocation = ride.toLocation,
+      totalFare = (.amountInt) <$> ride.totalFare,
+      startTime = ride.rideStartTime,
+      vehicleVariant = Just ride.vehicleVariant
+    }
+
+getActiveSos :: (CacheFlow m r, EsqDBFlow m r) => Maybe DRide.Ride -> Id Person.Person -> m (Maybe SafetyDSos.SosStatus)
+getActiveSos mbRide personId = do
+  case mbRide of
+    Nothing -> return Nothing
+    Just ride -> do
+      cached <- SafetyCQSos.findByRideId (cast ride.id)
+      mbSosDetails <- case cached of
+        Just x -> pure (Just x)
+        Nothing -> do
+          mbFromDb <- SafetyQSos.findByRideId (Just (cast ride.id))
+          Kernel.Prelude.whenJust mbFromDb $ \sos -> SafetyCQSos.cacheSosIdByRideId (cast ride.id) sos
+          pure mbFromDb
+      case mbSosDetails of
+        Nothing -> do
+          mockSos :: Maybe SafetyDSos.SosMockDrill <- Redis.safeGet $ CQSos.mockSosKey personId
+          return $ mockSos <&> (.status)
+        Just sos -> return $ Just sos.status
+
+getActiveSos' :: (CacheFlow m r, EsqDBFlow m r) => Maybe QRideLite.RideLite -> Id Person.Person -> m (Maybe SafetyDSos.SosStatus)
+getActiveSos' mbRide personId = do
+  case mbRide of
+    Nothing -> return Nothing
+    Just ride -> do
+      cached <- SafetyCQSos.findByRideId (cast ride.id)
+      mbSosDetails <- case cached of
+        Just x -> pure (Just x)
+        Nothing -> do
+          mbFromDb <- SafetyQSos.findByRideId (Just (cast ride.id))
+          Kernel.Prelude.whenJust mbFromDb $ \sos -> SafetyCQSos.cacheSosIdByRideId (cast ride.id) sos
+          pure mbFromDb
+      case mbSosDetails of
+        Nothing -> do
+          mockSos :: Maybe SafetyDSos.SosMockDrill <- Redis.safeGet $ CQSos.mockSosKey personId
+          return $ mockSos <&> (.status)
+        Just sos -> return $ Just sos.status
+
+makeCancellationReasonAPIEntity :: BookingCancellationReason -> BookingCancellationReasonAPIEntity
+makeCancellationReasonAPIEntity BookingCancellationReason {..} = BookingCancellationReasonAPIEntity {..}
+
+buildBookingAPIEntity :: (CacheFlow m r, EsqDBFlow m r, EsqDBReplicaFlow m r, EncFlow m r, ServiceFlow m r, ClickhouseFlow m r, BeamFlow m r, PaymentBeamFlow.BeamFlow m r) => Booking -> Id Person.Person -> Bool -> m BookingAPIEntity
+buildBookingAPIEntity booking personId dontNeedFareBreakup = do
+  -- mbActiveRide <- runInReplica $ QRide.findActiveByRBId booking.id
+  mbRide <- runInReplica $ QRide.findByRBId booking.id
+  let mbActiveRide = (\r -> if r.status == DRide.CANCELLED then Nothing else Just r) =<< mbRide
+  -- nightIssue <- runInReplica $ QIssue.findNightIssueByBookingId booking.id
+  (fareBreakups, estimatedFareBreakups) <- if dontNeedFareBreakup then pure ([], []) else getfareBreakups booking mbRide
+  mbExoPhone <- getOneConfig (ExophoneDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId, phoneNumber = Just booking.primaryExophone, callService = Nothing}) (Just (maybeToList <$> CQExophone.findByPrimaryPhone booking.primaryExophone))
+  bppDetails <- CQBPP.findBySubscriberIdAndDomain booking.providerId Context.MOBILITY >>= fromMaybeM (InternalError $ "BppDetails not found for providerId:-" <> booking.providerId <> "and domain:-" <> show Context.MOBILITY)
+  mbSosStatus <- getActiveSos mbActiveRide personId
+  isValueAddNP <- CQVAN.isValueAddNP booking.providerId
+  let showPrevDropLocationLatLon = maybe False (.showDriversPreviousRideDropLoc) mbRide
+  mbCancellationReason <-
+    if booking.status == CANCELLED
+      then QBCR.findByRideBookingId booking.id
+      else return Nothing
+  -- Surface refunds only when the city has payment refunds enabled; otherwise the feature is off, so
+  -- return none. Same flag RidePayment guards refund initiation with (enablePaymentRefunds).
+  mbRiderConfig <- CQRC.findByMerchantOperatingCityId booking.merchantOperatingCityId
+  let refundsEnabled = fromMaybe False (mbRiderConfig >>= (.enablePaymentRefunds))
+  refunds <- if refundsEnabled then maybe (pure []) (getRideRefunds . (.id)) mbRide else pure []
+  makeBookingAPIEntity personId booking mbActiveRide (maybeToList mbRide) estimatedFareBreakups fareBreakups mbExoPhone booking.paymentMethodId False mbSosStatus bppDetails isValueAddNP showPrevDropLocationLatLon (makeCancellationReasonAPIEntity <$> mbCancellationReason) refunds
+
+makeRideRefundInfo :: DRefunds.Refunds -> RideRefundInfo
+makeRideRefundInfo DRefunds.Refunds {..} = RideRefundInfo {amount = refundAmount, reference = arn, ..}
+
+-- | The ride's order is keyed by domainEntityId (the tip order uses "tip:<rideId>", so an exact match
+--   excludes it), and refunds hang off the order's shortId, not its id.
+getRideRefunds :: PaymentBeamFlow.BeamFlow m r => Id DRide.Ride -> m [RideRefundInfo]
+getRideRefunds rideId = do
+  mbOrder <- QPaymentOrder.findByDomainEntityId rideId.getId
+  refunds <- maybe (pure []) (HQRefunds.findAllByOrderId . (.shortId)) mbOrder
+  pure $ sortOn (Down . (.createdAt)) $ map makeRideRefundInfo refunds
+
+--Note :- if you are adding and extra field in BookingStatusAPIEntity then add it in BookingAPIEntity as well
+buildBookingStatusAPIEntity :: (CacheFlow m r, EsqDBFlow m r, EsqDBReplicaFlow m r) => Booking -> m BookingStatusAPIEntity
+buildBookingStatusAPIEntity booking = do
+  mbActiveRide <- runInReplica $ QRideLite.findActiveByRBIdLite booking.id
+  batchConfig <- maybe (SharedRedisKeys.getBatchConfig booking.transactionId) (\_ -> pure Nothing) mbActiveRide
+  stopsInfo <- if (fromMaybe False booking.hasStops) then maybe (pure []) (\ride -> QSI.findAllByRideId ride.id) mbActiveRide else return []
+  let showPrevDropLocationLatLon = maybe False (.showDriversPreviousRideDropLoc) mbActiveRide
+      driversPreviousRideDropLocLat = if showPrevDropLocationLatLon then fmap (.lat) (mbActiveRide >>= (.driversPreviousRideDropLoc)) else Nothing
+      driversPreviousRideDropLocLon = if showPrevDropLocationLatLon then fmap (.lon) (mbActiveRide >>= (.driversPreviousRideDropLoc)) else Nothing
+      rideStatus = fmap (.status) mbActiveRide
+      estimatedEndTimeRange = mbActiveRide >>= (.estimatedEndTimeRange)
+      driverArrivalTime = mbActiveRide >>= (.driverArrivalTime)
+      destinationReachedTime = mbActiveRide >>= (.destinationReachedAt)
+      talkedWithDriver = fromMaybe False (mbActiveRide >>= (.talkedWithDriver))
+      isSafetyPlus = fromMaybe False $ mbActiveRide <&> (.isSafetyPlus)
+      tipAmount = mkPriceAPIEntity <$> (mbActiveRide >>= (.tipAmount))
+  sosStatus <- getActiveSos' mbActiveRide booking.riderId
+  mbCancellationReason <-
+    if booking.status == CANCELLED
+      then QBCR.findByRideBookingId booking.id
+      else return Nothing
+  return $ BookingStatusAPIEntity booking.id booking.isBookingUpdated booking.status rideStatus talkedWithDriver estimatedEndTimeRange driverArrivalTime destinationReachedTime sosStatus driversPreviousRideDropLocLat driversPreviousRideDropLocLon stopsInfo batchConfig isSafetyPlus (makeCancellationReasonAPIEntity <$> mbCancellationReason) tipAmount
+
+favouritebuildBookingAPIEntity :: DRide.Ride -> FavouriteBookingAPIEntity
+favouritebuildBookingAPIEntity ride = makeFavouriteBookingAPIEntity ride
+
+buildRideAPIEntity :: (CacheFlow m r, EsqDBFlow m r, EsqDBReplicaFlow m r, EncFlow m r, ServiceFlow m r) => (Id Person.Person, Booking, Bool) -> DRide.Ride -> m RideAPIEntity
+buildRideAPIEntity (_requesterId, booking, _isOnlinePayment) DRide.Ride {..} = do
+  stopsInfo <- if (fromMaybe False hasStops) then QSI.findAllByRideId id else return []
+  let oneYearAgo = - (365 * 24 * 60 * 60)
+      driverRegisteredAt' = fromMaybe (addUTCTime oneYearAgo createdAt) driverRegisteredAt
+      driverRating' = driverRating <|> Just (toCentesimal 500) -- TODO::remove this default value
+      vehicleColor' = fromMaybe "NA" vehicleColor -- TODO::remove this default value
+  selectedOffers <- case booking.selectedOfferId of
+    Nothing -> pure Nothing
+    Just _ -> do
+      -- Future this can be a findAll query too, if supporting more than one offer per booking/ride
+      mbBookingOfferEntity <- QOfferEntity.findByEntityIdAndEntityType booking.id.getId DOfferEntity.BOOKING
+      mbOfferEntity <-
+        if status `notElem` [DRide.COMPLETED, DRide.CANCELLED]
+          then pure mbBookingOfferEntity
+          else QOfferEntity.findByEntityIdAndEntityType id.getId DOfferEntity.RIDE |<|>| pure mbBookingOfferEntity
+      let currency = booking.estimatedFare.currency
+          mkPriceEntity = mkPriceAPIEntity . mkPrice (Just currency)
+      case mbOfferEntity of
+        Just offerEntity ->
+          let estimatedOfferEntity = fromMaybe offerEntity mbBookingOfferEntity
+           in return $
+                Just $
+                  SOffer.OffersRespAPIEntity
+                    { offers =
+                        [ SOffer.OfferRespAPIEntity
+                            { offerId = offerEntity.offerId,
+                              offerTitle = offerEntity.offerTitle,
+                              offerDescription = offerEntity.offerDescription,
+                              offerTnc = offerEntity.offerTnc,
+                              offerSponsoredBy = offerEntity.offerSponsoredBy,
+                              offerCode = offerEntity.offerCode,
+                              autoApply = offerEntity.autoApply,
+                              isHidden = offerEntity.isHidden,
+                              amountSaved = offerEntity.amountSaved,
+                              postOfferAmount = offerEntity.postOfferAmount,
+                              estimatedAmountSaved = estimatedOfferEntity.amountSaved,
+                              estimatedPostOfferAmount = estimatedOfferEntity.postOfferAmount
+                            }
+                        ],
+                      totalAmountSaved = offerEntity.amountSaved,
+                      totalPostOfferAmount = offerEntity.postOfferAmount,
+                      totalAmountSavedV2 = mkPriceEntity offerEntity.amountSaved,
+                      totalPostOfferAmountV2 = mkPriceEntity offerEntity.postOfferAmount,
+                      estimatedTotalAmountSaved = mkPriceEntity estimatedOfferEntity.amountSaved,
+                      estimatedPostOfferAmount = mkPriceEntity estimatedOfferEntity.postOfferAmount
+                    }
+        Nothing -> return Nothing
+  return $
+    RideAPIEntity
+      { shortRideId = shortId,
+        driverNumber = Just driverMobileNumber,
+        driverRatings = driverRating',
+        driverRegisteredAt = Just driverRegisteredAt',
+        rideOtp = otp,
+        computedPrice = totalFare <&> (.amountInt),
+        computedPriceWithCurrency = mkPriceAPIEntity <$> totalFare,
+        chargeableRideDistance = distanceToHighPrecMeters <$> chargeableDistance,
+        chargeableRideDistanceWithUnit = chargeableDistance,
+        traveledRideDistance = traveledDistance,
+        vehicleColor = vehicleColor',
+        allowedEditLocationAttempts = fromMaybe 0 allowedEditLocationAttempts,
+        allowedEditPickupLocationAttempts = fromMaybe 0 allowedEditPickupLocationAttempts,
+        talkedWithDriver = fromMaybe False talkedWithDriver,
+        isInsured = Just isInsured,
+        tipAmount = mkPriceAPIEntity <$> tipAmount,
+        ..
+      }
+
+-- BOOKING REQUEST TYPE in ListV2 API
+data BookingRequestType = BookingRequest | JourneyRequest | RequestBoth
+  deriving (Eq, Ord, Show, Read, Generic, ToJSON, FromJSON, ToSchema, Kernel.Prelude.ToParamSchema)
+
+$(mkHttpInstancesForEnum ''BookingRequestType)

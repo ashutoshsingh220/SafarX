@@ -1,0 +1,135 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+module Lib.Payment.Storage.Queries.PayoutOrderExtra where
+
+import Data.Time (UTCTime (UTCTime, utctDay), secondsToDiffTime)
+import Kernel.Beam.Functions
+import Kernel.External.Encryption (DbHash)
+import qualified Kernel.External.Payout.Interface.Types as Payout
+import qualified Kernel.External.Payout.Juspay.Types.Payout as Payout
+import Kernel.Prelude
+import Kernel.Types.Beckn.Context (City)
+import Kernel.Utils.Common
+import Lib.Payment.Domain.Types.Common
+import Lib.Payment.Domain.Types.PayoutOrder
+import Lib.Payment.Storage.Beam.BeamFlow
+import qualified Lib.Payment.Storage.Beam.PayoutOrder as Beam
+import Lib.Payment.Storage.Queries.OrphanInstances.PayoutOrder ()
+import qualified Sequelize as Se
+
+findAllByEntityNameAndEntityIds ::
+  (BeamFlow m r) =>
+  (Maybe Int -> Maybe Int -> Maybe EntityName -> [Maybe Text] -> m [PayoutOrder])
+findAllByEntityNameAndEntityIds limit offset entityName entityIds = do
+  let mbIds = Just $ catMaybes entityIds
+  findAllWithOptionsKV
+    [ Se.And
+        [Se.Is Beam.entityName $ Se.Eq entityName, Se.Is Beam.entityIds $ Se.Eq mbIds]
+    ]
+    (Se.Desc Beam.createdAt)
+    limit
+    offset
+
+updateLastCheckedOn :: BeamFlow m r => [Text] -> m ()
+updateLastCheckedOn payoutOrderIds = do
+  now <- getCurrentTime
+  let lastCheckedAt = UTCTime (utctDay now) (secondsToDiffTime 0)
+  updateWithKV
+    [ Se.Set Beam.lastStatusCheckedAt (Just lastCheckedAt),
+      Se.Set Beam.updatedAt now
+    ]
+    [Se.Is Beam.orderId (Se.In payoutOrderIds)]
+
+findAllWithOptions :: BeamFlow m r => Int -> Int -> Maybe Text -> Maybe DbHash -> Maybe UTCTime -> Maybe UTCTime -> Bool -> City -> m [PayoutOrder]
+findAllWithOptions limit offset mbDriverId mbMobileNumberHash mbFrom mbTo isFailedOnly city = do
+  findAllWithOptionsKV
+    [ Se.And
+        ( [Se.Is Beam.createdAt $ Se.GreaterThanOrEq (fromJust mbFrom) | isJust mbFrom]
+            <> [Se.Is Beam.createdAt $ Se.LessThanOrEq (fromJust mbTo) | isJust mbTo]
+            <> [Se.Is Beam.mobileNoHash $ Se.Eq (fromJust mbMobileNumberHash) | isJust mbMobileNumberHash]
+            <> [Se.Is Beam.customerId $ Se.Eq (fromJust mbDriverId) | isJust mbDriverId]
+            <> [Se.Is Beam.status $ Se.Eq Payout.FULFILLMENTS_FAILURE | isFailedOnly]
+            <> [Se.Is Beam.city $ Se.Eq (show city)]
+        )
+    ]
+    (Se.Desc Beam.createdAt)
+    (Just limit)
+    (Just offset)
+
+findAllByCustomerIdWithLimitOffset :: BeamFlow m r => Maybe Int -> Maybe Int -> Text -> m [PayoutOrder]
+findAllByCustomerIdWithLimitOffset limit offset customerId = do
+  findAllWithOptionsKV
+    [Se.Is Beam.customerId $ Se.Eq customerId]
+    (Se.Desc Beam.createdAt)
+    limit
+    offset
+
+findLatestPaidPayoutByCustomerId :: BeamFlow m r => Text -> m (Maybe PayoutOrder)
+findLatestPaidPayoutByCustomerId customerId = do
+  findAllWithOptionsKV
+    [ Se.And
+        ( [Se.Is Beam.customerId $ Se.Eq customerId]
+            <> [Se.Is Beam.status $ Se.Eq Payout.FULFILLMENTS_SUCCESSFUL]
+        )
+    ]
+    (Se.Desc Beam.createdAt)
+    (Just 1)
+    Nothing
+    <&> listToMaybe
+
+updatePostCreateFieldsSafely ::
+  BeamFlow m r =>
+  Text ->
+  Payout.PayoutOrderStatus ->
+  Maybe Text ->
+  Maybe Text ->
+  Maybe Payout.AccountDetailsType ->
+  Maybe HighPrecMoney ->
+  Maybe HighPrecMoney ->
+  Maybe Text ->
+  Maybe Payout.TransferStatus ->
+  Maybe Payout.TransferId ->
+  Maybe HighPrecMoney ->
+  m ()
+updatePostCreateFieldsSafely orderId status mbResponseCode mbResponseMessage mbAccountDetailsType mbPgBaseFee mbPgGst idAssignedByServiceProvider transferStatus transferId mbMerchantTopUpAmount = do
+  now <- getCurrentTime
+  -- Update status only if still in initial placeholder state.
+  updateWithKV
+    [ Se.Set Beam.status status,
+      Se.Set Beam.accountDetailsType mbAccountDetailsType,
+      Se.Set Beam.pgBaseFee mbPgBaseFee,
+      Se.Set Beam.pgGst mbPgGst,
+      Se.Set Beam.updatedAt now,
+      Se.Set Beam.idAssignedByServiceProvider idAssignedByServiceProvider,
+      Se.Set Beam.transferStatus transferStatus,
+      Se.Set Beam.transferId (transferId <&> (.getTransferId)),
+      Se.Set Beam.merchantTopUpAmount mbMerchantTopUpAmount
+    ]
+    [ Se.And
+        [ Se.Is Beam.orderId $ Se.Eq orderId,
+          Se.Is Beam.status $ Se.Eq Payout.INITIATED
+        ]
+    ]
+
+  -- Fill response fields only when currently null to avoid clobbering webhook writes.
+  whenJust mbResponseCode $ \responseCode ->
+    updateWithKV
+      [ Se.Set Beam.responseCode (Just responseCode),
+        Se.Set Beam.updatedAt now
+      ]
+      [ Se.And
+          [ Se.Is Beam.orderId $ Se.Eq orderId,
+            Se.Is Beam.responseCode $ Se.Eq (Nothing :: Maybe Text)
+          ]
+      ]
+
+  whenJust mbResponseMessage $ \responseMessage ->
+    updateWithKV
+      [ Se.Set Beam.responseMessage (Just responseMessage),
+        Se.Set Beam.updatedAt now
+      ]
+      [ Se.And
+          [ Se.Is Beam.orderId $ Se.Eq orderId,
+            Se.Is Beam.responseMessage $ Se.Eq (Nothing :: Maybe Text)
+          ]
+      ]

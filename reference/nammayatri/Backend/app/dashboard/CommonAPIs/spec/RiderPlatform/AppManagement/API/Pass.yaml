@@ -1,0 +1,164 @@
+imports:
+  Person: Domain.Types.Person
+  PassInfoAPIEntity: API.Types.UI.Pass
+  PurchasedPassAPIEntity: API.Types.UI.Pass
+  PurchasedPassTransactionAPIEntity: API.Types.UI.Pass
+  Language: Kernel.External.Types
+  StatusType: Domain.Types.PurchasedPass
+  PassSelectionAPIEntity: API.Types.UI.Pass
+  PaymentStatusResp: Lib.Payment.Domain.Action
+  PaymentOrder: Lib.Payment.Domain.Types.PaymentOrder
+  APISuccess: Kernel.Types.APISuccess
+  Pass: Domain.Types.Pass
+  PurchasedPass: Domain.Types.PurchasedPass
+  PurchasedPassPayment: Domain.Types.PurchasedPassPayment
+  Day: Data.Time
+  MediaFile: IssueManagement.Domain.Types.MediaFile
+  IssueMediaUploadReq: IssueManagement.Common.UI.Issue
+  IssueMediaUploadRes: IssueManagement.Common.UI.Issue
+
+importPackageOverrides:
+  Domain.Types.Person: "rider-app"
+  Domain.Types.PurchasedPass: "rider-app"
+  Domain.Types.PurchasedPassPayment: "rider-app"
+  Lib.Payment.Domain.Action: "payment"
+  Lib.Payment.Domain.Types.PaymentOrder: "payment"
+  Domain.Types.Pass: "rider-app"
+  API.Types.UI.Pass: "rider-app"
+  IssueManagement.Domain.Types.MediaFile: "shared-services"
+  IssueManagement.Common.UI.Issue: "shared-services"
+
+module: Pass
+
+types:
+  PurchasedPassSelectReq:
+    - startDay: Maybe Day
+    - profilePicture: Maybe Text
+    - derive: "'HideSecrets"
+
+apis:
+  - GET:
+      endpoint: /customer/{customerId}/availablePasses
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+      query:
+        language: Language
+      response:
+        type: "[PassInfoAPIEntity]"
+
+  - GET:
+      endpoint: /customer/{customerId}/purchasedPasses
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+      query:
+        status: StatusType
+        language: Language
+      response:
+        type: "[PurchasedPassAPIEntity]"
+
+  - GET:
+      endpoint: /customer/{customerId}/transactions
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+      query:
+        limit: Int
+        offset: Int
+        status: Text
+      response:
+        type: "[PurchasedPassTransactionAPIEntity]"
+
+  - POST:
+      endpoint: /customer/{customerId}/activateToday/{passNumber}
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+        passNumber: Int
+      query:
+        startDay: Day
+        purchasedPassPaymentId: Id PurchasedPassPayment
+      response:
+        type: APISuccess
+
+  - POST:
+      endpoint: /customer/{customerId}/pass/{passId}/select
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+        passId: Id Pass
+      request:
+        type: PurchasedPassSelectReq
+      response:
+        type: PassSelectionAPIEntity
+      helperApi:
+        - POST:
+            endpoint: /customer/{customerId}/pass/{passId}/select
+            auth: ApiAuthV2
+            params:
+              customerId: Id Person
+              passId: Id Pass
+            query:
+              - requestorId: Text
+            request:
+              type: PurchasedPassSelectReq
+            response:
+              type: PassSelectionAPIEntity
+
+  - GET:
+      endpoint: customer/{customerId}/payment/{orderId}/status
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+        orderId: Id PaymentOrder
+      response:
+        type: PaymentStatusResp
+      helperApi:
+        - GET:
+            endpoint: customer/{customerId}/payment/{orderId}/status
+            auth: ApiAuthV2
+            params:
+              customerId: Id Person
+              orderId: Id PaymentOrder
+            query:
+              - requestorId: Text
+            response:
+              type: PaymentStatusResp
+
+  - POST:
+      endpoint: /customer/{customerId}/pass/{passId}/resetDeviceSwitchCount
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+        passId: Id PurchasedPass
+      response:
+        type: APISuccess
+
+  - POST:
+      endpoint: /customer/{customerId}/pass/{purchasedPassId}/updateProfilePicture
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+        purchasedPassId: Id PurchasedPass
+      multipart:
+        type: IssueMediaUploadReq
+      response:
+        type: IssueMediaUploadRes
+
+  - GET:
+      endpoint: /customer/{customerId}/pass/photo/{mediaId}
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+        mediaId: Id MediaFile
+      response:
+        type: Text
+
+  - POST:
+      endpoint: /customer/{customerId}/pass/restore
+      auth: ApiAuthV2
+      params:
+        customerId: Id Person
+      response:
+        type: APISuccess

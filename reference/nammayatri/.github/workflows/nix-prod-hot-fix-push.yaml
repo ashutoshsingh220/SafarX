@@ -1,0 +1,113 @@
+name: Nix CI (Prod Hot Fix Push)
+
+on:
+  push:
+    branches:
+      - "prodHotPush-Common"
+      - "prodHotPush-BAP"
+      - "prodHotPush-BPP"
+  workflow_dispatch:
+
+# Cancel in-progress Pull Request workflows if a new workflow is triggered, or a new commit is pushed to the branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+  packages: write
+
+jobs:
+  check-conditions:
+    runs-on: ubuntu-latest
+    outputs:
+      should-proceed: ${{ steps.evaluate.outputs.should_proceed }}      
+      should-push-docker: ${{ steps.check-docker-push.outputs.should_push_docker }}
+    steps:
+      - name: Apply labels
+        if: github.event_name == 'pull_request' && github.event.action != 'closed'
+        uses: actions/labeler@v4
+        with:
+          repo-token: "${{ secrets.GITHUB_TOKEN }}"
+      
+      - name: Check global conditions
+        id: evaluate
+        run: |
+          # Check if workflow should proceed (non-matrix conditions)
+          if [[ "${{ github.event.pull_request.merged }}" == "true" || 
+                "${{ github.event_name }}" != "pull_request" || 
+                "${{ github.event.action }}" != "closed" ]]; then
+            echo "should_proceed=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_proceed=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Check docker push conditions
+        id: check-docker-push
+        run: |
+          # Moving the docker push conditions here from the build job
+          if [[ "${{ github.ref }}" == "refs/heads/prodHotPush-Common" ||
+                "${{ github.ref }}" == "refs/heads/prodHotPush-MMFRFS" ||
+                "${{ github.ref }}" == "refs/heads/prodHotPush-BAP" ||
+                "${{ github.ref }}" == "refs/heads/prodHotPush-BPP" ||
+                "${{ github.event.pull_request.merged }}" == "true" ]]; then
+            echo "should_push_docker=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_push_docker=false" >> $GITHUB_OUTPUT
+          fi
+  nix-build:
+    name: ${{ matrix.name }}
+    needs: [check-conditions]
+    continue-on-error: ${{ matrix.continue-on-error }}
+    if: needs.check-conditions.outputs.should-proceed == 'true'
+    strategy:
+      matrix:
+        include:
+          - system: x86_64-linux
+            arch: amd64
+            name: Nix Optimized Prod Release Build
+            continue-on-error: false
+      fail-fast: false
+    runs-on: x86_64_${{ github.ref_name }}_push
+    outputs:
+      docker-image-name: ${{ steps.docker.outputs.base_image }}
+    steps:
+      - name: Check matrix conditions
+        id: check-conditions
+        run: |
+          # Should build check (skip aarch64-linux on non-main)
+          if [[ "${{ matrix.system }}" == "aarch64-linux" && "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+      - name: Checkout repository
+        if: steps.check-conditions.outputs.should_build == 'true'
+        uses: actions/checkout@v4
+
+      - name: Build all flake outputs
+        if: steps.check-conditions.outputs.should_build == 'true'
+        run: |
+          set -o pipefail
+          nix build github:srid/devour-flake#default --system ${{ matrix.system }} -L --print-out-paths --no-write-lock-file --override-input flake . --out-link ./result 2>&1 | while IFS= read -r line; do
+            printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')" "$line"
+          done | tee build-log.txt
+
+      - name: Build And Push Docker image
+        id: docker
+        if: steps.check-conditions.outputs.should_build == 'true' && (matrix.system == 'x86_64-linux' || matrix.system == 'aarch64-linux') && needs.check-conditions.outputs.should-push-docker == 'true'
+        env:
+          DOCKER_REGISTRY: ghcr.io
+        run: |
+          nix build .#packages.${{ matrix.system }}.dockerImage --out-link ./docker-result
+
+          BASE_IMAGE="$(nix eval --raw .#packages.${{ matrix.system }}.dockerImage.imageName):$(nix eval --raw .#packages.${{ matrix.system }}.dockerImage.imageTag)"
+          echo "base_image=${BASE_IMAGE}" >> $GITHUB_OUTPUT
+
+          gunzip -c ./docker-result > image.tar || cp ./docker-result image.tar
+          echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ${DOCKER_REGISTRY} -u "${{ github.actor }}" --password-stdin
+          # crane push image.tar "${DOCKER_REGISTRY}/${BASE_IMAGE}-${{ matrix.arch }}" use this for multi arch builds, not needed for now
+          crane push image.tar "${DOCKER_REGISTRY}/${BASE_IMAGE}"
+          crane auth logout ${DOCKER_REGISTRY}

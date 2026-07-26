@@ -1,0 +1,252 @@
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
+module Domain.Action.UI.SpecialZoneQueue
+  ( getSpecialZoneQueueRequest,
+    postSpecialZoneQueueRequestRespond,
+    postSpecialZoneQueueRequestCancel,
+  )
+where
+
+import qualified API.Types.UI.SpecialZoneQueue
+import Data.List (partition)
+import qualified Data.Text as T
+import Data.Time (addUTCTime)
+import qualified Domain.Types.DriverInformation as DI
+import qualified Domain.Types.Merchant
+import qualified Domain.Types.MerchantOperatingCity
+import qualified Domain.Types.Person
+import qualified Domain.Types.ServiceTierType as DVST
+import qualified Domain.Types.SpecialZoneQueueRequest
+import qualified Environment
+import EulerHS.Prelude hiding (id)
+import Kernel.External.Maps.Types (LatLong (..))
+import qualified Kernel.Prelude
+import qualified Kernel.Storage.Esqueleto as Esq
+import qualified Kernel.Storage.Hedis as Redis
+import qualified Kernel.Types.APISuccess
+import Kernel.Types.Common (Seconds (..))
+import qualified Kernel.Types.Id
+import Kernel.Utils.Common
+import qualified Lib.Queries.GateInfo as QGI
+import qualified Lib.Queries.SpecialLocation as LQSL
+import Lib.Scheduler.JobStorageType.SchedulerType (createJobIn)
+import SharedLogic.Allocator (AllocatorJobType (..), CheckPickupZoneArrivalJobData (..))
+import qualified SharedLogic.Allocator.Jobs.SpecialZoneQueue.CheckPickupZoneArrival as ArrivalCheck
+import qualified SharedLogic.External.LocationTrackingService.Flow as LTSFlow
+import SharedLogic.SpecialZoneDriverDemand (mkGateSearchDemandKey, mkQueueSkipCountKey, mkSpecialZoneQueueRequestLockKey)
+import qualified SharedLogic.SpecialZoneDriverDemand as SpecialZoneDriverDemand
+import Storage.Beam.SchedulerJob ()
+import Storage.Beam.SpecialZone ()
+import qualified Storage.Queries.DriverInformation as QDI
+import qualified Storage.Queries.SpecialZoneQueueRequest as QSZQR
+import Tools.Error
+
+getSpecialZoneQueueRequest ::
+  ( ( Kernel.Prelude.Maybe (Kernel.Types.Id.Id Domain.Types.Person.Person),
+      Kernel.Types.Id.Id Domain.Types.Merchant.Merchant,
+      Kernel.Types.Id.Id Domain.Types.MerchantOperatingCity.MerchantOperatingCity
+    ) ->
+    Environment.Flow API.Types.UI.SpecialZoneQueue.SpecialZoneQueueRequestListRes
+  )
+getSpecialZoneQueueRequest (mbPersonId, merchantId, merchantOpCityId) = do
+  personId <- mbPersonId & fromMaybeM (PersonNotFound "No person id")
+  now <- getCurrentTime
+  -- Fetch both Active and Accepted requests in one query, then split
+  allReqs <- QSZQR.findActiveByStasusListAndDriverId personId [Domain.Types.SpecialZoneQueueRequest.Active, Domain.Types.SpecialZoneQueueRequest.Accepted]
+  let (activeRequests, acceptedRequests) = partition (\request -> request.status == Domain.Types.SpecialZoneQueueRequest.Active) allReqs
+  -- Lazy-expire Active requests past validTill
+  validActiveRequests <- collectValidActive now activeRequests
+  -- Accepted requests carry an arrivalDeadlineTime (stamped at Accept time).
+  -- If it's in the past, fire the (lock-guarded, idempotent) arrival check in
+  -- the background and drop the row from the response — matches what the
+  -- scheduled CheckPickupZoneArrival job would do, but eagerly so the driver
+  -- UI stays in sync without waiting for the job to fire.
+  let isStaleAccepted r = case r.arrivalDeadlineTime of
+        Just deadline -> deadline < now
+        Nothing -> False
+      (staleAccepted, freshAccepted) = partition isStaleAccepted acceptedRequests
+  forM_ staleAccepted $ \req ->
+    fork ("specialZoneArrivalCheck-" <> req.id.getId) $
+      ArrivalCheck.runArrivalCheckForRequest
+        req.id
+        req.driverId
+        req.gateId
+        req.specialLocationId
+        req.vehicleType
+        req.merchantId
+        req.merchantOperatingCityId
+  acceptedRes <- mapM enrichRes freshAccepted
+  let responseRequests = validActiveRequests ++ acceptedRes
+  -- Get skip count from driver's current location's special location
+  mbDriverLoc <- LTSFlow.driversLocation [personId]
+  mbSpecialLoc <- case mbDriverLoc of
+    (loc : _) -> LQSL.findSpecialLocationByLatLongFull (LatLong loc.lat loc.lon)
+    [] -> pure Nothing
+  (skipCount, maxSkips) <- case mbSpecialLoc of
+    Just specialLoc -> do
+      mbSkipCount <- Redis.runInMasterCloudRedisCellWithCrossAppRedis $ Redis.get @Int (mkQueueSkipCountKey specialLoc.id.getId personId.getId)
+      let mbMaxSkips = Kernel.Prelude.listToMaybe specialLoc.gatesInfo >>= (.maxRideSkipsBeforeQueueRemoval)
+      pure (fromMaybe 0 mbSkipCount, mbMaxSkips)
+    Nothing -> pure (0, Nothing)
+  pure $
+    API.Types.UI.SpecialZoneQueue.SpecialZoneQueueRequestListRes
+      { requests = responseRequests,
+        currentSkipCount = skipCount,
+        maxSkipsBeforeQueueRemoval = maxSkips
+      }
+  where
+    collectValidActive _ [] = pure []
+    collectValidActive now (req : rest) =
+      if req.validTill < now
+        then do
+          Redis.whenWithLockRedis (mkSpecialZoneQueueRequestLockKey req.id.getId) 10 $ do
+            -- Re-read to ensure the respond handler hasn't already processed this
+            mbLatest <- QSZQR.findByPrimaryKey req.id
+            whenJust mbLatest $ \latest ->
+              when (latest.status == Domain.Types.SpecialZoneQueueRequest.Active) $ do
+                QSZQR.updateResponse (Just Domain.Types.SpecialZoneQueueRequest.Ignored) Domain.Types.SpecialZoneQueueRequest.Expired req.id
+                -- Driver let the request expire without responding — count this
+                -- as a true queue skip and remove them from the LTS queue if
+                -- they've hit the gate's skip threshold.
+                mbGate <- QGI.findById (Kernel.Types.Id.Id req.gateId)
+                SpecialZoneDriverDemand.incrementSkipAndCheckThreshold
+                  req.specialLocationId
+                  req.vehicleType
+                  req.merchantId
+                  req.driverId
+                  (mbGate >>= (.maxRideSkipsBeforeQueueRemoval))
+          collectValidActive now rest
+        else do
+          rest' <- collectValidActive now rest
+          enriched <- enrichRes req
+          pure (enriched : rest')
+
+    --   Build the response row for a request, enriching it with the same three
+    --   metrics surfaced over the trigger-notify FCM (perKmFare, isDemandHigh,
+    --   demandCount). Recompute on each poll; 'getAirportPerKmFare' is cached
+    --   for one day per (specialLocation, variant) and 'demandCount' is one
+    --   Redis read. 'isDemandHigh' has no caller-supplied value at poll time
+    --   — defaulting to True mirrors 'fromMaybe True mbIsDemandHigh' in
+    --   'notifyDrivers'.
+    enrichRes req = do
+      mbGate <- QGI.findById (Kernel.Types.Id.Id req.gateId)
+      let mbServiceTier = Kernel.Prelude.readMaybe (T.unpack req.vehicleType) :: Maybe DVST.ServiceTierType
+      mbPerKmFare <- case (mbGate, mbServiceTier) of
+        (Just gate, Just serviceTier) ->
+          SpecialZoneDriverDemand.getAirportPerKmFare
+            merchantId
+            merchantOpCityId
+            (Kernel.Types.Id.Id req.specialLocationId)
+            gate.point
+            req.gateId
+            serviceTier
+        _ -> pure Nothing
+      mbDemandCount <- Redis.withCrossAppRedis $ Redis.get @Int (mkGateSearchDemandKey req.gateId req.vehicleType)
+      pure $
+        API.Types.UI.SpecialZoneQueue.SpecialZoneQueueRequestRes
+          { requestId = req.id,
+            gateId = req.gateId,
+            gateName = req.gateName,
+            specialLocationId = req.specialLocationId,
+            specialLocationName = req.specialLocationName,
+            vehicleType = req.vehicleType,
+            validTill = req.validTill,
+            status = req.status,
+            perKmFare = mbPerKmFare,
+            isDemandHigh = True,
+            demandCount = fromMaybe 0 mbDemandCount
+          }
+
+postSpecialZoneQueueRequestRespond ::
+  ( ( Kernel.Prelude.Maybe (Kernel.Types.Id.Id Domain.Types.Person.Person),
+      Kernel.Types.Id.Id Domain.Types.Merchant.Merchant,
+      Kernel.Types.Id.Id Domain.Types.MerchantOperatingCity.MerchantOperatingCity
+    ) ->
+    Kernel.Types.Id.Id Domain.Types.SpecialZoneQueueRequest.SpecialZoneQueueRequest ->
+    API.Types.UI.SpecialZoneQueue.SpecialZoneQueueRespondReq ->
+    Environment.Flow Kernel.Types.APISuccess.APISuccess
+  )
+postSpecialZoneQueueRequestRespond (mbPersonId, _merchantId, _merchantOpCityId) requestId req = do
+  personId <- mbPersonId & fromMaybeM (PersonNotFound "No person id")
+  Redis.withLockRedis (mkSpecialZoneQueueRequestLockKey requestId.getId) 10 $ do
+    request <- QSZQR.findByPrimaryKey requestId >>= fromMaybeM (InvalidRequest "Request not found")
+    unless (request.driverId == personId) $ throwError (InvalidRequest "Request does not belong to this driver")
+    unless (request.status == Domain.Types.SpecialZoneQueueRequest.Active) $ throwError (InvalidRequest "Request is no longer active")
+    now <- getCurrentTime
+    when (request.validTill < now) $ throwError (InvalidRequest "Request has expired")
+    -- Fetched once and reused so both Accept (arrival timeout) and Reject
+    -- (skip threshold) branches read the same gate snapshot.
+    mbGate <- QGI.findById (Kernel.Types.Id.Id request.gateId)
+    case req.response of
+      Domain.Types.SpecialZoneQueueRequest.Accept -> do
+        driverInfo <- QDI.findById personId >>= fromMaybeM DriverInfoNotFound
+        airportRestriction <- QDI.resolveAirportRestriction now driverInfo
+        unless (airportRestriction == DI.ENABLED) $ throwError DriverNotEnabledForAirport
+        let timeoutSec = maybe 1200 (fromMaybe 1200 . (.pickupZoneArrivalTimeoutInSec)) mbGate
+            arrivalDeadline = addUTCTime (fromIntegral timeoutSec) now
+        QSZQR.updateToAcceptedWithArrivalDeadline requestId arrivalDeadline
+        -- Bump this trigger's net accept counter (drives the dashboard retry loop's
+        -- stop condition + status); no-op for App-driven requests.
+        whenJust request.triggerRequestId $ \trid ->
+          SpecialZoneDriverDemand.incrementTriggerAcceptCount trid requestId.getId
+        -- Driver engaged with the queue; clear any accumulated skip count.
+        SpecialZoneDriverDemand.resetQueueSkipCount request.specialLocationId personId
+        fork "specialZoneSupplyIncrementOnAccept" $
+          SpecialZoneDriverDemand.runSupplyIncrementForRequest requestId.getId request.gateId request.vehicleType
+        createJobIn @_ @'CheckPickupZoneArrival
+          (Just request.merchantId)
+          (Just request.merchantOperatingCityId)
+          (secondsToNominalDiffTime $ Seconds timeoutSec)
+          CheckPickupZoneArrivalJobData
+            { requestId = requestId.getId,
+              driverId = personId,
+              gateId = request.gateId,
+              specialLocationId = request.specialLocationId,
+              vehicleType = request.vehicleType,
+              merchantId = request.merchantId,
+              merchantOperatingCityId = request.merchantOperatingCityId
+            }
+      Domain.Types.SpecialZoneQueueRequest.Reject -> do
+        QSZQR.updateResponse (Just req.response) Domain.Types.SpecialZoneQueueRequest.Expired requestId
+        -- Trigger-level reject counter (drops the row from the pending set); no-op for App-driven.
+        whenJust request.triggerRequestId $ \trid ->
+          SpecialZoneDriverDemand.incrementTriggerRejectCount trid requestId.getId
+        -- Driver explicitly rejected — count as a true queue skip and remove
+        -- from queue if they've hit the gate's skip threshold. Forked so the
+        -- LTS removal doesn't block the respond endpoint.
+        fork "specialZoneSkipCountOnReject" $
+          SpecialZoneDriverDemand.incrementSkipAndCheckThreshold
+            request.specialLocationId
+            request.vehicleType
+            request.merchantId
+            personId
+            (mbGate >>= (.maxRideSkipsBeforeQueueRemoval))
+      _ ->
+        -- Defensive: Cancelled / Ignored / NoShow are set by the system, not
+        -- this endpoint. Preserve old behavior of just stamping the response.
+        QSZQR.updateResponse (Just req.response) Domain.Types.SpecialZoneQueueRequest.Expired requestId
+  pure Kernel.Types.APISuccess.Success
+
+postSpecialZoneQueueRequestCancel ::
+  ( ( Kernel.Prelude.Maybe (Kernel.Types.Id.Id Domain.Types.Person.Person),
+      Kernel.Types.Id.Id Domain.Types.Merchant.Merchant,
+      Kernel.Types.Id.Id Domain.Types.MerchantOperatingCity.MerchantOperatingCity
+    ) ->
+    Kernel.Types.Id.Id Domain.Types.SpecialZoneQueueRequest.SpecialZoneQueueRequest ->
+    Environment.Flow Kernel.Types.APISuccess.APISuccess
+  )
+postSpecialZoneQueueRequestCancel (mbPersonId, _merchantId, _merchantOpCityId) requestId = do
+  personId <- mbPersonId & fromMaybeM (PersonNotFound "No person id")
+  Redis.withLockRedis (mkSpecialZoneQueueRequestLockKey requestId.getId) 10 $ do
+    request <- QSZQR.findByPrimaryKey requestId >>= fromMaybeM (InvalidRequest "Request not found")
+    unless (request.driverId == personId) $ throwError (InvalidRequest "Request does not belong to this driver")
+    unless (request.status == Domain.Types.SpecialZoneQueueRequest.Accepted) $ throwError (InvalidRequest "Only accepted requests can be cancelled")
+    QSZQR.updateResponse (Just Domain.Types.SpecialZoneQueueRequest.Cancelled) Domain.Types.SpecialZoneQueueRequest.Expired requestId
+    -- A cancelled accept frees a slot — drop the net accept counter so the retry
+    -- loop keeps topping up toward the required number. No-op for App-driven.
+    whenJust request.triggerRequestId $ \trid ->
+      SpecialZoneDriverDemand.decrementTriggerAcceptCount trid
+    -- Supply decrement: driver retracted their pickup-zone commitment.
+    fork "specialZoneSupplyDecrementOnRequestCancel" $
+      SpecialZoneDriverDemand.runSupplyDecrementForRequest requestId.getId request.gateId request.vehicleType
+  pure Kernel.Types.APISuccess.Success

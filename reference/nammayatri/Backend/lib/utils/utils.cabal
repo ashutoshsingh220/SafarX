@@ -1,0 +1,158 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.2.
+--
+-- see: https://github.com/sol/hpack
+
+name:           utils
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/nammayatri/nammayatri#readme>
+homepage:       https://github.com/nammayatri/nammayatri#readme
+bug-reports:    https://github.com/nammayatri/nammayatri/issues
+author:         nammayatri
+maintainer:     nammayatri
+copyright:      2023 Juspay Technologies Private Limited
+license:        AllRightsReserved
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/nammayatri/nammayatri
+
+flag Local
+  description: Enable this flag for faster compile times
+  manual: True
+  default: False
+
+library
+  exposed-modules:
+      Tools.DynamicLogic
+      Tools.SharedRedisKeys
+      Utils.Common.Cac.ContextConstants
+      Utils.Common.Cac.KeyNameConstants
+      Utils.Common.Cac.PrefixConstants
+      Utils.Common.Cac.UtilsConstants
+      Utils.Common.Cac.UtilsTH
+      Utils.Common.CacUtils
+      Utils.Common.CrossCloudProxy
+      Utils.Common.Events
+      Utils.Common.JWT.Config
+      Utils.Common.JWT.TransitClaim
+      Utils.QRCode.Scanner
+  other-modules:
+      Paths_utils
+  hs-source-dirs:
+      src
+  default-extensions:
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      NoImplicitPrelude
+      OverloadedStrings
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      BlockArguments
+      TypeSynonymInstances
+      UndecidableInstances
+      StandaloneDeriving
+      PackageImports
+      TemplateHaskell
+  ghc-options: -fwrite-ide-info -hiedir=.hie -fplugin=RecordDotPreprocessor -Wall -Wcompat -Widentities -fhide-source-paths -Werror
+  build-depends:
+      JuicyPixels
+    , JuicyPixels-extra
+    , aeson
+    , aeson-casing
+    , async
+    , base >=4.7 && <5
+    , base64-bytestring
+    , beam-core
+    , beam-mysql
+    , beam-postgres
+    , beckn-services
+    , beckn-spec
+    , bytestring
+    , casing
+    , cassava
+    , cereal
+    , containers
+    , cryptonite
+    , dashboard-helper-api
+    , either
+    , esqueleto
+    , euler-hs
+    , exceptions
+    , extra
+    , generic-lens
+    , geohash ==1.0.1
+    , haskell-cac
+    , hspec
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , http-types
+    , jwt
+    , lens
+    , location-updates
+    , mobility-core
+    , openapi3
+    , payment
+    , persistent
+    , postgresql-simple
+    , process
+    , prometheus-client
+    , random
+    , record-dot-preprocessor
+    , record-hasfield
+    , resource-pool
+    , scheduler
+    , sequelize
+    , servant
+    , servant-client
+    , servant-client-core
+    , servant-multipart
+    , servant-openapi3
+    , servant-server
+    , sessionizer-metrics
+    , shared-services
+    , singletons
+    , special-zone-a
+    , stm
+    , string-conversions
+    , template-haskell
+    , temporary
+    , text
+    , text-conversions
+    , time
+    , unordered-containers
+    , uuid
+    , vector
+    , wai
+    , warp
+    , yudhishthira
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4

@@ -1,0 +1,236 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+module App where
+
+import qualified Client.Main as CM
+import qualified Data.Bool as B
+import Data.Singletons (SingI)
+import qualified Data.Text as T
+import Environment (Flow, HandlerCfg, HandlerEnv, buildHandlerEnv)
+import "dynamic-offer-driver-app" Environment (AppCfg (..))
+import EulerHS.Interpreters (runFlow)
+import qualified EulerHS.Language as L
+import qualified EulerHS.Runtime as R
+import Kernel.Beam.Connection.Flow (prepareConnectionDriver)
+import Kernel.Beam.Connection.Types (ConnectionConfigDriver (..))
+import Kernel.Beam.Types (KafkaConn (..))
+import qualified Kernel.Beam.Types as KBT
+import Kernel.Exit
+import Kernel.External.Verification.Interface.Idfy
+import Kernel.Prelude
+import qualified Kernel.Storage.Beam.MerchantOperatingCity as Beam
+import Kernel.Storage.Esqueleto.Migration
+import Kernel.Storage.Queries.SystemConfigs as QSC
+import Kernel.Types.Beckn.City (initCityMaps)
+import Kernel.Types.Error
+import Kernel.Types.Flow (runFlowR)
+import Kernel.Utils.App (getPodName, handleLeft)
+import Kernel.Utils.Common
+import Kernel.Utils.Dhall
+import qualified Kernel.Utils.FlowLogging as L
+import Kernel.Utils.Servant.SignatureAuth
+import Lib.Scheduler
+import qualified Lib.Scheduler.JobStorageType.SchedulerType as QAllJ
+import SharedLogic.Allocator
+import SharedLogic.Allocator.Jobs.AggregatedCommissionInvoiceCreation.AggregatedCommissionInvoiceCreation (runAggregatedCommissionInvoiceCreationJob)
+import SharedLogic.Allocator.Jobs.Cautio.InstallationStatus (installationStatus)
+import SharedLogic.Allocator.Jobs.CongestionCharge.CongestionChargeAvg
+import SharedLogic.Allocator.Jobs.Document.VerificationRetry
+import SharedLogic.Allocator.Jobs.DriverFeeUpdates.BadDebtCalculationScheduler
+import SharedLogic.Allocator.Jobs.DriverFeeUpdates.DriverFee
+import SharedLogic.Allocator.Jobs.FCM.RunScheduledFCMS (runScheduledFCMS)
+import SharedLogic.Allocator.Jobs.FCM.SoftBlockNotification
+import SharedLogic.Allocator.Jobs.FleetAlert.SendFleetAlert (sendFleetAlert)
+import SharedLogic.Allocator.Jobs.Insurance.IffcoTokioInsurance (triggerIffcoTokioInsuranceForOnRideDrivers)
+import SharedLogic.Allocator.Jobs.Mandate.Execution (startMandateExecutionForDriver)
+import SharedLogic.Allocator.Jobs.Mandate.Notification (sendPDNNotificationToDriver)
+import SharedLogic.Allocator.Jobs.Mandate.OrderAndNotificationStatusUpdate (notificationAndOrderStatusUpdate)
+import SharedLogic.Allocator.Jobs.Overlay.SendOverlay (sendOverlayToDriver)
+import SharedLogic.Allocator.Jobs.Payout.DriverReferralPayout (sendDriverReferralPayoutJobData)
+import SharedLogic.Allocator.Jobs.Payout.ScheduledBatchPayout (sendScheduledBatchPayout)
+import SharedLogic.Allocator.Jobs.Payout.SpecialZonePayout (sendSpecialZonePayout)
+import SharedLogic.Allocator.Jobs.Reconciliation.Reconciliation (runReconciliationJob)
+import SharedLogic.Allocator.Jobs.Reconciliation.ReconciliationScheduler (runReconciliationSchedulerJob)
+import SharedLogic.Allocator.Jobs.Reconciliation.ReconciliationSweep (runReconciliationSweepJob)
+import SharedLogic.Allocator.Jobs.Reminder.ProcessReminder (processReminder)
+import SharedLogic.Allocator.Jobs.ScheduledRides.CheckExotelCallStatusAndNotifyBAP (checkExotelCallStatusAndNotifyBAP)
+import SharedLogic.Allocator.Jobs.ScheduledRides.ScheduledRideAssignedOnUpdate (sendScheduledRideAssignedOnUpdate)
+import SharedLogic.Allocator.Jobs.ScheduledRides.ScheduledRideNotificationsToDriver (sendScheduledRideNotificationsToDriver, sendTagActionNotification)
+import SharedLogic.Allocator.Jobs.SendFeedbackPN (sendFeedbackPN)
+import SharedLogic.Allocator.Jobs.SendSearchRequestToDrivers (sendSearchRequestToDrivers)
+import SharedLogic.Allocator.Jobs.Settlement.SAPReportDispatch (runSAPPGSettlementDispatchJob, runSAPSubscriptionPurchaseDispatchJob)
+import SharedLogic.Allocator.Jobs.Settlement.SettlementReportIngestion (runSettlementReportIngestionJob)
+import SharedLogic.Allocator.Jobs.SpecialZoneQueue.CheckPickupZoneArrival (checkPickupZoneArrival)
+import SharedLogic.Allocator.Jobs.SpecialZoneQueue.TriggerSpecialZoneNotify (triggerSpecialZoneNotify)
+import SharedLogic.Allocator.Jobs.Subscription.ExpireSubscriptionPurchase (expireSubscriptionPurchase)
+import SharedLogic.Allocator.Jobs.SupplyDemand.SupplyDemandRatio
+import SharedLogic.Allocator.Jobs.TDSDistribution.ScheduledTDSDistribution (scheduledTDSDistribution)
+import SharedLogic.Allocator.Jobs.UnblockDriverUpdate.UnblockDriver
+import SharedLogic.Allocator.Jobs.Webhook.Webhook
+import SharedLogic.KaalChakra.Chakras
+import SharedLogic.MediaFileDocument (mediaFileDocumentComplete)
+import Storage.Beam.SystemConfigs ()
+import qualified Storage.CachedQueries.Merchant as Storage
+import qualified Tools.ActorInfo as ActorInfo
+import "dynamic-offer-driver-app" Tools.Beam.UtilsTH (HasSchemaName (..), currentSchemaName)
+
+instance HasSchemaName Beam.MerchantOperatingCityT where
+  schemaName _ = T.pack currentSchemaName
+
+createCAC :: AppCfg -> IO ()
+createCAC appCfg = do
+  when appCfg.cacConfig.enableCac $ do
+    cacStatus <- CM.initCACClient appCfg.cacConfig.host (fromIntegral appCfg.cacConfig.interval) appCfg.cacTenants appCfg.cacConfig.enablePolling
+    case cacStatus of
+      0 -> CM.startCACPolling appCfg.cacTenants
+      _ -> do
+        -- logError "CAC client failed to start"
+        threadDelay 1000000
+        B.bool (pure ()) (createCAC appCfg) appCfg.cacConfig.retryConnection
+  when appCfg.superPositionConfig.enableSuperPosition $ do
+    superPositionStatus <- CM.initSuperPositionClient appCfg.superPositionConfig.host (fromIntegral appCfg.superPositionConfig.interval) appCfg.superPositionConfig.tenants appCfg.superPositionConfig.enablePolling
+    case superPositionStatus of
+      0 -> CM.runSuperPositionPolling appCfg.superPositionConfig.tenants
+      _ -> do
+        -- logError "CAC super position client failed to start"
+        threadDelay 1000000
+        B.bool (pure ()) (createCAC appCfg) appCfg.cacConfig.retryConnection
+
+putJobHandlerInListWrapper ::
+  forall t (e :: t).
+  (JobProcessor t, JobInfoProcessor e, SingI e) =>
+  R.FlowRuntime ->
+  HandlerEnv ->
+  (Job e -> Flow ExecutionResult) ->
+  JobHandlersList t ->
+  JobHandlersList t
+putJobHandlerInListWrapper flowRt env jobHandler =
+  putJobHandlerInList (liftIO . runFlowR flowRt env . ActorInfo.withJobIdActorInfoWrapper jobHandler)
+
+allocatorHandle :: R.FlowRuntime -> HandlerEnv -> SchedulerHandle AllocatorJobType
+allocatorHandle flowRt env =
+  SchedulerHandle
+    { getTasksById = QAllJ.getTasksById,
+      getReadyTasks = QAllJ.getReadyTasks $ Just env.maxShards,
+      getReadyTask = QAllJ.getReadyTask,
+      markAsComplete = QAllJ.markAsComplete,
+      markAsFailed = QAllJ.markAsFailed,
+      updateErrorCountAndFail = QAllJ.updateErrorCountAndFail,
+      reSchedule = QAllJ.reSchedule,
+      updateFailureCount = QAllJ.updateFailureCount,
+      reScheduleOnError = QAllJ.reScheduleOnError,
+      jobHandlers =
+        emptyJobHandlerList
+          & putJobHandlerInListWrapper flowRt env sendSearchRequestToDrivers
+          & putJobHandlerInListWrapper flowRt env unblockDriver
+          & putJobHandlerInListWrapper flowRt env unblockAirportDriver
+          & putJobHandlerInListWrapper flowRt env softBlockNotifyDriver
+          & putJobHandlerInListWrapper flowRt env unblockSoftBlockedDriver
+          & putJobHandlerInListWrapper flowRt env calculateSupplyDemand
+          & putJobHandlerInListWrapper flowRt env calculateCongestionChargeAvgTaxi
+          & putJobHandlerInListWrapper flowRt env calculateDriverFeeForDrivers
+          & putJobHandlerInListWrapper flowRt env sendPDNNotificationToDriver
+          & putJobHandlerInListWrapper flowRt env startMandateExecutionForDriver
+          & putJobHandlerInListWrapper flowRt env notificationAndOrderStatusUpdate
+          & putJobHandlerInListWrapper flowRt env sendOverlayToDriver
+          & putJobHandlerInListWrapper flowRt env badDebtCalculation
+          & putJobHandlerInListWrapper flowRt env sendManualPaymentLink
+          & putJobHandlerInListWrapper flowRt env retryDocumentVerificationJob
+          & putJobHandlerInListWrapper flowRt env sendDriverReferralPayoutJobData
+          & putJobHandlerInListWrapper flowRt env sendScheduledRideNotificationsToDriver
+          & putJobHandlerInListWrapper flowRt env sendTagActionNotification
+          & putJobHandlerInListWrapper flowRt env sendScheduledRideAssignedOnUpdate
+          & putJobHandlerInListWrapper flowRt env checkExotelCallStatusAndNotifyBAP
+          & putJobHandlerInListWrapper flowRt env sendFleetAlert
+          & putJobHandlerInListWrapper flowRt env runDailyJob
+          & putJobHandlerInListWrapper flowRt env runWeeklyJob
+          & putJobHandlerInListWrapper flowRt env runMonthlyJob
+          & putJobHandlerInListWrapper flowRt env runQuarterlyJob
+          & putJobHandlerInListWrapper flowRt env runDailyUpdateTagJob
+          & putJobHandlerInListWrapper flowRt env runWeeklyUpdateTagJob
+          & putJobHandlerInListWrapper flowRt env runMonthlyUpdateTagJob
+          & putJobHandlerInListWrapper flowRt env runQuarterlyUpdateTagJob
+          & putJobHandlerInListWrapper flowRt env runScheduledFCMS
+          & putJobHandlerInListWrapper flowRt env sendWebhookWithRetryToExternal
+          & putJobHandlerInListWrapper flowRt env installationStatus
+          & putJobHandlerInListWrapper flowRt env mediaFileDocumentComplete
+          & putJobHandlerInListWrapper flowRt env sendFeedbackPN
+          & putJobHandlerInListWrapper flowRt env sendSpecialZonePayout
+          & putJobHandlerInListWrapper flowRt env processReminder
+          & putJobHandlerInListWrapper flowRt env expireSubscriptionPurchase
+          & putJobHandlerInListWrapper flowRt env sendScheduledBatchPayout
+          & putJobHandlerInListWrapper flowRt env runReconciliationJob
+          & putJobHandlerInListWrapper flowRt env runReconciliationSchedulerJob
+          & putJobHandlerInListWrapper flowRt env runReconciliationSweepJob
+          & putJobHandlerInListWrapper flowRt env runSettlementReportIngestionJob
+          & putJobHandlerInListWrapper flowRt env runSAPSubscriptionPurchaseDispatchJob
+          & putJobHandlerInListWrapper flowRt env runSAPPGSettlementDispatchJob
+          & putJobHandlerInListWrapper flowRt env checkPickupZoneArrival
+          & putJobHandlerInListWrapper flowRt env triggerSpecialZoneNotify
+          & putJobHandlerInListWrapper flowRt env scheduledTDSDistribution
+          & putJobHandlerInListWrapper flowRt env triggerIffcoTokioInsuranceForOnRideDrivers
+          & putJobHandlerInListWrapper flowRt env runAggregatedCommissionInvoiceCreationJob
+    }
+
+runDriverOfferAllocator ::
+  (HandlerCfg -> HandlerCfg) ->
+  IO ()
+runDriverOfferAllocator configModifier = do
+  handlerCfg <- configModifier <$> readDhallConfigDefault "driver-offer-allocator"
+  handlerEnv <- buildHandlerEnv handlerCfg
+  hostname <- getPodName
+  let loggerRt = L.getEulerLoggerRuntime hostname handlerCfg.appCfg.loggerConfig
+  _ <- liftIO $ createCAC handlerCfg.appCfg
+  R.withFlowRuntime (Just loggerRt) $ \flowRt -> do
+    runFlow
+      flowRt
+      ( ( prepareConnectionDriver
+            ConnectionConfigDriver
+              { esqDBCfg = handlerCfg.appCfg.esqDBCfg,
+                esqDBReplicaCfg = handlerCfg.appCfg.esqDBReplicaCfg,
+                hedisClusterCfg = handlerCfg.appCfg.hedisClusterCfg,
+                hedisSecondaryClusterCfg = handlerCfg.appCfg.hedisSecondaryClusterCfg
+              }
+            handlerCfg.appCfg.kvConfigUpdateFrequency
+        )
+          >> L.setOption KafkaConn handlerEnv.kafkaProducerTools
+      )
+    -- R.withFlowRuntime (Just loggerRt) \flowRt -> do
+    flowRt' <- runFlowR flowRt handlerEnv $ do
+      withLogTag "Server startup" $ do
+        migrateIfNeeded handlerCfg.appCfg.migrationPath handlerCfg.appCfg.autoMigrate handlerCfg.appCfg.esqDBCfg
+          >>= handleLeft exitDBMigrationFailure "Couldn't migrate database: "
+        logInfo "Setting up for signature auth..."
+        kvConfigs <-
+          findById "kv_configs" >>= pure . decodeFromText' @Tables
+            >>= fromMaybeM (InternalError "Couldn't find kv_configs table for driver app")
+        L.setOption KBT.Tables kvConfigs
+        initCityMaps
+        allProviders <-
+          try Storage.loadAllProviders
+            >>= handleLeft @SomeException exitLoadAllProvidersFailure "Exception thrown: "
+        let allSubscriberIds = map ((.subscriberId.getShortId) &&& (.uniqueKeyId)) allProviders
+        flowRt' <-
+          addAuthManagersToFlowRt
+            flowRt
+            $ catMaybes
+              [ Just (Nothing, prepareAuthManagers flowRt handlerEnv allSubscriberIds),
+                Just (Just 20000, prepareIdfyHttpManager 20000)
+              ]
+
+        logInfo ("Runtime created. Starting server at port " <> show (handlerCfg.schedulerConfig.port))
+        pure flowRt'
+    runSchedulerService handlerCfg.schedulerConfig handlerEnv.jobInfoMap handlerEnv.kvConfigUpdateFrequency handlerEnv.maxShards $ allocatorHandle flowRt' handlerEnv

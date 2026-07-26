@@ -1,0 +1,174 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.2.
+--
+-- see: https://github.com/sol/hpack
+
+name:           lib-dashboard
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/nammayatri/nammayatri#readme>
+homepage:       https://github.com/nammayatri/nammayatri#readme
+bug-reports:    https://github.com/nammayatri/nammayatri/issues
+author:         nammayatri
+maintainer:     nammayatri
+copyright:      2023 Juspay Technologies Private Limited
+license:        AllRightsReserved
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/nammayatri/nammayatri
+
+flag Local
+  description: Enable this flag for faster compile times
+  manual: True
+  default: False
+
+library
+  exposed-modules:
+      API.Dashboard
+      API.Dashboard.AccessMatrix
+      API.Dashboard.EmailVerification
+      API.Dashboard.Merchant
+      API.Dashboard.Person
+      API.Dashboard.Registration
+      API.Dashboard.Roles
+      Domain.Action.Dashboard.AccessMatrix
+      Domain.Action.Dashboard.EmailVerification
+      Domain.Action.Dashboard.Merchant
+      Domain.Action.Dashboard.Person
+      Domain.Action.Dashboard.Registration
+      Domain.Action.Dashboard.Roles
+      Domain.Action.Dashboard.Transaction
+      Domain.Types.AccessMatrix
+      Domain.Types.Entity
+      Domain.Types.Merchant
+      Domain.Types.MerchantAccess
+      Domain.Types.Person
+      Domain.Types.Person.API
+      Domain.Types.Person.Type
+      Domain.Types.RegistrationToken
+      Domain.Types.Role
+      Domain.Types.ServerName
+      Domain.Types.Transaction
+      Environment
+      SharedLogic.Transaction
+      Storage.Beam.AccessMatrix
+      Storage.Beam.BeamFlow
+      Storage.Beam.Common
+      Storage.Beam.Entity
+      Storage.Beam.Merchant
+      Storage.Beam.MerchantAccess
+      Storage.Beam.Person
+      Storage.Beam.RegistrationToken
+      Storage.Beam.Role
+      Storage.Beam.Transaction
+      Storage.Queries.AccessMatrix
+      Storage.Queries.Entity
+      Storage.Queries.Merchant
+      Storage.Queries.MerchantAccess
+      Storage.Queries.Person
+      Storage.Queries.RegistrationToken
+      Storage.Queries.Role
+      Storage.Queries.Transaction
+      Tools.Auth
+      Tools.Auth.Api
+      Tools.Auth.Common
+      Tools.Auth.Dashboard
+      Tools.Auth.Merchant
+      Tools.Client
+      Tools.Error
+      Tools.InternalClient
+      Tools.Metrics
+      Tools.Servant.HeaderAuth
+      Tools.Streaming.Kafka.Environment
+      Tools.Utils
+  other-modules:
+      Paths_lib_dashboard
+  hs-source-dirs:
+      src
+  default-extensions:
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DerivingStrategies
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      NoImplicitPrelude
+      OverloadedLabels
+      OverloadedStrings
+      PackageImports
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      StandaloneDeriving
+      TemplateHaskell
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      BlockArguments
+      TypeSynonymInstances
+      UndecidableInstances
+  ghc-options: -Wall -Wcompat -Werror -Widentities -Wunused-imports -fplugin=RecordDotPreprocessor -fwrite-ide-info -hiedir=.hie -fhide-source-paths -Wincomplete-uni-patterns -Wwarn=ambiguous-fields
+  build-depends:
+      aeson
+    , base >=4.7 && <5
+    , base32
+    , beam-core
+    , beam-mysql
+    , beam-postgres
+    , beckn-spec
+    , bytestring
+    , cereal
+    , containers
+    , cryptonite
+    , dashboard-helper-api
+    , dynamic-offer-driver-app
+    , esqueleto
+    , euler-hs
+    , http-types
+    , lens
+    , memory
+    , mobility-core
+    , openapi3
+    , passetto-client
+    , passetto-lib
+    , persistent
+    , persistent-postgresql
+    , postgresql-simple
+    , random
+    , record-dot-preprocessor
+    , record-hasfield
+    , rider-app
+    , sequelize
+    , servant-client
+    , servant-openapi3
+    , servant-server
+    , shared-services
+    , singletons
+    , singletons-th
+    , template-haskell
+    , text
+    , time
+    , unordered-containers
+    , wai
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4

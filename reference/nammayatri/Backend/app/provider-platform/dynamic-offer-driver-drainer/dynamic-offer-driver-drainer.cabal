@@ -1,0 +1,236 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.2.
+--
+-- see: https://github.com/sol/hpack
+
+name:           dynamic-offer-driver-drainer
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/nammayatri/nammayatri#readme>
+homepage:       https://github.com/nammayatri/nammayatri#readme
+bug-reports:    https://github.com/nammayatri/nammayatri/issues
+author:         nammayatri
+maintainer:     nammayatri
+copyright:      2023 Juspay Technologies Private Limited
+license:        AllRightsReserved
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/nammayatri/nammayatri
+
+flag Local
+  description: Enable this flag for faster compile times
+  manual: True
+  default: False
+
+library
+  exposed-modules:
+      Config.Env
+      Constants
+      DBQuery.Functions
+      DBQuery.Types
+      DBSync.BatchCreate
+      DBSync.Create
+      DBSync.DBSync
+      DBSync.Delete
+      DBSync.Update
+      Event.Event
+      Types.Config
+      Types.DBSync
+      Types.DBSync.Create
+      Types.DBSync.DBModel
+      Types.DBSync.Delete
+      Types.DBSync.Update
+      Types.Event
+      Utils.Config
+      Utils.Event
+      Utils.Parse
+      Utils.Redis
+      Utils.Utils
+  other-modules:
+      Paths_dynamic_offer_driver_drainer
+  hs-source-dirs:
+      src
+  default-extensions:
+      NoImplicitPrelude
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DeriveFunctor
+      DeriveGeneric
+      DerivingStrategies
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      OverloadedStrings
+      PackageImports
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      UndecidableInstances
+      LambdaCase
+  ghc-options: -fwrite-ide-info -hiedir=.hie -fplugin=RecordDotPreprocessor -Wall -Wcompat -Widentities -fhide-source-paths -Werror
+  build-depends:
+      aeson
+    , aeson-pretty
+    , async
+    , base >=4.7 && <5
+    , beam-core
+    , beam-mysql
+    , beam-postgres
+    , bytestring
+    , casing
+    , cereal
+    , connection
+    , containers
+    , directory
+    , errors
+    , euler-events-hs >=2.0.0 && <2.1
+    , euler-hs
+    , extra
+    , filepath
+    , formatting
+    , hedis
+    , http-client
+    , http-client-tls
+    , http-types
+    , hw-kafka-client
+    , juspay-extra
+    , lens
+    , mobility-core
+    , pcg-random
+    , postgresql-simple
+    , record-dot-preprocessor
+    , record-hasfield
+    , resource-pool
+    , scientific
+    , sequelize
+    , servant-server
+    , text
+    , time
+    , tinylog
+    , transformers
+    , unix
+    , unordered-containers
+    , utf8-string
+    , uuid
+    , vector
+    , wai
+    , wai-extra
+    , wai-middleware-prometheus
+    , warp
+    , warp-tls
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4
+
+executable dynamic-offer-driver-drainer-exe
+  main-is: Main.hs
+  hs-source-dirs:
+      server
+  default-extensions:
+      NoImplicitPrelude
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DeriveFunctor
+      DeriveGeneric
+      DerivingStrategies
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      OverloadedStrings
+      PackageImports
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      UndecidableInstances
+      LambdaCase
+  ghc-options: -fwrite-ide-info -hiedir=.hie -fplugin=RecordDotPreprocessor -threaded -rtsopts "-with-rtsopts=-N -T"
+  build-depends:
+      aeson
+    , aeson-pretty
+    , async
+    , base >=4.7 && <5
+    , beam-core
+    , beam-mysql
+    , beam-postgres
+    , bytestring
+    , casing
+    , cereal
+    , connection
+    , containers
+    , directory
+    , dynamic-offer-driver-drainer
+    , errors
+    , euler-events-hs >=2.0.0 && <2.1
+    , euler-hs
+    , extra
+    , filepath
+    , formatting
+    , hedis
+    , http-client
+    , http-client-tls
+    , http-types
+    , hw-kafka-client
+    , juspay-extra
+    , lens
+    , mobility-core
+    , pcg-random
+    , postgresql-simple
+    , record-dot-preprocessor
+    , record-hasfield
+    , resource-pool
+    , scientific
+    , sequelize
+    , servant-server
+    , text
+    , time
+    , tinylog
+    , transformers
+    , unix
+    , unordered-containers
+    , utf8-string
+    , uuid
+    , vector
+    , wai
+    , wai-extra
+    , wai-middleware-prometheus
+    , warp
+    , warp-tls
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4

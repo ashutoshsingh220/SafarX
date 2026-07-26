@@ -1,0 +1,251 @@
+{-# OPTIONS_GHC -Wno-dodgy-exports #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
+module Lib.Finance.Storage.Queries.LedgerEntry where
+
+import Kernel.Beam.Functions
+import Kernel.External.Encryption
+import Kernel.Prelude
+import qualified Kernel.Prelude
+import Kernel.Types.Error
+import qualified Kernel.Types.Id
+import Kernel.Utils.Common (CacheFlow, EsqDBFlow, MonadFlow, fromMaybeM, getCurrentTime)
+import qualified Lib.Finance.Core.Types
+import qualified Lib.Finance.Domain.Types.Account
+import qualified Lib.Finance.Domain.Types.LedgerEntry
+import qualified Lib.Finance.Storage.Beam.BeamFlow
+import qualified Lib.Finance.Storage.Beam.LedgerEntry as Beam
+import qualified Sequelize as Se
+
+create :: (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) => (Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry -> m ())
+create = createWithKV
+
+createMany :: (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) => ([Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry] -> m ())
+createMany = traverse_ create
+
+findByEntityReference ::
+  (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) =>
+  (Kernel.Prelude.Maybe Lib.Finance.Domain.Types.LedgerEntry.EntityReferenceType -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> m ([Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry]))
+findByEntityReference entityReferenceType entityReferenceId = do
+  findAllWithKV
+    [ Se.And
+        [ Se.Is Beam.entityReferenceType $ Se.Eq entityReferenceType,
+          Se.Is Beam.entityReferenceId $ Se.Eq entityReferenceId
+        ]
+    ]
+
+findByFromAccount :: (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) => (Kernel.Types.Id.Id Lib.Finance.Domain.Types.Account.Account -> m ([Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry]))
+findByFromAccount fromAccountId = do findAllWithKV [Se.Is Beam.fromAccountId $ Se.Eq (Kernel.Types.Id.getId fromAccountId)]
+
+findById :: (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) => (Kernel.Types.Id.Id Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry -> m (Maybe Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry))
+findById id = do findOneWithKV [Se.Is Beam.id $ Se.Eq (Kernel.Types.Id.getId id)]
+
+findByReference :: (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) => (Kernel.Prelude.Text -> Kernel.Prelude.Text -> m ([Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry]))
+findByReference referenceType referenceId = do findAllWithKV [Se.And [Se.Is Beam.referenceType $ Se.Eq referenceType, Se.Is Beam.referenceId $ Se.Eq referenceId]]
+
+findByReferenceAndFromAccount ::
+  (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) =>
+  (Kernel.Prelude.Text -> Kernel.Prelude.Text -> Kernel.Types.Id.Id Lib.Finance.Domain.Types.Account.Account -> m ([Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry]))
+findByReferenceAndFromAccount referenceType referenceId fromAccountId = do
+  findAllWithKV
+    [ Se.And
+        [ Se.Is Beam.referenceType $ Se.Eq referenceType,
+          Se.Is Beam.referenceId $ Se.Eq referenceId,
+          Se.Is Beam.fromAccountId $ Se.Eq (Kernel.Types.Id.getId fromAccountId)
+        ]
+    ]
+
+findByReferenceAndToAccount ::
+  (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) =>
+  (Kernel.Prelude.Text -> Kernel.Prelude.Text -> Kernel.Types.Id.Id Lib.Finance.Domain.Types.Account.Account -> m ([Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry]))
+findByReferenceAndToAccount referenceType referenceId toAccountId = do
+  findAllWithKV
+    [ Se.And
+        [ Se.Is Beam.referenceType $ Se.Eq referenceType,
+          Se.Is Beam.referenceId $ Se.Eq referenceId,
+          Se.Is Beam.toAccountId $ Se.Eq (Kernel.Types.Id.getId toAccountId)
+        ]
+    ]
+
+findByStatus :: (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) => (Lib.Finance.Domain.Types.LedgerEntry.EntryStatus -> m ([Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry]))
+findByStatus status = do findAllWithKV [Se.Is Beam.status $ Se.Eq status]
+
+findByToAccount :: (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) => (Kernel.Types.Id.Id Lib.Finance.Domain.Types.Account.Account -> m ([Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry]))
+findByToAccount toAccountId = do findAllWithKV [Se.Is Beam.toAccountId $ Se.Eq (Kernel.Types.Id.getId toAccountId)]
+
+findReversalOf ::
+  (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) =>
+  (Kernel.Prelude.Maybe (Kernel.Types.Id.Id Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry) -> m (Maybe Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry))
+findReversalOf reversalOf = do findOneWithKV [Se.Is Beam.reversalOf $ Se.Eq (Kernel.Types.Id.getId <$> reversalOf)]
+
+updateSettled ::
+  (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) =>
+  (Lib.Finance.Domain.Types.LedgerEntry.EntryStatus -> Kernel.Prelude.Maybe Kernel.Prelude.UTCTime -> Kernel.Prelude.Maybe Lib.Finance.Core.Types.ActorType -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> Kernel.Types.Id.Id Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry -> m ())
+updateSettled status settledAt updatedBy updatedById id = do
+  _now <- getCurrentTime
+  updateWithKV
+    [ Se.Set Beam.status status,
+      Se.Set Beam.settledAt settledAt,
+      Se.Set Beam.updatedBy updatedBy,
+      Se.Set Beam.updatedById updatedById,
+      Se.Set Beam.updatedAt _now
+    ]
+    [Se.Is Beam.id $ Se.Eq (Kernel.Types.Id.getId id)]
+
+updateSettlementStatus ::
+  (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) =>
+  (Kernel.Prelude.Maybe Lib.Finance.Domain.Types.LedgerEntry.SettlementStatus -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> Kernel.Prelude.Maybe Kernel.Prelude.UTCTime -> Kernel.Prelude.Maybe Lib.Finance.Core.Types.ActorType -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> Kernel.Types.Id.Id Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry -> m ())
+updateSettlementStatus settlementStatus settlementId settlementTimestamp updatedBy updatedById id = do
+  _now <- getCurrentTime
+  updateWithKV
+    [ Se.Set Beam.settlementStatus settlementStatus,
+      Se.Set Beam.settlementId settlementId,
+      Se.Set Beam.settlementTimestamp settlementTimestamp,
+      Se.Set Beam.updatedBy updatedBy,
+      Se.Set Beam.updatedById updatedById,
+      Se.Set Beam.updatedAt _now
+    ]
+    [Se.Is Beam.id $ Se.Eq (Kernel.Types.Id.getId id)]
+
+updateStatus ::
+  (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) =>
+  (Lib.Finance.Domain.Types.LedgerEntry.EntryStatus -> Kernel.Prelude.Maybe Lib.Finance.Core.Types.ActorType -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> Kernel.Types.Id.Id Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry -> m ())
+updateStatus status updatedBy updatedById id = do
+  _now <- getCurrentTime
+  updateWithKV [Se.Set Beam.status status, Se.Set Beam.updatedBy updatedBy, Se.Set Beam.updatedById updatedById, Se.Set Beam.updatedAt _now] [Se.Is Beam.id $ Se.Eq (Kernel.Types.Id.getId id)]
+
+updateVoided ::
+  (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) =>
+  (Lib.Finance.Domain.Types.LedgerEntry.EntryStatus -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> Kernel.Prelude.Maybe Lib.Finance.Core.Types.ActorType -> Kernel.Prelude.Maybe Kernel.Prelude.Text -> Kernel.Types.Id.Id Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry -> m ())
+updateVoided status voidReason updatedBy updatedById id = do
+  _now <- getCurrentTime
+  updateWithKV
+    [ Se.Set Beam.status status,
+      Se.Set Beam.voidReason voidReason,
+      Se.Set Beam.updatedBy updatedBy,
+      Se.Set Beam.updatedById updatedById,
+      Se.Set Beam.updatedAt _now
+    ]
+    [Se.Is Beam.id $ Se.Eq (Kernel.Types.Id.getId id)]
+
+findByPrimaryKey ::
+  (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) =>
+  (Kernel.Types.Id.Id Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry -> m (Maybe Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry))
+findByPrimaryKey id = do findOneWithKV [Se.And [Se.Is Beam.id $ Se.Eq (Kernel.Types.Id.getId id)]]
+
+updateByPrimaryKey :: (Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r) => (Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry -> m ())
+updateByPrimaryKey (Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry {..}) = do
+  _now <- getCurrentTime
+  updateWithKV
+    [ Se.Set Beam.amount amount,
+      Se.Set Beam.concernedIndividualId concernedIndividualId,
+      Se.Set Beam.createdBy createdBy,
+      Se.Set Beam.createdById createdById,
+      Se.Set Beam.currency currency,
+      Se.Set Beam.entityReferenceId entityReferenceId,
+      Se.Set Beam.entityReferenceType entityReferenceType,
+      Se.Set Beam.entryType entryType,
+      Se.Set Beam.fromAccountId (Kernel.Types.Id.getId fromAccountId),
+      Se.Set Beam.fromEndingBalance fromEndingBalance,
+      Se.Set Beam.fromStartingBalance fromStartingBalance,
+      Se.Set Beam.merchantId merchantId,
+      Se.Set Beam.merchantOperatingCityId merchantOperatingCityId,
+      Se.Set Beam.metadataV2 metadataV2,
+      Se.Set Beam.reconciliationStatus reconciliationStatus,
+      Se.Set Beam.referenceId referenceId,
+      Se.Set Beam.referenceType referenceType,
+      Se.Set Beam.reversalOf (Kernel.Types.Id.getId <$> reversalOf),
+      Se.Set Beam.settledAt settledAt,
+      Se.Set Beam.settlementId settlementId,
+      Se.Set Beam.settlementStatus settlementStatus,
+      Se.Set Beam.settlementTimestamp settlementTimestamp,
+      Se.Set Beam.status status,
+      Se.Set Beam.timestamp timestamp,
+      Se.Set Beam.toAccountId (Kernel.Types.Id.getId toAccountId),
+      Se.Set Beam.toEndingBalance toEndingBalance,
+      Se.Set Beam.toStartingBalance toStartingBalance,
+      Se.Set Beam.updatedBy updatedBy,
+      Se.Set Beam.updatedById updatedById,
+      Se.Set Beam.voidReason voidReason,
+      Se.Set Beam.updatedAt _now
+    ]
+    [Se.And [Se.Is Beam.id $ Se.Eq (Kernel.Types.Id.getId id)]]
+
+instance FromTType' Beam.LedgerEntry Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry where
+  fromTType' (Beam.LedgerEntryT {..}) = do
+    pure $
+      Just
+        Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry
+          { amount = amount,
+            concernedIndividualId = concernedIndividualId,
+            createdAt = createdAt,
+            createdBy = createdBy,
+            createdById = createdById,
+            currency = currency,
+            entityReferenceId = entityReferenceId,
+            entityReferenceType = entityReferenceType,
+            entryType = entryType,
+            fromAccountId = Kernel.Types.Id.Id fromAccountId,
+            fromEndingBalance = fromEndingBalance,
+            fromStartingBalance = fromStartingBalance,
+            id = Kernel.Types.Id.Id id,
+            merchantId = merchantId,
+            merchantOperatingCityId = merchantOperatingCityId,
+            metadataV2 = metadataV2,
+            reconciliationStatus = reconciliationStatus,
+            referenceId = referenceId,
+            referenceType = referenceType,
+            reversalOf = Kernel.Types.Id.Id <$> reversalOf,
+            settledAt = settledAt,
+            settlementId = settlementId,
+            settlementStatus = settlementStatus,
+            settlementTimestamp = settlementTimestamp,
+            status = status,
+            timestamp = timestamp,
+            toAccountId = Kernel.Types.Id.Id toAccountId,
+            toEndingBalance = toEndingBalance,
+            toStartingBalance = toStartingBalance,
+            updatedBy = updatedBy,
+            updatedById = updatedById,
+            voidReason = voidReason,
+            updatedAt = updatedAt
+          }
+
+instance ToTType' Beam.LedgerEntry Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry where
+  toTType' (Lib.Finance.Domain.Types.LedgerEntry.LedgerEntry {..}) = do
+    Beam.LedgerEntryT
+      { Beam.amount = amount,
+        Beam.concernedIndividualId = concernedIndividualId,
+        Beam.createdAt = createdAt,
+        Beam.createdBy = createdBy,
+        Beam.createdById = createdById,
+        Beam.currency = currency,
+        Beam.entityReferenceId = entityReferenceId,
+        Beam.entityReferenceType = entityReferenceType,
+        Beam.entryType = entryType,
+        Beam.fromAccountId = Kernel.Types.Id.getId fromAccountId,
+        Beam.fromEndingBalance = fromEndingBalance,
+        Beam.fromStartingBalance = fromStartingBalance,
+        Beam.id = Kernel.Types.Id.getId id,
+        Beam.merchantId = merchantId,
+        Beam.merchantOperatingCityId = merchantOperatingCityId,
+        Beam.metadataV2 = metadataV2,
+        Beam.reconciliationStatus = reconciliationStatus,
+        Beam.referenceId = referenceId,
+        Beam.referenceType = referenceType,
+        Beam.reversalOf = Kernel.Types.Id.getId <$> reversalOf,
+        Beam.settledAt = settledAt,
+        Beam.settlementId = settlementId,
+        Beam.settlementStatus = settlementStatus,
+        Beam.settlementTimestamp = settlementTimestamp,
+        Beam.status = status,
+        Beam.timestamp = timestamp,
+        Beam.toAccountId = Kernel.Types.Id.getId toAccountId,
+        Beam.toEndingBalance = toEndingBalance,
+        Beam.toStartingBalance = toStartingBalance,
+        Beam.updatedBy = updatedBy,
+        Beam.updatedById = updatedById,
+        Beam.voidReason = voidReason,
+        Beam.updatedAt = updatedAt
+      }

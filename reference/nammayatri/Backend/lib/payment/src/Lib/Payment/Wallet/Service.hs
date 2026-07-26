@@ -1,0 +1,542 @@
+module Lib.Payment.Wallet.Service
+  ( LoyaltyReferenceType (..),
+    loyaltyReferenceTypeText,
+    getOrCreateWalletForPerson,
+    mapOrderStatusToWalletStatus,
+    LedgerWriteOutcome (..),
+    recordLoyaltyHistory,
+    recordLoyaltyHistoryReversal,
+    bumpWalletAggregatesOnEarn,
+    bumpWalletAggregatesOnBurn,
+    reconcileWalletFromProgram,
+    processLoyaltyInfoFromOrderStatus,
+    getOrCreateWalletPayment,
+  )
+where
+
+import Control.Applicative ((<|>))
+import qualified Data.Map as Map
+import qualified Data.Text as T
+import qualified Kernel.External.Payment.Interface.Types as Payment
+import Kernel.Prelude
+import Kernel.Types.Error
+import Kernel.Types.Id (Id (..))
+import Kernel.Utils.Common
+import qualified Lib.Finance.Account.Service as FAccountSvc
+import qualified Lib.Finance.Core.Types as Finance
+import qualified Lib.Finance.Domain.Types.Account as FAccount
+import qualified Lib.Finance.Domain.Types.LedgerEntry as FLE
+import Lib.Finance.Error.Types (FinanceError (..), LedgerErrorCode (..))
+import qualified Lib.Finance.FinanceM as Finance
+import qualified Lib.Finance.Ledger.Service as FLedger
+import qualified Lib.Finance.Storage.Beam.BeamFlow as FBeamFlow
+import qualified Lib.Finance.Storage.Queries.Account as QFAccount
+import qualified Lib.Payment.Domain.Types.PaymentOrder as DOrder
+import qualified Lib.Payment.Domain.Types.Wallet as DWallet
+import qualified Lib.Payment.Domain.Types.WalletHistory as DWH
+import qualified Lib.Payment.Domain.Types.WalletPayments as DWP
+import qualified Lib.Payment.Storage.Beam.BeamFlow as PBeamFlow
+import qualified Lib.Payment.Storage.Queries.Wallet as QWallet
+import qualified Lib.Payment.Storage.Queries.WalletHistory as QWH
+import qualified Lib.Payment.Storage.Queries.WalletPayments as QWP
+import Lib.Payment.Wallet.Types (LoyaltyProgramSummary)
+
+data LoyaltyReferenceType
+  = LOYALTY_EARN_TOPUP
+  | LOYALTY_EARN_CASHBACK
+  | LOYALTY_BURN
+  deriving (Eq, Ord, Show, Read, Generic, ToJSON, FromJSON)
+
+loyaltyReferenceTypeText :: LoyaltyReferenceType -> Text
+loyaltyReferenceTypeText = T.pack . show
+
+mapOrderStatusToWalletStatus :: Payment.TransactionStatus -> DWP.WalletPaymentStatus
+mapOrderStatusToWalletStatus = \case
+  Payment.NEW -> DWP.NEW
+  Payment.CHARGED -> DWP.CHARGED
+  Payment.AUTHENTICATION_FAILED -> DWP.FAILED
+  Payment.AUTHORIZATION_FAILED -> DWP.FAILED
+  Payment.JUSPAY_DECLINED -> DWP.FAILED
+  Payment.CLIENT_AUTH_TOKEN_EXPIRED -> DWP.FAILED
+  Payment.AUTO_REFUNDED -> DWP.FAILED
+  _ -> DWP.PENDING
+
+parsePoints :: Text -> Maybe HighPrecMoney
+parsePoints t = realToFrac <$> (readMaybe (T.unpack t) :: Maybe Double)
+
+positiveRate :: HighPrecMoney -> Maybe HighPrecMoney
+positiveRate r = if r > 0 then Just r else Nothing
+
+-- | Live ₹-per-point rate from the programs-API burn options (value / points).
+programConversionRate :: LoyaltyProgramSummary -> Maybe HighPrecMoney
+programConversionRate program = do
+  opts <- program.burn.options
+  rate <- listToMaybe (mapMaybe (\o -> o.applicable >>= (.rate)) opts)
+  pts <- parsePoints =<< rate.points
+  val <- parsePoints =<< rate.value
+  if pts <= 0 || val <= 0 then Nothing else Just (val / pts)
+
+getOrCreateWalletForPerson ::
+  (FBeamFlow.BeamFlow m r, PBeamFlow.BeamFlow m r) =>
+  Text -> -- personId
+  FAccount.CounterpartyType -> -- programType
+  Text -> -- programId
+  Currency ->
+  Text -> -- merchantId
+  Maybe Text -> -- merchantOperatingCityId
+  m (DWallet.Wallet, FAccount.Account)
+getOrCreateWalletForPerson personId programType programId currency merchantId mbMerchantOperatingCityId = do
+  mbWallet <- QWallet.findByPersonAndProgram personId programType
+  case mbWallet of
+    Just w -> do
+      acc <-
+        QFAccount.findById w.accountId
+          >>= fromMaybeM
+            ( InternalError $
+                "Loyalty wallet " <> w.id.getId
+                  <> " references missing accountId "
+                  <> w.accountId.getId
+            )
+      pure (w, acc)
+    Nothing -> createAccountAndWallet
+  where
+    createAccountAndWallet = do
+      now <- getCurrentTime
+      walletId <- Id <$> generateGUID
+      let accountInput =
+            FAccountSvc.AccountInput
+              { accountType = FAccount.Liability,
+                counterpartyType = Just programType,
+                counterpartyId = Just personId,
+                subLedger = Nothing,
+                currency = currency,
+                merchantId = merchantId,
+                merchantOperatingCityId = fromMaybe "" mbMerchantOperatingCityId
+              }
+      account <-
+        FAccountSvc.getOrCreateAccount accountInput
+          >>= either
+            ( \err ->
+                throwError . InternalError $
+                  "Failed to get/create finance account for loyalty wallet (person="
+                    <> personId
+                    <> "): "
+                    <> show err
+            )
+            pure
+      let wallet =
+            DWallet.Wallet
+              { id = walletId,
+                personId = personId,
+                programType = programType,
+                programId = programId,
+                accountId = account.id,
+                currency = currency,
+                availableBalance = 0,
+                lifetimeEarned = 0,
+                lifetimeBurned = 0,
+                topupEarned = 0,
+                cashbackEarned = 0,
+                conversionRate = Nothing,
+                merchantId = merchantId,
+                merchantOperatingCityId = mbMerchantOperatingCityId,
+                createdAt = now,
+                updatedAt = now
+              }
+      QWallet.create wallet
+      pure (wallet, account)
+
+mkLoyaltyFinanceCtx :: DWallet.Wallet -> Text -> Finance.FinanceCtx
+mkLoyaltyFinanceCtx wallet refId =
+  Finance.FinanceCtx
+    { merchantId = wallet.merchantId,
+      merchantOpCityId = fromMaybe "" wallet.merchantOperatingCityId,
+      currency = wallet.currency,
+      isOnline = True,
+      counterpartyType = wallet.programType,
+      counterpartyId = wallet.personId,
+      concernedIndividualId = Nothing,
+      referenceId = refId,
+      entityReferenceId = Nothing,
+      entityReferenceType = Nothing,
+      merchantName = Nothing,
+      merchantShortId = Nothing,
+      issuedByAddress = Nothing,
+      supplierName = Nothing,
+      supplierGSTIN = Nothing,
+      supplierVatNumber = Nothing,
+      supplierAddress = Nothing,
+      merchantGstin = Nothing,
+      merchantVatNumber = Nothing,
+      supplierId = Nothing,
+      fromLocationAddress = Nothing,
+      issuedToName = Nothing,
+      panOfParty = Nothing,
+      panType = Nothing,
+      tdsRateReason = Nothing,
+      emitLedgerEntries = True
+    }
+
+data LedgerWriteOutcome
+  = WrittenNew (Id FLE.LedgerEntry)
+  | AlreadyWritten (Id FLE.LedgerEntry)
+  | Skipped
+  deriving (Eq, Show, Generic)
+
+runLoyaltyTransfer ::
+  (FBeamFlow.BeamFlow m r, MonadFlow m) =>
+  DWallet.Wallet ->
+  Text -> -- referenceId for the FinanceCtx (== ledger entry's reference_id)
+  Finance.FinanceM m (Maybe (Id FLE.LedgerEntry)) ->
+  m (Either FinanceError LedgerWriteOutcome)
+runLoyaltyTransfer wallet refId action = do
+  result <- Finance.runFinance (mkLoyaltyFinanceCtx wallet refId) action
+  case result of
+    Left err -> pure (Left err)
+    Right (Just entryId, _) -> pure (Right (WrittenNew entryId))
+    Right (Nothing, _) -> do
+      logError $ "loyalty transfer skipped refId=" <> refId <> " (amount <= 0 or ledger entries disabled)"
+      pure (Right Skipped)
+
+-- | Pick (refType, source, dest) for a wallet history row.
+historyLedgerLegs ::
+  DWP.WalletPaymentKind ->
+  (LoyaltyReferenceType, Finance.AccountRole, Finance.AccountRole)
+historyLedgerLegs = \case
+  DWP.TOPUP -> (LOYALTY_EARN_TOPUP, Finance.BuyerAsset, Finance.OwnerLiability)
+  DWP.CASHBACK -> (LOYALTY_EARN_CASHBACK, Finance.BuyerExpense, Finance.OwnerLiability)
+  DWP.BURN -> (LOYALTY_BURN, Finance.OwnerLiability, Finance.BuyerAsset)
+
+findEntriesForWallet ::
+  (FBeamFlow.BeamFlow m r) =>
+  DWP.WalletPaymentKind ->
+  Text -> -- refType
+  Text -> -- refId
+  Id FAccount.Account ->
+  m [FLE.LedgerEntry]
+findEntriesForWallet DWP.BURN = FLedger.getEntriesByReferenceAndFromAccount
+findEntriesForWallet _ = FLedger.getEntriesByReferenceAndToAccount
+
+recordLoyaltyHistory ::
+  (FBeamFlow.BeamFlow m r, MonadFlow m, Finance.HasActorInfo m r) =>
+  DWallet.Wallet ->
+  DWP.WalletPaymentKind ->
+  HighPrecMoney -> -- monetary (₹) value to post to the ledger for this (program, kind)
+  Text -> -- domainEntityId (used as refId)
+  m (Either FinanceError LedgerWriteOutcome)
+recordLoyaltyHistory wallet kind amount domainEntityId = do
+  let (refTypeEnum, source, dest) = historyLedgerLegs kind
+      refType = loyaltyReferenceTypeText refTypeEnum
+  entriesForWallet <- findEntriesForWallet kind refType domainEntityId wallet.accountId
+  case nonReversalEntries entriesForWallet of
+    (e : _) -> pure (Right (AlreadyWritten e.id))
+    [] ->
+      runLoyaltyTransfer
+        wallet
+        domainEntityId
+        (Finance.transfer source dest amount refType)
+
+recordLoyaltyHistoryReversal ::
+  (FBeamFlow.BeamFlow m r, Finance.HasActorInfo m r) =>
+  DWallet.Wallet ->
+  DWP.WalletPaymentKind ->
+  Text -> -- domainEntityId
+  m (Either FinanceError LedgerWriteOutcome)
+recordLoyaltyHistoryReversal wallet kind domainEntityId = do
+  let (refTypeEnum, _, _) = historyLedgerLegs kind
+      refType = loyaltyReferenceTypeText refTypeEnum
+  entriesForWallet <- findEntriesForWallet kind refType domainEntityId wallet.accountId
+  case nonReversalEntries entriesForWallet of
+    [] -> pure (Left $ LedgerError InvalidReversal ("No original entry to reverse for refId=" <> domainEntityId <> " kind=" <> show kind))
+    (original : _) ->
+      case findReversalOf original.id entriesForWallet of
+        Just rev -> pure (Right (AlreadyWritten rev.id))
+        Nothing -> do
+          res <- FLedger.createReversal original.id "Juspay loyalty entry reversed"
+          pure $ fmap (WrittenNew . (.id)) res
+
+nonReversalEntries :: [FLE.LedgerEntry] -> [FLE.LedgerEntry]
+nonReversalEntries = filter (\e -> e.entryType /= FLE.Reversal)
+
+findReversalOf :: Id FLE.LedgerEntry -> [FLE.LedgerEntry] -> Maybe FLE.LedgerEntry
+findReversalOf originalId =
+  find (\e -> e.entryType == FLE.Reversal && e.reversalOf == Just originalId)
+
+bumpWalletAggregatesOnEarn ::
+  (PBeamFlow.BeamFlow m r) =>
+  Id DWallet.Wallet ->
+  DWP.WalletPaymentKind ->
+  HighPrecMoney ->
+  m ()
+bumpWalletAggregatesOnEarn walletId kind points = do
+  wallet <-
+    QWallet.findByPrimaryKey walletId
+      >>= fromMaybeM (InternalError $ "Wallet not found while bumping earn aggregates: " <> walletId.getId)
+  let newAvailable = wallet.availableBalance + points
+      newLifetimeEarned = wallet.lifetimeEarned + points
+      newTopup = if kind == DWP.TOPUP then wallet.topupEarned + points else wallet.topupEarned
+      newCashback = if kind == DWP.CASHBACK then wallet.cashbackEarned + points else wallet.cashbackEarned
+  QWallet.updateAggregatesOnEarn newAvailable newLifetimeEarned newTopup newCashback walletId
+
+bumpWalletAggregatesOnBurn ::
+  (PBeamFlow.BeamFlow m r) =>
+  Id DWallet.Wallet ->
+  HighPrecMoney ->
+  m ()
+bumpWalletAggregatesOnBurn walletId points = do
+  wallet <-
+    QWallet.findByPrimaryKey walletId
+      >>= fromMaybeM (InternalError $ "Wallet not found while bumping burn aggregates: " <> walletId.getId)
+  let newAvailable = wallet.availableBalance - points
+      newLifetimeBurned = wallet.lifetimeBurned + points
+  QWallet.updateAggregatesOnBurn newAvailable newLifetimeBurned walletId
+
+reconcileWalletFromProgram ::
+  (FBeamFlow.BeamFlow m r, PBeamFlow.BeamFlow m r, Log m, MonadTime m) =>
+  DWallet.Wallet ->
+  FAccount.Account ->
+  Maybe HighPrecMoney -> -- config default ₹-per-point rate (from loyaltyProgramMap)
+  LoyaltyProgramSummary ->
+  m ()
+reconcileWalletFromProgram wallet account mbConfigRate program = do
+  let pw = program.wallet
+      pockets = fromMaybe [] pw.pockets
+      pocketByKeyword kw =
+        find (\p -> maybe False (T.isInfixOf kw . T.toLower) p.label) pockets
+      mbAvailable = parsePoints =<< pw.availablePoints
+      mbLifeEarned = parsePoints =<< pw.lifetimeEarned
+      mbLifeRedeemed = parsePoints =<< pw.lifetimeRedeemed
+      mbTopup = parsePoints =<< ((.lifetimeEarned) =<< pocketByKeyword "topup")
+      mbCashback = parsePoints =<< ((.lifetimeEarned) =<< pocketByKeyword "reward")
+      -- ₹-per-point: latest programs-API rate, else last persisted, else config default.
+      newRate = programConversionRate program <|> (wallet.conversionRate >>= positiveRate) <|> (mbConfigRate >>= positiveRate)
+      rateChanged = wallet.conversionRate /= newRate
+      mismatched mbRemote localVal = maybe False (/= localVal) mbRemote
+      drifted =
+        mismatched mbAvailable wallet.availableBalance
+          || mismatched mbLifeEarned wallet.lifetimeEarned
+          || mismatched mbLifeRedeemed wallet.lifetimeBurned
+          || mismatched mbTopup wallet.topupEarned
+          || mismatched mbCashback wallet.cashbackEarned
+      syncAvailable = fromMaybe wallet.availableBalance mbAvailable
+      syncLifeEarned = fromMaybe wallet.lifetimeEarned mbLifeEarned
+      syncLifeBurned = fromMaybe wallet.lifetimeBurned mbLifeRedeemed
+      syncTopup = fromMaybe wallet.topupEarned mbTopup
+      syncCashback = fromMaybe wallet.cashbackEarned mbCashback
+  when (drifted || rateChanged) $
+    QWallet.syncFromLoyaltyInfo syncAvailable syncLifeEarned syncLifeBurned syncTopup syncCashback newRate wallet.id
+  case newRate of
+    Just rate -> do
+      let expectedBalance = syncAvailable * rate
+      when (account.balance /= expectedBalance) $
+        QFAccount.updateBalance expectedBalance wallet.accountId
+    Nothing ->
+      logError $ "reconcile: no conversion rate for wallet " <> wallet.id.getId <> "; skipping balance update"
+
+processLoyaltyInfoFromOrderStatus ::
+  (FBeamFlow.BeamFlow m r, PBeamFlow.BeamFlow m r, Log m, Finance.HasActorInfo m r) =>
+  Text -> -- personId
+  DOrder.PaymentOrder ->
+  Text -> -- domainEntityId (e.g. frfs_ticket_booking_payment.id; caller falls back to orderId when absent) — stamped on each WalletHistory row
+  Payment.LoyaltyInfo ->
+  (Text -> m (Maybe (FAccount.CounterpartyType, Maybe HighPrecMoney))) -> -- resolveProgram: programType + config default ₹-per-point rate
+  m [LoyaltyProgramSummary] -> -- fetchFullInfo
+  m ()
+processLoyaltyInfoFromOrderStatus personId order domainEntityId loyalty resolveProgram fetchFullInfo = do
+  let merchantId = order.merchantId.getId
+      mbMerchantOperatingCityId = (.getId) <$> order.merchantOperatingCityId
+      currency = order.currency
+      isTopup = order.paymentServiceType == Just DOrder.Wallet
+      walletStatus = mapOrderStatusToWalletStatus order.status
+      isOrderCharged = walletStatus == DWP.CHARGED
+
+  resp <- try @_ @SomeException fetchFullInfo
+  programs <- case resp of
+    Left e -> do
+      logError $ "loyaltyInfo programs fetch failed: " <> show e
+      pure []
+    Right ps -> pure ps
+  let apiRateByProgramId = Map.fromList (mapMaybe (\p -> (,) p.id <$> programConversionRate p) programs)
+      effectiveRate pid mbConfigRate = Map.lookup pid apiRateByProgramId <|> (mbConfigRate >>= positiveRate)
+
+  let payloadTotalEarned = sum (map (.points) loyalty.earnDetails)
+      payloadTotalBurned = sum [sum (map (.points) burn.burnOptions) | burn <- loyalty.burnDetails]
+  wp <-
+    getOrCreateWalletPayment
+      personId
+      order.id
+      currency
+      merchantId
+      mbMerchantOperatingCityId
+      walletStatus
+      payloadTotalEarned
+      payloadTotalBurned
+      (Just domainEntityId)
+
+  forM_ loyalty.earnDetails $ \earn -> do
+    mbEntry <- resolveProgram earn.programId
+    case mbEntry of
+      Nothing ->
+        logError $
+          "loyalty earn skipped: program "
+            <> earn.programId
+            <> " not configured for merchant "
+            <> merchantId
+      Just (programType, mbConfigRate) -> do
+        rate <-
+          effectiveRate earn.programId mbConfigRate
+            & fromMaybeM (InternalError ("No conversion rate for loyalty program " <> earn.programId))
+        (wallet, _acc) <-
+          getOrCreateWalletForPerson personId programType earn.programId currency merchantId mbMerchantOperatingCityId
+        let kind = if isTopup then DWP.TOPUP else DWP.CASHBACK
+            basePoints = if isTopup then order.amount / rate else earn.points
+            baseBucket =
+              if null earn.campaigns || isTopup
+                then [(Nothing, basePoints, earn.reversedPoints)]
+                else []
+            campaignBuckets =
+              if null earn.campaigns
+                then []
+                else map (\c -> (c.campaignId, c.points, c.reversedPoints)) earn.campaigns
+            buckets = baseBucket ++ campaignBuckets
+        forM_ buckets $ \(mbCampaignId, pts, mbBucketReversed) ->
+          void $ upsertWalletHistory wp wallet programType kind mbCampaignId pts mbBucketReversed (Just (pts * rate)) domainEntityId
+        processProgramLedger wallet kind basePoints (basePoints * rate) domainEntityId isOrderCharged earn.reversedPoints
+
+  forM_ loyalty.burnDetails $ \burn -> do
+    mbEntry <- resolveProgram burn.programId
+    case mbEntry of
+      Nothing ->
+        logError $
+          "loyalty burn skipped: program "
+            <> burn.programId
+            <> " not configured for merchant "
+            <> merchantId
+      Just (programType, mbConfigRate) -> do
+        let totalPoints = sum (map (.points) burn.burnOptions)
+        when (totalPoints > 0) $ do
+          rate <-
+            effectiveRate burn.programId mbConfigRate
+              & fromMaybeM (InternalError ("No conversion rate for loyalty program " <> burn.programId))
+          (wallet, _acc) <-
+            getOrCreateWalletForPerson personId programType burn.programId currency merchantId mbMerchantOperatingCityId
+          void $ upsertWalletHistory wp wallet programType DWP.BURN Nothing totalPoints burn.reversedPoints (Just (totalPoints * rate)) domainEntityId
+          processProgramLedger wallet DWP.BURN totalPoints (totalPoints * rate) domainEntityId isOrderCharged burn.reversedPoints
+
+  forM_ programs $ \program ->
+    case program.programType >>= (readMaybe . T.unpack) of
+      Nothing -> pure ()
+      Just programType -> do
+        mbEntry <- resolveProgram program.id
+        (w, acc) <- getOrCreateWalletForPerson personId programType program.id currency merchantId mbMerchantOperatingCityId
+        reconcileWalletFromProgram w acc (snd =<< mbEntry) program
+
+getOrCreateWalletPayment ::
+  (PBeamFlow.BeamFlow m r, Log m) =>
+  Text -> -- personId
+  Id DOrder.PaymentOrder ->
+  Currency ->
+  Text -> -- merchantId
+  Maybe Text -> -- merchantOperatingCityId
+  DWP.WalletPaymentStatus ->
+  HighPrecMoney -> -- payloadTotalEarned (seed value used only when creating a new WP)
+  HighPrecMoney -> -- payloadTotalBurned
+  Maybe Text -> -- domainEntityId
+  m DWP.WalletPayments
+getOrCreateWalletPayment personId orderId currency merchantId mbMerchantOperatingCityId walletStatus payloadTotalEarned payloadTotalBurned mbDomainEntityId = do
+  mbExisting <- QWP.findByOrderId orderId
+  case mbExisting of
+    Just wp -> do
+      when (wp.status /= walletStatus) $ QWP.updateStatus walletStatus wp.id
+      pure wp {DWP.status = walletStatus}
+    Nothing -> do
+      now <- getCurrentTime
+      wpId <- Id <$> generateGUID
+      let wp =
+            DWP.WalletPayments
+              { id = wpId,
+                personId = personId,
+                orderId = orderId,
+                currency = currency,
+                status = walletStatus,
+                totalEarned = payloadTotalEarned,
+                totalBurned = payloadTotalBurned,
+                domainEntityId = mbDomainEntityId,
+                merchantId = merchantId,
+                merchantOperatingCityId = mbMerchantOperatingCityId,
+                createdAt = now,
+                updatedAt = now
+              }
+      QWP.create wp
+      pure wp
+
+upsertWalletHistory ::
+  (PBeamFlow.BeamFlow m r, Log m) =>
+  DWP.WalletPayments ->
+  DWallet.Wallet ->
+  FAccount.CounterpartyType -> -- programType
+  DWP.WalletPaymentKind ->
+  Maybe Text -> -- campaignId
+  HighPrecMoney ->
+  Maybe HighPrecMoney -> -- reversedPoints
+  Maybe HighPrecMoney -> -- benefitValue
+  Text -> -- domainEntityId
+  m DWH.WalletHistory
+upsertWalletHistory wp wallet programType kind mbCampaignId points mbReversed mbBenefit domainEntityId = do
+  mbExisting <- QWH.findByWalletPaymentsAndProgramAndKindAndCampaign wp.id programType kind mbCampaignId
+  now <- getCurrentTime
+  case mbExisting of
+    Just existing -> do
+      when (existing.points /= points || existing.reversedPoints /= mbReversed || existing.benefitValue /= mbBenefit) $
+        QWH.updatePointsAndBenefit points mbReversed mbBenefit existing.id
+      pure existing {DWH.points = points, DWH.reversedPoints = mbReversed, DWH.benefitValue = mbBenefit, DWH.updatedAt = now}
+    Nothing -> do
+      whId <- Id <$> generateGUID
+      let wh =
+            DWH.WalletHistory
+              { id = whId,
+                walletPaymentsId = wp.id,
+                walletId = wallet.id,
+                programType = programType,
+                kind = kind,
+                campaignId = mbCampaignId,
+                points = points,
+                reversedPoints = mbReversed,
+                benefitValue = mbBenefit,
+                domainEntityId = domainEntityId,
+                merchantId = wp.merchantId,
+                merchantOperatingCityId = wp.merchantOperatingCityId,
+                createdAt = now,
+                updatedAt = now
+              }
+      QWH.create wh
+      pure wh
+
+processProgramLedger ::
+  (FBeamFlow.BeamFlow m r, PBeamFlow.BeamFlow m r, Log m, Finance.HasActorInfo m r) =>
+  DWallet.Wallet ->
+  DWP.WalletPaymentKind ->
+  HighPrecMoney -> -- points (for the wallet POINT aggregates)
+  HighPrecMoney -> -- monetary (₹) value (for the finance ledger) = points * conversionRate
+  Text -> -- domainEntityId
+  Bool -> -- isOrderCharged
+  Maybe HighPrecMoney -> -- reversedPoints
+  m ()
+processProgramLedger wallet kind points money domainEntityId isOrderCharged mbReversed = do
+  when isOrderCharged $ do
+    res <- recordLoyaltyHistory wallet kind money domainEntityId
+    case res of
+      Left err -> logError $ "recordLoyaltyHistory failed refId=" <> domainEntityId <> " kind=" <> show kind <> ": " <> show err
+      Right (WrittenNew _) -> applyAggregateBump kind points
+      Right (AlreadyWritten _) -> pure ()
+      Right Skipped -> pure ()
+  whenJust mbReversed $ \rev -> when (rev > 0) $ do
+    revRes <- recordLoyaltyHistoryReversal wallet kind domainEntityId
+    case revRes of
+      Left err -> logError $ "recordLoyaltyHistoryReversal failed refId=" <> domainEntityId <> " kind=" <> show kind <> ": " <> show err
+      Right (WrittenNew _) -> applyAggregateBump kind (negate rev)
+      Right (AlreadyWritten _) -> pure ()
+      Right Skipped -> pure ()
+  where
+    applyAggregateBump DWP.BURN amt = bumpWalletAggregatesOnBurn wallet.id amt
+    applyAggregateBump k amt = bumpWalletAggregatesOnEarn wallet.id k amt

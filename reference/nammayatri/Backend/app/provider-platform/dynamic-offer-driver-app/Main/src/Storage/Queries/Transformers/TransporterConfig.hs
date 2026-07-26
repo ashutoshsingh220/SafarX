@@ -1,0 +1,103 @@
+module Storage.Queries.Transformers.TransporterConfig
+  ( fallBackVersionInText,
+    parseFieldM,
+    parseFieldWithDefaultM,
+    parseAnalyticsConfig,
+    parseDriverWalletConfig,
+    parseSubscriptionConfig,
+    parseTaxConfig,
+    parseKnowledgeCenterSopTypesConfig,
+  )
+where
+
+import qualified Data.Aeson as A
+import qualified Domain.Types.Extra.TransporterConfig as Extra
+import Domain.Types.TransporterConfig hiding (SubscriptionConfig (..))
+import Kernel.Prelude
+import Kernel.Types.Common
+import Kernel.Types.Version
+import Storage.Queries.Transformers.SubscriptionConfigParser (parseSubscriptionConfig)
+import Tools.FieldParse as FieldParse
+
+fallbackVersion :: Version
+fallbackVersion =
+  Version
+    { major = 9999,
+      minor = 9999,
+      maintenance = 9999,
+      preRelease = Nothing,
+      build = Nothing
+    }
+
+fallBackVersionInText :: Text
+fallBackVersionInText = versionToText fallbackVersion
+
+$(mkFieldParserWithDefault ''AnalyticsConfig)
+
+parseAnalyticsConfig :: (Monad m, Log m) => Text -> Maybe A.Value -> m AnalyticsConfig
+parseAnalyticsConfig merchantOperatingCityId mbVal = do
+  let def =
+        AnalyticsConfig
+          { weekStartMode = 3,
+            earningsWindowSize = 7,
+            allowCacheDriverFlowStatus = False,
+            enableFleetOperatorDashboardAnalytics = False,
+            maxOnlineDurationDays = 10,
+            onlineDurationCalculateFrom = Nothing,
+            useDbForEarningAndMetrics = False
+          }
+  parseFieldWithDefaultM "transporterConfig" "analyticsConfig" merchantOperatingCityId def parseAnalyticsConfigWithDefault mbVal
+
+$(mkFieldParserWithDefault ''DriverWalletConfig)
+
+parseDriverWalletConfig :: (Monad m, Log m) => Text -> Maybe A.Value -> m DriverWalletConfig
+parseDriverWalletConfig merchantOperatingCityId mbVal = do
+  let def =
+        DriverWalletConfig
+          { enableDriverWallet = False,
+            driverWalletPayoutThreshold = 0,
+            gstPercentage = 0.0,
+            enableWalletPayout = False,
+            enableWalletTopup = False,
+            forceOnlineLedger = Nothing,
+            maxWalletPayoutsPerDay = Nothing,
+            minWalletAmountForCashRides = Nothing,
+            minimumWalletPayoutAmount = 0,
+            payoutCutOffDays = 7,
+            payoutFee = Nothing,
+            onlineCommissionPaidOutDirectly = Nothing,
+            fetchWalletTransactionsFromClickhouse = Nothing
+          }
+  parseFieldWithDefaultM "transporterConfig" "driverWalletConfig" merchantOperatingCityId def parseDriverWalletConfigWithDefault mbVal
+
+$(mkFieldParserWithDefault ''TaxConfig)
+
+parseTaxConfig :: (Monad m, Log m) => Text -> Maybe A.Value -> m TaxConfig
+parseTaxConfig merchantOperatingCityId mbVal = do
+  let emptyGst = GstBreakup {cgstPercentage = Nothing, sgstPercentage = Nothing, igstPercentage = Nothing}
+      def =
+        TaxConfig
+          { rideGst = emptyGst,
+            subscriptionGst = emptyGst,
+            airportEntryFeeGst = Nothing,
+            securityDepositGst = Nothing,
+            defaultTdsRate = Nothing,
+            subscriptionTdsRate = Nothing,
+            invalidPanTdsRate = TdsConfig {rate = 0, thresholdAmount = Nothing},
+            individualLinked = Nothing,
+            individualNotLinked = Nothing,
+            businessTds = Nothing,
+            serviceVatPercentage = Nothing,
+            commissionVatPercentage = Nothing
+          }
+  -- Legacy flat-number TDS fields are tolerated by TdsConfig's hand-written
+  -- FromJSON (Domain.Types.Extra.TransporterConfig), so no post-parse backfill
+  -- is needed here.
+  parseFieldWithDefaultM "transporterConfig" "taxConfig" merchantOperatingCityId def parseTaxConfigWithDefault mbVal
+
+parseKnowledgeCenterSopTypesConfig :: (Monad m, Log m) => Text -> Maybe A.Value -> m Extra.KnowledgeCenterSopTypesConfig
+parseKnowledgeCenterSopTypesConfig _mocId = \case
+  Nothing -> pure (Extra.KnowledgeCenterSopTypesConfig [])
+  Just v -> case A.fromJSON v of
+    A.Success cfg -> pure cfg
+    A.Error _ -> pure (Extra.KnowledgeCenterSopTypesConfig [])

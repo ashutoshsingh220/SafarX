@@ -1,0 +1,124 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.2.
+--
+-- see: https://github.com/sol/hpack
+
+name:           special-zone-a
+version:        0.1.0.0
+description:    Please see the README on GitHub
+homepage:       https://github.com/nammayatri/nammayatri#readme
+bug-reports:    https://github.com/nammayatri/nammayatri/issues
+author:         nammayatri
+maintainer:     nammayatri
+copyright:      2023 Juspay Technologies Private Limited
+license:        AllRightsReserved
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/nammayatri/nammayatri
+
+flag Local
+  description: Enable this flag for faster compile times
+  manual: True
+  default: False
+
+library
+  exposed-modules:
+      Lib.GateInfo.Geometry
+      Lib.Queries.GateInfoExtra
+      Lib.Queries.SpecialLocation
+      Lib.Queries.SpecialLocationGeom
+      Lib.Queries.SpecialLocationPriority
+      Lib.Queries.Transformers.GateInfo
+      Lib.Storage.Beam.BeamFlow
+      Lib.Tabular.SpecialLocation
+      Lib.Tabular.SpecialLocationGeom
+      Lib.Tabular.SpecialLocationPriority
+      Lib.Types.GateInfoExtra
+      Lib.Types.SpecialLocation
+      Lib.Types.SpecialLocationPriority
+      Tools.Beam.UtilsTH
+      Lib.Queries.GateInfo
+      Lib.Queries.OrphanInstances.GateInfo
+      Lib.Storage.Beam.GateInfo
+      Lib.Types.GateInfo
+  other-modules:
+      Paths_special_zone_a
+  hs-source-dirs:
+      src
+      src-read-only
+  default-extensions:
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DerivingStrategies
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      NoImplicitPrelude
+      OverloadedStrings
+      PackageImports
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      StandaloneDeriving
+      TemplateHaskell
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      BlockArguments
+      TypeSynonymInstances
+      UndecidableInstances
+  ghc-options: -fwrite-ide-info -hiedir=.hie -Wall -Wcompat -Widentities -fhide-source-paths -Werror -fplugin=RecordDotPreprocessor -Wall -Wcompat -Widentities -fhide-source-paths -Werror -Wwarn=ambiguous-fields
+  build-depends:
+      aeson
+    , base >=4.7 && <5
+    , base16-bytestring
+    , beam-core
+    , beam-postgres
+    , bytestring
+    , containers
+    , cryptohash
+    , directory
+    , euler-hs
+    , exceptions
+    , filepath
+    , http-client
+    , http-types
+    , lens
+    , mobility-core
+    , openapi3
+    , postgresql-simple
+    , process
+    , record-dot-preprocessor
+    , record-hasfield
+    , sequelize
+    , servant
+    , servant-client
+    , servant-openapi3
+    , servant-server
+    , text
+    , time
+    , uri-encode
+    , vector
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4

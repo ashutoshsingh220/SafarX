@@ -1,0 +1,99 @@
+imports:
+  Person: Domain.Types.Person
+  Merchant: Domain.Types.Merchant
+  MerchantOperatingCity: Domain.Types.MerchantOperatingCity
+  UTCTime: Kernel.Prelude
+  Value: Data.Aeson
+
+OperationHub:
+  tableName: operation_hub
+
+  fields:
+    id : Id OperationHub
+    name : Text
+    address : Text
+    lat: Double
+    lon: Double
+    mobileNumber: Text
+    description: Maybe Text
+    merchantId: Id Merchant
+    merchantOperatingCityId: Id MerchantOperatingCity
+
+  constraints:
+    id: PrimaryKey
+
+  queries:
+    findAllByCityId:
+      kvFunction: findAllWithKV
+      where: merchantOperatingCityId
+
+  extraOperations:
+    - EXTRA_QUERY_FILE
+
+OperationHubRequests:
+  tableName: operation_hub_requests
+  types:
+    RequestType:
+      enum: "ONBOARDING_INSPECTION, REGULAR_INSPECTION, DRIVER_ONBOARDING_INSPECTION, DRIVER_REGULAR_INSPECTION"
+      derive: "HttpInstance"
+    RequestStatus:
+      enum: "PENDING, APPROVED, REJECTED"
+      derive: "HttpInstance"
+    InspectionResponseItem:
+      questionId: Text
+      question: Text
+      answer: Text
+      mediaFileId: Maybe Text
+      derive': "Eq,Ord,Show,Read,Generic,ToJSON,FromJSON,ToSchema"
+  fields:
+    id : Id OperationHubRequests
+    operationHubId : Id OperationHub
+    requestType : RequestType
+    registrationNo: Maybe Text
+    driverId: Maybe (Id Person)
+    requestStatus: RequestStatus
+    merchantId: Id Merchant
+    merchantOperatingCityId: Id MerchantOperatingCity
+    operatorId: Maybe (Id Person)
+    remarks: Maybe Text
+    fulfilledAt: Maybe UTCTime
+    creatorId: Id Person
+    inspectionResponse: Maybe [InspectionResponseItem]
+  beamType:
+    inspectionResponse: Maybe Value
+  sqlType:
+    requestStatus: character varying(255)
+    requestType: character varying(255)
+    inspectionResponse: json
+  toTType:
+    inspectionResponse: Kernel.Prelude.toJSON <$> inspectionResponse|E
+  fromTType:
+    inspectionResponse: |-
+      (\val -> case Data.Aeson.fromJSON val of Data.Aeson.Success x -> Just x; Data.Aeson.Error _ -> Nothing) =<< inspectionResponse|E
+  constraints:
+    id: PrimaryKey
+
+  extraOperations:
+    - EXTRA_QUERY_FILE
+
+  queries:
+    updateStatusWithDetails:
+      kvFunction: updateOneWithKV
+      params: [requestStatus, remarks, fulfilledAt, operatorId]
+      where: id
+    updateInspectionResponse:
+      kvFunction: updateOneWithKV
+      params: [inspectionResponse]
+      where: id
+    findByCreatorStatusAndType:
+      kvFunction: findAllWithKV
+      where:
+        and: [creatorId, requestStatus, requestType]
+    findOneByRequestStatusAndDriverId:
+      kvFunction: findOneWithKV
+      where:
+        and: [requestStatus, driverId]
+    findOneByRequestStatusAndRegistrationNo:
+      kvFunction: findOneWithKV
+      where:
+        and: [requestStatus, registrationNo]

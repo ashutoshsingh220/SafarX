@@ -1,0 +1,194 @@
+# yaml-language-server: $schema=./_schema.json
+name: ny-rn-provider
+title: NY Driver App (Android)
+icon: assets/icons/mobile.svg
+category: mobile
+tags: [react-native, android, driver]
+
+source:
+  url: https://github.com/nammayatri/ny-react-native
+  ref: main
+  destDir: data/ny-react-native
+
+ports:
+  - { name: metro,   port: 8083, protocol: tcp,  allowOverride: true }
+  - { name: caddy,   port: 9090, protocol: http, allowOverride: true, registryKey: caddy-reverse-proxy }
+  - { name: driver,  port: 8016, protocol: http, registryKey: dynamic-offer-driver-app }
+  - { name: rider,   port: 8013, protocol: http, registryKey: rider-app }
+  - { name: grpc,    port: 50051, protocol: tcp,  registryKey: notification-service-grpc }
+  - { name: mock,    port: 8080, protocol: http, registryKey: mock-server }
+
+adbReverse: [metro, caddy, driver, grpc, mock]
+
+tools: [node22, java17, yarn, adb]
+
+inputs:
+  - key: GOOGLE_SERVICES_JSON
+    label: Firebase google-services.json
+    type: file
+    accept: [".json"]
+    storeAs: path
+    required: true
+  - key: VARIANT
+    label: App variant
+    type: select
+    options: [nammaYatri, jatriSaathi, bridge, manaYatri, yatri, lynx, bharatTaxi]
+    default: lynx
+  - key: APP_ID
+    label: Android package id
+    type: text
+    default: "in.mobility.lynxdriver.debug"
+  - key: DOT_ENV
+    label: .env content
+    type: textarea
+    default: |
+      UI_BASE_URL=
+      APP_MONITOR_URL=
+      OTA_BASE_URL=
+      CLARITY_KEY=
+      CUSTOMER_REGISTRATION_TOKEN=
+      CUSTOMER_UI_BASE_URL=
+      CAC_CONFIG_URL=
+      CAC_ORG_ID=
+      CAC_API_KEY=
+      PLASMA_URL=
+      GOOGLE_WEB_CLIENT_ID=
+      PLASMA_API_KEY=
+      MERCHANT_ID_DRIVER=
+      MOENGAGE_APP_ID=
+      FIREBASE_CHAT_CONFIG=
+    required: true
+  - key: LOCAL_PROPERTIES
+    label: local.properties content
+    type: textarea
+    default: |
+      sdk.dir=
+    required: true
+
+stages:
+  - id: sync-source
+    builtin: source
+    lifecycle: one-shot
+    invalidatedBy: [source.ref]
+
+  - id: materialize
+    needs: [sync-source]
+    cwd: provider
+    run: |
+      set -e
+      variant="${inputs.VARIANT}"
+      variant_lc=$(printf '%s' "$variant" | tr '[:upper:]' '[:lower:]')
+      mkdir -p "android/app/src/$variant"
+      cp "${inputs.GOOGLE_SERVICES_JSON}" "android/app/src/${variant}/google-services.json"
+      cp "${inputs.GOOGLE_SERVICES_JSON}" "android/app/google-services.json"
+      if [ -f configs.zip ]; then unzip -o configs.zip; fi
+      conf_dir="configs/master/android/$variant"
+      mkdir -p "$conf_dir"
+      cp "configs/master/android/nammaYatri/local.properties" "$conf_dir/local.properties" 2>/dev/null || true
+      cp "${inputs.GOOGLE_SERVICES_JSON}" "$conf_dir/google-services.json"
+
+      # Write .env from user input
+      variant_env="$conf_dir/.env"
+      printf '%s\n' "${inputs.DOT_ENV}" > "$variant_env"
+
+      # Override base URLs to point at devbox caddy
+      sed -i.bak -E "s|UI_BASE_URL=.*|UI_BASE_URL=http://${host}:${ports.caddy}/dynamic-offer-driver-app/ui|" "$variant_env"
+      sed -i.bak -E "s|CUSTOMER_UI_BASE_URL=.*|CUSTOMER_UI_BASE_URL=http://${host}:${ports.caddy}/rider-app/v2|" "$variant_env"
+      rm -f "$variant_env.bak"
+      echo ".env written ($(wc -l < "$variant_env") lines)"
+
+      # Write local.properties from user input, auto-append sdk.dir if missing
+      props="android/local.properties"
+      printf '%s\n' "${inputs.LOCAL_PROPERTIES}" > "$props"
+      sdk="$ANDROID_HOME"
+      if [ -z "$sdk" ]; then sdk="$HOME/Library/Android/sdk"; fi
+      if ! grep -q '^sdk.dir=' "$props"; then
+        printf 'sdk.dir=%s\n' "$sdk" >> "$props"
+      fi
+
+      # Patch getBaseUrlfromConfig to return our devbox URL directly,
+      # bypassing remote config and MMKV cache
+      base_url="http://${host}:${ports.caddy}/dynamic-offer-driver-app/ui"
+      utils_file="src/api/utils.ts"
+      if [ -f "$utils_file" ]; then
+        sed -i.bak "s|const baseUrl = Config.getConfig('ui_base_url', useAppStore.getState().city);|const baseUrl = '$base_url';|" "$utils_file"
+        rm -f "$utils_file.bak"
+        echo "patched utils.ts baseUrl → $base_url"
+      fi
+
+      echo "materialized for variant=$variant (lc=$variant_lc)"
+    lifecycle: one-shot
+    invalidatedBy: [inputs.GOOGLE_SERVICES_JSON, inputs.VARIANT, inputs.DOT_ENV, inputs.LOCAL_PROPERTIES, ports.driver, ports.caddy]
+
+  - id: install
+    needs: [sync-source]
+    cwd: provider
+    run: "yarn install"
+    lifecycle: one-shot
+    invalidatedBy: [provider/package.json, provider/yarn.lock]
+
+  - id: build-android
+    needs: [install, materialize]
+    cwd: provider/android
+    run: |
+      variant_cap="$(printf '%s' "${inputs.VARIANT}" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
+      ./gradlew "app:install$(echo $variant_cap)MasterDebug" -PreactNativeDevServerPort=${ports.metro}
+    lifecycle: one-shot
+    invalidatedBy: ["provider/android/**", "*.gradle", inputs.VARIANT]
+
+  - id: metro
+    needs: [install]
+    cwd: provider
+    run: "yarn start --port ${ports.metro}"
+    lifecycle: long-running
+    readyProbe: { kind: log, pattern: "Welcome to Metro" }
+
+  - id: set-devhost
+    needs: [metro]
+    run: |
+      set -euo pipefail
+      PKG="${inputs.APP_ID}"
+
+      echo "waiting for an adb device to come online (up to 5 min)…"
+      deadline=$(( $(date +%s) + 300 ))
+      while :; do
+        if adb get-state 1>/dev/null 2>&1; then
+          echo "device online: $(adb devices | sed -n '2p')"
+          break
+        fi
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+          echo "no adb device after 5 min" >&2
+          exit 1
+        fi
+        sleep 2
+      done
+      adb wait-for-device
+      until adb shell pm path "$PKG" 1>/dev/null 2>&1; do
+        echo "waiting for $PKG to be installed on device…"
+        sleep 2
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+          echo "$PKG not installed on device" >&2
+          exit 1
+        fi
+      done
+
+      adb shell am force-stop "$PKG"
+      adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
+      echo "$PKG launched (metro port baked into APK via -PreactNativeDevServerPort)"
+    lifecycle: one-shot
+
+workflows:
+  first-run:      [sync-source, materialize, install, build-android, metro, set-devhost]
+  refresh-js:     [metro, set-devhost]
+  refresh-native: [build-android, metro, set-devhost]
+  reinstall:      [install, build-android, metro, set-devhost]
+
+logs:
+  - { name: metro,  kind: stage, stage: metro }
+  - { name: build,  kind: stage, stage: build-android }
+  - { name: logcat, kind: cmd,   cmd: "adb logcat -s ReactNativeJS:V ReactNative:V" }
+
+hooks:
+  preStart:
+    - cmd: "lsof -ti :${ports.metro} | xargs -r kill -9"
+      stages: [metro]

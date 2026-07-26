@@ -1,0 +1,144 @@
+imports:
+  Person: Domain.Types.Person
+  APISuccess: Kernel.Types.APISuccess
+  UTCTime: Kernel.Prelude
+  Day: Data.Time
+  ApplicationStatus: Domain.Types.StclMembership
+  CreateOrderResp: Kernel.External.Payment.Interface.Types
+  Money: Kernel.Types.Common
+  PaymentServiceType: Lib.Payment.Domain.Types.PaymentOrder
+
+module: StclMembership
+types:
+  Address:
+    streetAddress1: Text
+    streetAddress2: Maybe Text
+    city: Text
+    stateName: Text
+    postalCode: Text
+  BankDetails:
+    bankName: Text
+    branch: Text
+    accountNumber: Text
+    ifscCode: Text
+  UpdateBankDetails:
+    branch: Text
+    accountNumber: Text
+    confirmAccountNumber: Text
+    ifscCode: Text
+  VehicleInfo:
+    vehicleType: VehicleType
+    fuelTypes: "[FuelType]"
+  VehicleType:
+    enum: "TwoWheeler,ThreeWheeler,FourWheeler"
+  FuelType:
+    enum: "EV,Petrol,Diesel,CNG,Other"
+  NomineeInfo:
+    nomineeName: Text
+    nomineeAadhar: Maybe Text
+  Declaration:
+    place: Text
+    date: Day
+    signature: Text
+    termsAccepted: Bool
+  ShareAllotment:
+    applicationId: Text
+    numberOfShares: Int
+    applicationCount: Maybe Int
+    shareStartCount: Maybe Int
+    shareEndCount: Maybe Int
+    submittedAt: UTCTime
+  MembershipApplicationReq:
+    driverId: Text
+    firstName: Text
+    lastName: Text
+    memberCategory: Text
+    numberOfShares: Int
+    dateOfBirth: Day
+    aadharNumber: Text
+    panNumber: Text
+    mobileNumber: Text
+    emailId: Text
+    fatherMotherName: Text
+    address: Address
+    addressProofType: Maybe Text
+    addressProofImageId: Maybe Text
+    bankDetails: BankDetails
+    vehicleInfo: VehicleInfo
+    nomineeInfo: NomineeInfo
+    declaration: Declaration
+    amount: Money
+    paymentServiceType: Maybe PaymentServiceType
+  TopUpSharesReq:
+    numberOfShares: Int
+    amount: Maybe Money
+    paymentServiceType: Maybe PaymentServiceType
+  UpdateMembershipApplicationReq:
+    bankDetails: Maybe UpdateBankDetails
+    address: Maybe Address
+    addressProofType: Maybe Text
+    addressProofImageId: Maybe Text
+    vehicleType: Maybe VehicleType
+    nomineeName: Maybe Text
+  MembershipApplicationResp:
+    applicationId: Text
+    status: ApplicationStatus
+    message: Text
+    submittedAt: UTCTime
+  MembershipDetailsResp:
+    id: Text
+    driverId: Text
+    applicationId: Text
+    firstName: Text
+    lastName: Text
+    memberCategory: Text
+    numberOfShares: Int
+    dateOfBirth: Day
+    panNumber: Text
+    mobileNumber: Text
+    emailId: Text
+    fatherMotherName: Text
+    address: Address
+    addressProofType: Maybe Text
+    addressProofImageId: Maybe Text
+    bankDetails: BankDetails
+    vehicleInfo: VehicleInfo
+    nomineeInfo: NomineeInfo
+    declaration: Declaration
+    status: ApplicationStatus
+    # Deprecated — reflects only the latest allotment for the driver. Use shareAllotments instead.
+    applicationCount: Maybe Int
+    shareStartCount: Maybe Int
+    shareEndCount: Maybe Int
+    shareAllotments: "[ShareAllotment]"
+    createdAt: UTCTime
+    updatedAt: UTCTime
+
+apis:
+  - POST:
+      endpoint: /submitApplication
+      auth: TokenAuth PROVIDER_TYPE
+      request:
+        type: MembershipApplicationReq
+      response:
+        type: CreateOrderResp
+  - POST:
+      endpoint: /buyAdditionalShares
+      auth: TokenAuth PROVIDER_TYPE
+      request:
+        type: TopUpSharesReq
+      response:
+        type: CreateOrderResp
+  - PUT:
+      endpoint: /updateApplication
+      auth: TokenAuth PROVIDER_TYPE
+      request:
+        type: UpdateMembershipApplicationReq
+      response:
+        type: APISuccess
+  - GET:
+      endpoint: /membership
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: MembershipDetailsResp
+

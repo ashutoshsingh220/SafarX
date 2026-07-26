@@ -1,0 +1,101 @@
+{-# LANGUAGE ApplicativeDo #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
+module Domain.Types.MerchantServiceUsageConfig where
+
+import qualified ChatCompletion.Types
+import Data.Aeson
+import qualified Data.Map.Strict
+import Domain.Types.Common (UsageSafety (..))
+import qualified Domain.Types.Merchant
+import qualified Domain.Types.MerchantOperatingCity
+import qualified Kernel.External.AadhaarVerification.Types
+import qualified Kernel.External.BackgroundVerification.Types
+import qualified Kernel.External.Call
+import qualified Kernel.External.ChallanSearch.Types
+import qualified Kernel.External.Maps.Types
+import qualified Kernel.External.Notification.Types
+import qualified Kernel.External.Payment.Types
+import qualified Kernel.External.Payout.Types
+import qualified Kernel.External.SMS.Types
+import qualified Kernel.External.Ticket.Types
+import qualified Kernel.External.Verification.Types
+import qualified Kernel.External.Whatsapp.Types
+import Kernel.Prelude
+import qualified Kernel.Types.Id
+import qualified Tools.Beam.UtilsTH
+
+data MerchantServiceUsageConfigD (s :: UsageSafety) = MerchantServiceUsageConfig
+  { aadhaarVerificationService :: Kernel.External.AadhaarVerification.Types.AadhaarVerificationService,
+    autoComplete :: Kernel.External.Maps.Types.MapsService,
+    backgroundVerification :: Kernel.External.BackgroundVerification.Types.BackgroundVerificationService,
+    categoryBasedVerificationPriorityList :: Kernel.Prelude.Maybe (Data.Map.Strict.Map Kernel.Prelude.Text [Kernel.External.Verification.Types.VerificationService]),
+    challanProvidersPriorityList :: Kernel.Prelude.Maybe [Kernel.External.ChallanSearch.Types.ChallanSearchService],
+    createBankAccount :: Kernel.External.Payment.Types.PaymentService,
+    createPayoutOrder :: Kernel.External.Payout.Types.PayoutService,
+    createdAt :: Kernel.Prelude.UTCTime,
+    dashboardGstVerificationService :: Kernel.Prelude.Maybe Kernel.External.Verification.Types.VerificationService,
+    dashboardPanVerificationService :: Kernel.Prelude.Maybe Kernel.External.Verification.Types.VerificationService,
+    dashboardUdyamVerificationService :: Kernel.Prelude.Maybe Kernel.External.Verification.Types.VerificationService,
+    driverBackgroundVerificationService :: Kernel.External.Verification.Types.DriverBackgroundVerificationService,
+    faceMatchService :: Kernel.External.Verification.Types.VerificationService,
+    faceVerificationService :: Kernel.External.Verification.Types.VerificationService,
+    getBankAccount :: Kernel.External.Payment.Types.PaymentService,
+    getDistances :: Kernel.External.Maps.Types.MapsService,
+    getDistancesForCancelRide :: Kernel.External.Maps.Types.MapsService,
+    getDistancesForScheduledRides :: Kernel.External.Maps.Types.MapsService,
+    getEstimatedPickupDistances :: Kernel.External.Maps.Types.MapsService,
+    getExophone :: Kernel.External.Call.CallService,
+    getPickupRoutes :: Kernel.External.Maps.Types.MapsService,
+    getPlaceDetails :: Kernel.External.Maps.Types.MapsService,
+    getPlaceName :: Kernel.External.Maps.Types.MapsService,
+    getRoutes :: Kernel.External.Maps.Types.MapsService,
+    getTripRoutes :: Kernel.External.Maps.Types.MapsService,
+    gstVerificationService :: Kernel.Prelude.Maybe Kernel.External.Verification.Types.VerificationService,
+    imageExtractionProvidersPriorityList :: Kernel.Prelude.Maybe [Kernel.External.Verification.Types.VerificationService],
+    initiateCall :: Kernel.External.Call.CallService,
+    issueTicketService :: Kernel.External.Ticket.Types.IssueTicketService,
+    llmChatCompletion :: ChatCompletion.Types.LLMChatCompletionService,
+    merchantId :: Kernel.Types.Id.Id Domain.Types.Merchant.Merchant,
+    merchantOperatingCityId :: Kernel.Types.Id.Id Domain.Types.MerchantOperatingCity.MerchantOperatingCity,
+    panVerificationService :: Kernel.Prelude.Maybe Kernel.External.Verification.Types.VerificationService,
+    payoutOrderStatus :: Kernel.External.Payout.Types.PayoutService,
+    rectifyDistantPointsFailure :: Kernel.External.Maps.Types.MapsService,
+    retryBankAccountLink :: Kernel.External.Payment.Types.PaymentService,
+    sdkVerificationService :: Kernel.External.Verification.Types.VerificationService,
+    sendSearchRequestToDriver :: [Kernel.External.Notification.Types.NotificationService],
+    smsProvidersPriorityList :: [Kernel.External.SMS.Types.SmsService],
+    snapToRoad :: Kernel.External.Maps.Types.MapsService,
+    snapToRoadProvidersList :: [Kernel.External.Maps.Types.MapsService],
+    totoVerificationPriorityList :: Kernel.Prelude.Maybe [Kernel.External.Verification.Types.VerificationService],
+    udyamVerificationService :: Kernel.Prelude.Maybe Kernel.External.Verification.Types.VerificationService,
+    updatedAt :: Kernel.Prelude.UTCTime,
+    verificationProvidersPriorityList :: [Kernel.External.Verification.Types.VerificationService],
+    verificationService :: Kernel.External.Verification.Types.VerificationService,
+    whatsappProvidersPriorityList :: [Kernel.External.Whatsapp.Types.WhatsappService]
+  }
+  deriving (Generic, Show)
+
+data ProviderLookUpKey
+  = TOTO_UDIN
+  | TOTO
+  | CAR
+  | AUTO_CATEGORY
+  | MOTORCYCLE
+  | TRUCK
+  | BOAT
+  | AMBULANCE
+  | BUS
+  | TRAIN
+  | FLIGHT
+  deriving (Eq, Ord, Show, Read, Generic, ToJSON, FromJSON, ToSchema)
+
+type MerchantServiceUsageConfig = MerchantServiceUsageConfigD 'Safe
+
+instance FromJSON (MerchantServiceUsageConfigD 'Unsafe)
+
+instance ToJSON (MerchantServiceUsageConfigD 'Unsafe)
+
+instance FromJSON (MerchantServiceUsageConfigD 'Safe)
+
+instance ToJSON (MerchantServiceUsageConfigD 'Safe)

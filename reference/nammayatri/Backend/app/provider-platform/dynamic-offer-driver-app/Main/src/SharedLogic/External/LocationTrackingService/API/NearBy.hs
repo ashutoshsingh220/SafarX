@@ -1,0 +1,68 @@
+{-
+  Copyright 2022-23, Juspay India Pvt Ltd
+
+  This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+  as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program is
+
+  distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+
+  FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of the GNU Affero
+
+  General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module SharedLogic.External.LocationTrackingService.API.NearBy where
+
+import Data.Text (Text)
+import Domain.Types.DriverLocation
+import qualified Domain.Types.Person as DP
+import qualified EulerHS.Types as ET
+import Kernel.Types.Id
+import Servant
+import SharedLogic.External.LocationTrackingService.Types
+
+type LocationTrackingServiceAPI =
+  "internal"
+    :> "drivers"
+    :> "nearby"
+    :> ReqBody '[JSON] NearByReq
+    :> Get '[JSON] [DriverLocation]
+
+locationTrackingServiceAPI :: Proxy LocationTrackingServiceAPI
+locationTrackingServiceAPI = Proxy
+
+nearBy :: NearByReq -> ET.EulerClient [DriverLocation]
+nearBy = ET.client locationTrackingServiceAPI
+
+type QueueDriverPositionAPI =
+  "internal"
+    :> "special-locations"
+    :> Capture "specialLocationId" Text
+    :> "queue"
+    :> Capture "vehicleType" Text
+    :> "drivers"
+    :> Capture "driverId" (Id DP.Person)
+    :> "position"
+    :> Get '[JSON] QueueDriverPositionResp
+
+queueDriverPositionAPI :: Proxy QueueDriverPositionAPI
+queueDriverPositionAPI = Proxy
+
+queueDriverPosition :: Text -> Text -> Id DP.Person -> ET.EulerClient QueueDriverPositionResp
+queueDriverPosition = ET.client queueDriverPositionAPI
+
+type QueueDriversAPI =
+  "internal"
+    :> "special-locations"
+    :> Capture "specialLocationId" Text
+    :> "queue"
+    :> Capture "vehicleType" Text
+    :> "drivers"
+    :> Get '[JSON] QueueDriversResponse
+
+queueDriversAPI :: Proxy QueueDriversAPI
+queueDriversAPI = Proxy
+
+queueDrivers :: Text -> Text -> ET.EulerClient QueueDriversResponse
+queueDrivers = ET.client queueDriversAPI

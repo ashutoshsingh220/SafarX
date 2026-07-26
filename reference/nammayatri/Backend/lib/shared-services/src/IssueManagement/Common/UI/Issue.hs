@@ -1,0 +1,361 @@
+{-# LANGUAGE DerivingVia #-}
+
+module IssueManagement.Common.UI.Issue
+  ( module IssueManagement.Common.UI.Issue,
+    module Reexport,
+  )
+where
+
+import AWS.S3 (FileType (..))
+import Data.Aeson
+import Data.OpenApi (ToParamSchema, ToSchema)
+import qualified Data.Text as T hiding (count, map)
+import EulerHS.Prelude hiding (id)
+import IssueManagement.Common as Reexport hiding (Audio, Image)
+import qualified IssueManagement.Domain.Types.Issue.ChatMessage as DCM
+import IssueManagement.Domain.Types.Issue.IssueCategory
+import IssueManagement.Domain.Types.Issue.IssueMessage
+import IssueManagement.Domain.Types.Issue.IssueOption
+import IssueManagement.Domain.Types.Issue.IssueReport
+import IssueManagement.Domain.Types.MediaFile
+import Kernel.External.Types (Language)
+import Kernel.ServantMultipart
+import Kernel.Types.APISuccess
+import Kernel.Types.HideSecrets
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import Servant
+import qualified Text.Read as TR (read)
+
+type IssueCreateAPI =
+  QueryParam "language" Language
+    :> ReqBody '[JSON] IssueReportReq
+    :> Post '[JSON] IssueReportRes
+
+data IssueReportReq = IssueReportReq
+  { rideId :: Maybe (Id Ride),
+    mediaFiles :: [Id MediaFile],
+    optionId :: Maybe (Id IssueOption),
+    categoryId :: Id IssueCategory,
+    description :: Text,
+    chats :: Maybe [Chat],
+    createTicket :: Maybe Bool,
+    ticketBookingId :: Maybe (Id FRFSTicketBooking)
+  }
+  deriving (Generic, FromJSON, ToSchema, Show)
+
+data IssueReportRes = IssueReportRes
+  { issueReportId :: Id IssueReport,
+    issueReportShortId :: Maybe (ShortId IssueReport),
+    messages :: [Message]
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+-------------------------------------------------------------------------
+
+type IssueListAPI =
+  QueryParam "language" Language
+    :> Get '[JSON] IssueReportListRes
+
+newtype IssueReportListRes = IssueReportListRes
+  { issues :: [IssueReportListItem]
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data IssueReportListItem = IssueReportListItem
+  { issueReportId :: Id IssueReport,
+    issueReportShortId :: Maybe (ShortId IssueReport),
+    status :: IssueStatus,
+    category :: Text,
+    optionLabel :: Maybe Text,
+    rideId :: Maybe (Id Ride),
+    ticketBookingId :: Maybe (Id FRFSTicketBooking),
+    createdAt :: UTCTime
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+-------------------------------------------------------------------------
+
+type IssueInfoAPI =
+  QueryParam "language" Language
+    :> Get '[JSON] IssueInfoRes
+
+data IssueInfoRes = IssueInfoRes
+  { issueReportId :: Id IssueReport,
+    issueReportShortId :: Maybe (ShortId IssueReport),
+    categoryLabel :: Maybe Text,
+    option :: Maybe Text,
+    assignee :: Maybe Text,
+    description :: Text,
+    status :: IssueStatus,
+    mediaFiles :: [MediaFile_],
+    createdAt :: UTCTime,
+    chats :: [ChatDetail],
+    options :: [IssueOptionRes],
+    categoryId :: Maybe (Id IssueCategory)
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data MediaFile_ = MediaFile_
+  { _type :: FileType,
+    url :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+-------------------------------------------------------------------------
+
+type IssueUploadAPI =
+  MultipartForm Tmp IssueMediaUploadReq
+    :> Post '[JSON] IssueMediaUploadRes
+
+data IssueMediaUploadReq = IssueMediaUploadReq
+  { file :: FilePath,
+    reqContentType :: Text,
+    fileType :: FileType
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+instance FromMultipart Tmp IssueMediaUploadReq where
+  fromMultipart form = do
+    IssueMediaUploadReq
+      <$> fmap fdPayload (lookupFile "file" form)
+      <*> fmap fdFileCType (lookupFile "file" form)
+      <*> fmap (TR.read . T.unpack) (lookupInput "fileType" form)
+
+instance ToMultipart Tmp IssueMediaUploadReq where
+  toMultipart issueMediaUploadReq =
+    MultipartData
+      [Input "fileType" (show issueMediaUploadReq.fileType)]
+      -- Forward the file's content-type (extracted by FromMultipart into
+      -- `reqContentType`) when the dashboard-helper proxy re-serializes this
+      -- request to call the rider-app. Hardcoding "" here used to strip the
+      -- MIME at the proxy hop, making every dashboard-originated upload fail
+      -- the rider-app's strict `validateContentType` allowlist with
+      -- FILE_FORMAT_NOT_SUPPORTED. Driver-onboarding's UploadFileRequest has
+      -- the same hardcoded "" but its receiver doesn't validate Content-Type,
+      -- which is why nobody noticed until issueV2/upload landed.
+      [FileData "file" (T.pack issueMediaUploadReq.file) issueMediaUploadReq.reqContentType (issueMediaUploadReq.file)]
+
+newtype IssueMediaUploadRes = IssueMediaUploadRes
+  { fileId :: Id MediaFile
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+-- Required by the dashboard variant of /upload (the auto-generated dashboard
+-- helper API expects every request type to implement HideSecrets). The multipart
+-- request has no sensitive fields, so identity is correct.
+instance HideSecrets IssueMediaUploadReq where
+  hideSecrets = identity
+
+-------------------------------------------------------------------------
+
+type IssueFetchMediaAPI =
+  MandatoryQueryParam "filePath" Text
+    :> Get '[JSON] Text
+
+-------------------------------------------------------------------------
+
+-- | Short-lived link for opening a media file outside the app (a PDF handed to
+-- the OS viewer, say). Our own media endpoint needs an auth token, which an
+-- external viewer cannot supply, so we presign the S3 object instead.
+newtype MediaFileDownloadLinkRes = MediaFileDownloadLinkRes
+  { downloadUrl :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+type IssueMediaDownloadLinkAPI =
+  MandatoryQueryParam "issueReportId" (Id IssueReport)
+    :> MandatoryQueryParam "mediaFileId" Text
+    :> Get '[JSON] MediaFileDownloadLinkRes
+
+-------------------------------------------------------------------------
+
+type IssueDeleteAPI =
+  Delete '[JSON] APISuccess
+
+-------------------------------------------------------------------------
+
+type IssueUpdateAPI =
+  ReqBody '[JSON] IssueUpdateReq
+    :> Put '[JSON] APISuccess
+
+data IssueUpdateReq = IssueUpdateReq
+  { categoryId :: Id IssueCategory,
+    optionId :: Id IssueOption
+  }
+  deriving (Generic, FromJSON, ToSchema)
+
+-------------------------------------------------------------------------
+
+type IssueCategoryAPI =
+  QueryParam "language" Language
+    :> Get '[JSON] IssueCategoryListRes
+
+data IssueCategoryRes = IssueCategoryRes
+  { issueCategoryId :: Id IssueCategory,
+    label :: Text,
+    category :: Text,
+    logoUrl :: Text,
+    categoryType :: CategoryType,
+    isRideRequired :: Bool,
+    isTicketRequired :: Bool,
+    maxAllowedRideAge :: Maybe Seconds,
+    allowedRideStatuses :: Maybe [RideStatus],
+    enableKapture :: Maybe Bool
+  }
+  deriving (Generic, Show, ToJSON, ToSchema)
+
+newtype IssueCategoryListRes = IssueCategoryListRes
+  { categories :: [IssueCategoryRes]
+  }
+  deriving (Generic, Show, ToJSON, ToSchema)
+
+-------------------------------------------------------------------------
+
+type IssueOptionAPI =
+  MandatoryQueryParam "categoryId" (Id IssueCategory)
+    :> QueryParam "optionId" (Id IssueOption)
+    :> QueryParam "issueReportId" (Id IssueReport)
+    :> QueryParam "rideId" (Id Ride)
+    :> QueryParam "language" Language
+    :> Get '[JSON] IssueOptionListRes
+
+data IssueOptionRes = IssueOptionRes
+  { issueOptionId :: Id IssueOption,
+    label :: Text,
+    option :: Text,
+    mandatoryUploads :: Maybe [MandatoryUploads]
+  }
+  deriving (Generic, Show, ToJSON, ToSchema, Eq, FromJSON)
+
+data Message = Message
+  { id :: Id IssueMessage,
+    message :: Text,
+    messageTitle :: Maybe Text,
+    messageAction :: Maybe Text,
+    mediaFileUrls :: [Text],
+    referenceCategoryId :: Maybe (Id IssueCategory),
+    referenceOptionId :: Maybe (Id IssueOption),
+    label :: Text
+  }
+  deriving (Generic, Show, ToJSON, ToSchema, Eq, FromJSON)
+
+data IssueOptionListRes = IssueOptionListRes
+  { options :: [IssueOptionRes],
+    messages :: [Message]
+  }
+  deriving (Generic, Show, ToJSON, ToSchema, Eq, FromJSON)
+
+-------------------------------------------------------------------------
+
+type IssueStatusUpdateAPI =
+  QueryParam "language" Language
+    :> ReqBody '[JSON] IssueStatusUpdateReq
+    :> Put '[JSON] IssueStatusUpdateRes
+
+data IssueStatusUpdateReq = IssueStatusUpdateReq
+  { status :: IssueStatus,
+    customerResponse :: Maybe CustomerResponse,
+    customerRating :: Maybe CustomerRating
+  }
+  deriving (Generic, Show, ToJSON, ToSchema, Eq, FromJSON)
+
+newtype IssueStatusUpdateRes = IssueStatusUpdateRes
+  { messages :: [Message]
+  }
+  deriving (Generic, Show, ToJSON, ToSchema, Eq, FromJSON)
+
+-------------------------------------------------------------------------
+
+type IgmStatusAPI =
+  Post '[JSON] APISuccess
+
+-------------------------------------------------------------------------
+
+-- 'CustomerResponse' type, HTTP instances, and Beam instances live in
+-- IssueManagement.Common (re-exported here) so the persisted IssueReport
+-- domain type can reference them without an import cycle.
+
+-------------------------------------------------------------------------
+-- Live chat API (rider <-> dashboard operator, scoped to an IssueReport)
+
+type ChatMessageCreateAPI =
+  ReqBody '[JSON] CreateChatMessageReq
+    :> Post '[JSON] ChatMessageItem
+
+type ChatMessageListAPI =
+  QueryParam "since" UTCTime
+    :> QueryParam "limit" Int
+    :> Get '[JSON] [ChatMessageItem]
+
+type ChatMarkReadAPI =
+  ReqBody '[JSON] MarkChatReadReq
+    :> Post '[JSON] APISuccess
+
+type ChatStateAPI =
+  Get '[JSON] ChatStateRes
+
+data CreateChatMessageReq = CreateChatMessageReq
+  { text :: Text,
+    mediaFileIds :: Maybe [Id MediaFile]
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data MarkChatReadReq = MarkChatReadReq
+  { upTo :: UTCTime
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data ChatMessageItem = ChatMessageItem
+  { messageId :: Text,
+    senderType :: DCM.ChatSenderType,
+    chatContentType :: DCM.ChatContentType,
+    text :: Text,
+    mediaFiles :: [MediaFile],
+    -- | Bare media-file ids, mirrors 'mediaFiles[].id'. Retained for back-compat with
+    -- older clients pinned to the pre-3d5370e7 contract (the field was renamed from
+    -- mediaFileIds → mediaFiles at the time but some shipped builds still decode the
+    -- old shape strictly and panic if it's missing). New clients should consume
+    -- 'mediaFiles' for the embedded URL / type.
+    mediaFileIds :: [Id MediaFile],
+    deliveredAt :: Maybe UTCTime,
+    readAt :: Maybe UTCTime,
+    createdAt :: UTCTime
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data ChatStateRes = ChatStateRes
+  { -- | Count of operator messages the rider has not read yet.
+    unread :: Int,
+    -- | Timestamp of the latest message in the thread (any sender), if any.
+    latestMessageAt :: Maybe UTCTime
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+-------------------------------------------------------------------------
+
+data CustomerRating
+  = THUMBS_UP
+  | THUMBS_DOWN
+  deriving (Eq, Show, Ord, Read, Generic, ToJSON, FromJSON, ToParamSchema, ToSchema)
+
+instance FromHttpApiData CustomerRating where
+  parseUrlPiece "thumbsup" = pure THUMBS_UP
+  parseUrlPiece "thumbsdown" = pure THUMBS_DOWN
+  parseUrlPiece _ = Left "Unable to parse customer rating"
+
+instance ToHttpApiData CustomerRating where
+  toUrlPiece THUMBS_UP = "thumbsup"
+  toUrlPiece THUMBS_DOWN = "thumbsdown"

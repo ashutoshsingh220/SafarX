@@ -1,0 +1,62 @@
+{-# LANGUAGE StandaloneKindSignatures #-}
+
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module Domain.Types.Role where
+
+import Data.Singletons.TH
+import Kernel.Beam.Lib.UtilsTH
+import Kernel.Prelude
+import Kernel.Types.Id
+
+-------- Required access levels for dashboard api --------
+
+-- DASHBOARD_ADMIN is superuser, who can can create and assign other roles
+
+data DashboardAccessType = DASHBOARD_USER | DASHBOARD_ADMIN | FLEET_OWNER | DASHBOARD_RELEASE_ADMIN | MERCHANT_ADMIN | RENTAL_FLEET_OWNER | MERCHANT_MAKER | MERCHANT_SERVER | DASHBOARD_OPERATOR | TICKET_DASHBOARD_USER | TICKET_DASHBOARD_MERCHANT | TICKET_DASHBOARD_ADMIN | TICKET_DASHBOARD_APPROVER
+  deriving (Show, Read, Eq, Generic, FromJSON, ToJSON, ToSchema, Ord)
+
+$(mkBeamInstancesForEnum ''DashboardAccessType)
+
+genSingletons [''DashboardAccessType]
+
+-------- Person Role --------
+
+data Role = Role
+  { id :: Id Role,
+    name :: Text,
+    dashboardAccessType :: DashboardAccessType,
+    description :: Text,
+    accessibleRoles :: [Id Role],
+    isBppSyncNeeded :: Maybe Bool,
+    createdAt :: UTCTime,
+    updatedAt :: UTCTime
+  }
+  deriving (Show, Generic, FromJSON, ToJSON, ToSchema)
+
+data RoleAPIEntity = RoleAPIEntity
+  { id :: Id Role,
+    name :: Text,
+    dashboardAccessType :: DashboardAccessType,
+    description :: Text,
+    isBppSyncNeeded :: Maybe Bool
+  }
+  deriving (Show, Generic, FromJSON, ToJSON, ToSchema)
+
+mkRoleAPIEntity :: Role -> RoleAPIEntity
+mkRoleAPIEntity Role {..} = RoleAPIEntity {..}
+
+isBppSyncRole :: Role -> Bool
+isBppSyncRole Role {..} = isBppSyncNeeded == Just True

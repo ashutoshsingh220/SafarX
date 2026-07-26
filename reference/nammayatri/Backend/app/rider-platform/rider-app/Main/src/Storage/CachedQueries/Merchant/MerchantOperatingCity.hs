@@ -1,0 +1,135 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+{-# OPTIONS_GHC -Wno-deprecations #-}
+
+module Storage.CachedQueries.Merchant.MerchantOperatingCity
+  ( create,
+    findById,
+    findByCity,
+    findByMerchantIdAndCity,
+    findByMerchantShortIdAndCity,
+    findAllByMerchantIdAndState,
+    getMerchantOpCityId,
+  )
+where
+
+import Domain.Types.Merchant (Merchant)
+import Domain.Types.MerchantOperatingCity (MerchantOperatingCity)
+import Kernel.Prelude
+import qualified Kernel.Storage.Hedis as Hedis
+import qualified Kernel.Storage.InMem as IM
+import qualified Kernel.Types.Beckn.Context as Context
+import Kernel.Types.Error
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import qualified Storage.Queries.MerchantOperatingCity as Queries
+
+create :: (MonadFlow m, CacheFlow m r, EsqDBFlow m r) => MerchantOperatingCity -> m ()
+create = Queries.create
+
+-- | In-memory (L1) cache TTL for merchant-operating-city lookups. MOC rows are
+--   config-like and rarely change; an in-process cache avoids the Redis round-trip
+--   on the hot path. NOTE: cache invalidation only clears Redis, so an updated MOC
+--   may be served stale from a pod's in-mem cache for up to this many seconds.
+inMemCacheTtl :: Seconds
+inMemCacheTtl = 3600
+
+findById :: (CacheFlow m r, EsqDBFlow m r) => Id MerchantOperatingCity -> m (Maybe MerchantOperatingCity)
+findById id =
+  IM.withInMemCache [makeMerchantOperatingCityIdKey id] inMemCacheTtl $
+    Hedis.safeGet (makeMerchantOperatingCityIdKey id) >>= \case
+      Just a -> return a
+      Nothing -> flip whenJust cachedMerchantOperatingCityId /=<< Queries.findById id
+
+findByCity :: (CacheFlow m r, EsqDBFlow m r) => Context.City -> m (Maybe MerchantOperatingCity)
+findByCity city =
+  IM.withInMemCache [makeMerchantOperatingCityCityKey city] inMemCacheTtl $
+    Hedis.safeGet (makeMerchantOperatingCityCityKey city) >>= \case
+      Just a -> return a
+      Nothing -> flip whenJust cachedMerchantOperatingCityCity /=<< Queries.findByCity city
+
+findByMerchantIdAndCity :: (CacheFlow m r, EsqDBFlow m r) => Id Merchant -> Context.City -> m (Maybe MerchantOperatingCity)
+findByMerchantIdAndCity merchantId city =
+  IM.withInMemCache [makeMerchantIdAndCityKey merchantId city] inMemCacheTtl $
+    Hedis.safeGet (makeMerchantIdAndCityKey merchantId city) >>= \case
+      Just a -> return a
+      Nothing -> flip whenJust cachedMerchantIdAndCity /=<< Queries.findByMerchantIdAndCity merchantId city
+
+findByMerchantShortIdAndCity :: (CacheFlow m r, EsqDBFlow m r) => ShortId Merchant -> Context.City -> m (Maybe MerchantOperatingCity)
+findByMerchantShortIdAndCity merchantShortId city =
+  IM.withInMemCache [makeMerchantShortIdAndCityKey merchantShortId city] inMemCacheTtl $
+    Hedis.safeGet (makeMerchantShortIdAndCityKey merchantShortId city) >>= \case
+      Just a -> return a
+      Nothing -> flip whenJust cachedMerchantShortIdAndCity /=<< Queries.findByMerchantShortIdAndCity merchantShortId city
+
+findAllByMerchantIdAndState :: (CacheFlow m r, EsqDBFlow m r) => Id Merchant -> Context.IndianState -> m [MerchantOperatingCity]
+findAllByMerchantIdAndState merchantId state =
+  IM.withInMemCache [makeMerchantIdAndStateKey merchantId state] inMemCacheTtl $
+    Hedis.safeGet (makeMerchantIdAndStateKey merchantId state) >>= \case
+      Just a -> return a
+      Nothing -> cacheMerchantIdAndState merchantId state /=<< Queries.findAllByMerchantIdAndState merchantId state
+
+getMerchantOpCityId :: (CacheFlow m r, EsqDBFlow m r) => Merchant -> Maybe Context.City -> m (Id MerchantOperatingCity)
+getMerchantOpCityId merchant mbCity = (.id) <$> getMerchantOpCity merchant mbCity
+
+getMerchantOpCity :: (CacheFlow m r, EsqDBFlow m r) => Merchant -> Maybe Context.City -> m MerchantOperatingCity
+getMerchantOpCity merchant mbCity = do
+  let city = fromMaybe merchant.defaultCity mbCity
+  findByMerchantIdAndCity merchant.id city
+    >>= fromMaybeM (MerchantOperatingCityNotFound $ "merchant-Id-" <> merchant.id.getId <> "-city-" <> show city)
+
+cachedMerchantOperatingCityId :: CacheFlow m r => MerchantOperatingCity -> m ()
+cachedMerchantOperatingCityId merchantOperatingCity = do
+  expTime <- fromIntegral <$> asks (.cacheConfig.configsExpTime)
+  let merchantOperatingCityIdKey = makeMerchantOperatingCityIdKey merchantOperatingCity.id
+  Hedis.setExp merchantOperatingCityIdKey merchantOperatingCity expTime
+
+cachedMerchantIdAndCity :: CacheFlow m r => MerchantOperatingCity -> m ()
+cachedMerchantIdAndCity merchantOperatingCity = do
+  expTime <- fromIntegral <$> asks (.cacheConfig.configsExpTime)
+  let merchantIdAndCityKey = makeMerchantIdAndCityKey merchantOperatingCity.merchantId merchantOperatingCity.city
+  Hedis.setExp merchantIdAndCityKey merchantOperatingCity expTime
+
+cachedMerchantShortIdAndCity :: CacheFlow m r => MerchantOperatingCity -> m ()
+cachedMerchantShortIdAndCity merchantOperatingCity = do
+  expTime <- fromIntegral <$> asks (.cacheConfig.configsExpTime)
+  let merchantShortIdAndCityKey = makeMerchantShortIdAndCityKey merchantOperatingCity.merchantShortId merchantOperatingCity.city
+  Hedis.setExp merchantShortIdAndCityKey merchantOperatingCity expTime
+
+cacheMerchantIdAndState :: CacheFlow m r => Id Merchant -> Context.IndianState -> [MerchantOperatingCity] -> m ()
+cacheMerchantIdAndState merchantId state merchantOperatingCities = do
+  expTime <- fromIntegral <$> asks (.cacheConfig.configsExpTime)
+  let merchantIdAndStateKey = makeMerchantIdAndStateKey merchantId state
+  Hedis.setExp merchantIdAndStateKey merchantOperatingCities expTime
+
+cachedMerchantOperatingCityCity :: CacheFlow m r => MerchantOperatingCity -> m ()
+cachedMerchantOperatingCityCity merchantOperatingCity = do
+  expTime <- fromIntegral <$> asks (.cacheConfig.configsExpTime)
+  let merchantOperatingCityCityKey = makeMerchantOperatingCityCityKey merchantOperatingCity.city
+  Hedis.setExp merchantOperatingCityCityKey merchantOperatingCity expTime
+
+makeMerchantOperatingCityCityKey :: Context.City -> Text
+makeMerchantOperatingCityCityKey city = "CachedQueries:MerchantOperatingCity:City-" <> show city
+
+makeMerchantOperatingCityIdKey :: Id MerchantOperatingCity -> Text
+makeMerchantOperatingCityIdKey merchantOperatingCityId = "CachedQueries:MerchantOperatingCity:Id-" <> merchantOperatingCityId.getId
+
+makeMerchantIdAndCityKey :: Id Merchant -> Context.City -> Text
+makeMerchantIdAndCityKey merchantId city = "CachedQueries:MerchantOperatingCity:MerchantId-" <> merchantId.getId <> ":City-" <> show city
+
+makeMerchantShortIdAndCityKey :: ShortId Merchant -> Context.City -> Text
+makeMerchantShortIdAndCityKey merchantShortId city = "CachedQueries:MerchantOperatingCity:MerchantShortId-" <> merchantShortId.getShortId <> ":City-" <> show city
+
+makeMerchantIdAndStateKey :: Id Merchant -> Context.IndianState -> Text
+makeMerchantIdAndStateKey merchantId state = "CachedQueries:MerchantOperatingCity:MerchantId-" <> merchantId.getId <> ":State-" <> show state

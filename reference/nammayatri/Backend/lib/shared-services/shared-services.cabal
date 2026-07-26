@@ -1,0 +1,263 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.2.
+--
+-- see: https://github.com/sol/hpack
+
+name:           shared-services
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/nammayatri/nammayatri#readme>
+homepage:       https://github.com/nammayatri/nammayatri#readme
+bug-reports:    https://github.com/nammayatri/nammayatri/issues
+author:         nammayatri
+maintainer:     nammayatri
+copyright:      2023 Juspay Technologies Private Limited
+license:        AllRightsReserved
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/nammayatri/nammayatri
+
+flag Local
+  description: Enable this flag for faster compile times
+  manual: True
+  default: False
+
+library
+  exposed-modules:
+      ConfigPilotFrontend.API
+      ConfigPilotFrontend.Common
+      ConfigPilotFrontend.Flow
+      ConfigPilotFrontend.Types
+      Email.OTP.API
+      Email.OTP.Types
+      FileManagement.Common.UI.File
+      FileManagement.Domain.Action.UI.File
+      IssueManagement.API.Beckn.Issue
+      IssueManagement.API.UI.Issue
+      IssueManagement.Beckn.ACL.IGM.Utils
+      IssueManagement.Beckn.ACL.Issue
+      IssueManagement.Beckn.ACL.IssueStatus
+      IssueManagement.Beckn.ACL.OnIssue
+      IssueManagement.Beckn.ACL.OnIssueStatus
+      IssueManagement.Common
+      IssueManagement.Common.Beckn.Issue
+      IssueManagement.Common.Dashboard.Issue
+      IssueManagement.Common.UI.Issue
+      IssueManagement.Domain.Action.Beckn.Issue
+      IssueManagement.Domain.Action.Beckn.IssueStatus
+      IssueManagement.Domain.Action.Beckn.OnIssue
+      IssueManagement.Domain.Action.Beckn.OnIssueStatus
+      IssueManagement.Domain.Action.Dashboard.Issue
+      IssueManagement.Domain.Action.UI.Issue
+      IssueManagement.Domain.Action.UI.XyneWebhook
+      IssueManagement.Domain.Types.Issue.ChatMessage
+      IssueManagement.Domain.Types.Issue.Comment
+      IssueManagement.Domain.Types.Issue.IGMConfig
+      IssueManagement.Domain.Types.Issue.IGMIssue
+      IssueManagement.Domain.Types.Issue.IssueCategory
+      IssueManagement.Domain.Types.Issue.IssueChat
+      IssueManagement.Domain.Types.Issue.IssueConfig
+      IssueManagement.Domain.Types.Issue.IssueMessage
+      IssueManagement.Domain.Types.Issue.IssueOption
+      IssueManagement.Domain.Types.Issue.IssueReport
+      IssueManagement.Domain.Types.Issue.IssueTranslation
+      IssueManagement.Domain.Types.MediaFile
+      IssueManagement.SharedLogic.CallAPI
+      IssueManagement.Storage.Beam.Issue.ChatMessage
+      IssueManagement.Storage.Beam.Issue.Comment
+      IssueManagement.Storage.Beam.Issue.IGMConfig
+      IssueManagement.Storage.Beam.Issue.IGMIssue
+      IssueManagement.Storage.Beam.Issue.IssueCategory
+      IssueManagement.Storage.Beam.Issue.IssueChat
+      IssueManagement.Storage.Beam.Issue.IssueConfig
+      IssueManagement.Storage.Beam.Issue.IssueMessage
+      IssueManagement.Storage.Beam.Issue.IssueOption
+      IssueManagement.Storage.Beam.Issue.IssueReport
+      IssueManagement.Storage.Beam.Issue.IssueTranslation
+      IssueManagement.Storage.Beam.MediaFile
+      IssueManagement.Storage.BeamFlow
+      IssueManagement.Storage.CachedQueries.Issue.IssueCategory
+      IssueManagement.Storage.CachedQueries.Issue.IssueConfig
+      IssueManagement.Storage.CachedQueries.Issue.IssueMessage
+      IssueManagement.Storage.CachedQueries.Issue.IssueOption
+      IssueManagement.Storage.CachedQueries.MediaFile
+      IssueManagement.Storage.Queries.Issue.ChatMessage
+      IssueManagement.Storage.Queries.Issue.Comment
+      IssueManagement.Storage.Queries.Issue.IGMConfig
+      IssueManagement.Storage.Queries.Issue.IGMIssue
+      IssueManagement.Storage.Queries.Issue.IssueCategory
+      IssueManagement.Storage.Queries.Issue.IssueChat
+      IssueManagement.Storage.Queries.Issue.IssueConfig
+      IssueManagement.Storage.Queries.Issue.IssueMessage
+      IssueManagement.Storage.Queries.Issue.IssueOption
+      IssueManagement.Storage.Queries.Issue.IssueReport
+      IssueManagement.Storage.Queries.Issue.IssueTranslation
+      IssueManagement.Storage.Queries.MediaFile
+      IssueManagement.Tools.Error
+      IssueManagement.Tools.UtilsTH
+      IssueManagement.Utils.Html
+      IssueManagement.Utils.RemoteFile
+      MerchantDocuments.Domain.Action.UI.MerchantDocument
+      MerchantDocuments.Domain.Types.Common
+      MerchantDocuments.Storage.BeamFlow
+      MerchantDocuments.Storage.CachedQueries.MerchantDocument
+      MerchantDocuments.Tools.Error
+      Registry.Beckn.Interface
+      Registry.Beckn.Interface.Nammayatri
+      Registry.Beckn.Interface.Types
+      Registry.Beckn.Nammayatri.Flow
+      Registry.Beckn.Nammayatri.Types
+      Safety.Domain.Action.UI.PersonDefaultEmergencyNumber
+      Safety.Domain.Action.UI.Sos
+      Safety.Domain.Types.Common
+      Safety.Storage.BeamFlow
+      Safety.Storage.CachedQueries.Sos
+      Safety.Storage.Queries.PersonDefaultEmergencyNumberExtra
+      Safety.Storage.Queries.SafetySettingsExtra
+      Safety.Tools.Error
+      SMS.API
+      SMS.Domain
+      SMS.Types
+      Toll.Domain.Types.TollGate
+      Toll.SharedLogic.TollsDetector
+      Toll.Storage.BeamFlow
+      Toll.Storage.CachedQueries.Toll
+      Toll.Storage.Queries.TollExtra
+      UrlShortner.Common
+      UrlShortner.Types
+      API.Types.ProviderPlatform.IssueManagement
+      API.Types.ProviderPlatform.IssueManagement.Endpoints.Issue
+      API.Types.ProviderPlatform.IssueManagement.Issue
+      API.Types.RiderPlatform.IssueManagement
+      API.Types.RiderPlatform.IssueManagement.Endpoints.Issue
+      API.Types.RiderPlatform.IssueManagement.Endpoints.IssueList
+      API.Types.RiderPlatform.IssueManagement.Issue
+      API.Types.RiderPlatform.IssueManagement.IssueList
+      MerchantDocuments.Domain.Types.MerchantDocument
+      MerchantDocuments.Storage.Beam.MerchantDocument
+      MerchantDocuments.Storage.Queries.MerchantDocument
+      Safety.Domain.Types.PersonDefaultEmergencyNumber
+      Safety.Domain.Types.SafetySettings
+      Safety.Domain.Types.Sos
+      Safety.Storage.Beam.PersonDefaultEmergencyNumber
+      Safety.Storage.Beam.SafetySettings
+      Safety.Storage.Beam.Sos
+      Safety.Storage.Queries.OrphanInstances.PersonDefaultEmergencyNumber
+      Safety.Storage.Queries.OrphanInstances.SafetySettings
+      Safety.Storage.Queries.PersonDefaultEmergencyNumber
+      Safety.Storage.Queries.SafetySettings
+      Safety.Storage.Queries.Sos
+      Toll.Domain.Types.Toll
+      Toll.Storage.Beam.Toll
+      Toll.Storage.Queries.OrphanInstances.Toll
+      Toll.Storage.Queries.Toll
+  other-modules:
+      Tools.Beam.UtilsTH
+  hs-source-dirs:
+      src
+      src-read-only
+  default-extensions:
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DerivingStrategies
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      NoImplicitPrelude
+      OverloadedStrings
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      BlockArguments
+      TypeSynonymInstances
+      UndecidableInstances
+      StandaloneDeriving
+      PackageImports
+      TemplateHaskell
+  ghc-options: -fwrite-ide-info -hiedir=.hie -fplugin=RecordDotPreprocessor -Wall -Wcompat -Widentities -fhide-source-paths -Werror -Wwarn=ambiguous-fields
+  build-depends:
+      aeson
+    , base >=4.7 && <5
+    , beam-core
+    , beam-mysql
+    , beam-postgres
+    , beckn-services
+    , beckn-spec
+    , bytestring
+    , casing
+    , cassava
+    , cereal
+    , containers
+    , cryptonite
+    , either
+    , esqueleto
+    , euler-hs
+    , exceptions
+    , external
+    , extra
+    , generic-lens
+    , geojson
+    , hspec
+    , http-client
+    , http-client-tls
+    , lens
+    , location-updates
+    , mobility-core
+    , mock-registry
+    , network
+    , openapi3
+    , persistent
+    , postgresql-simple
+    , prometheus-client
+    , record-dot-preprocessor
+    , record-hasfield
+    , regex-compat
+    , regex-tdfa
+    , resource-pool
+    , scheduler
+    , sequelize
+    , servant
+    , servant-client
+    , servant-client-core
+    , servant-multipart
+    , servant-openapi3
+    , servant-server
+    , singletons
+    , singletons-th
+    , special-zone
+    , stm
+    , string-conversions
+    , template-haskell
+    , text
+    , text-conversions
+    , time
+    , unordered-containers
+    , uuid
+    , vector
+    , wai
+    , warp
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4

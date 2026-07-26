@@ -1,0 +1,1 @@
+ALTER TABLE atlas_driver_offer_bpp.search_request_for_driver ALTER COLUMN straight_line_distance_to_pickup SET NOT NULL;

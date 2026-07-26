@@ -1,0 +1,40 @@
+{-
+  Finance.Ledger.Interface
+
+  Input types for ledger operations.
+  The actual operations are in Lib.Finance.Ledger.Service
+-}
+{-# OPTIONS_GHC -Wno-ambiguous-fields #-}
+
+module Lib.Finance.Ledger.Interface
+  ( LedgerEntryInput (..),
+  )
+where
+
+import Data.Aeson (Value)
+import Kernel.Prelude
+import Kernel.Types.Common (Currency, HighPrecMoney)
+import Kernel.Types.Id (Id)
+import Lib.Finance.Domain.Types.Account (Account)
+import Lib.Finance.Domain.Types.LedgerEntry (EntityReferenceType, EntryStatus, EntryType, SettlementStatus)
+
+-- | Input for creating a ledger entry
+data LedgerEntryInput = LedgerEntryInput
+  { fromAccountId :: Id Account,
+    toAccountId :: Id Account,
+    concernedIndividualId :: Maybe Text,
+    amount :: HighPrecMoney,
+    currency :: Currency,
+    entryType :: EntryType,
+    status :: EntryStatus,
+    referenceType :: Text,
+    referenceId :: Text,
+    -- | Sub-domain entity this entry belongs to (e.g. a refund request); Nothing when there is none.
+    entityReferenceId :: Maybe Text,
+    entityReferenceType :: Maybe EntityReferenceType,
+    metadata :: Maybe Value,
+    merchantId :: Text,
+    merchantOperatingCityId :: Text,
+    settlementStatus :: Maybe SettlementStatus
+  }
+  deriving (Eq, Show, Generic)

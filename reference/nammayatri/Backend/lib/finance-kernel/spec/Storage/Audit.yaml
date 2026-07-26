@@ -1,0 +1,69 @@
+# Finance Kernel - Audit Entry Table
+# Namma-DSL YAML specification
+
+imports:
+  UTCTime: Kernel.Prelude
+  Value: Data.Aeson
+  ActorType: Lib.Finance.Core.Types
+
+AuditEntry:
+  tableName: finance_audit_entry
+  derives: "Generic"
+
+  types:
+    AuditAction:
+      enum: "Created,Updated,Reversed,StatusChanged"
+      derive: "HttpInstance"
+    AuditEntityType:
+      enum: "LedgerEntry,Invoice,DirectTaxTransaction,IndirectTaxTransaction,PgPaymentSettlementReport,SapJournalEntry,SubscriptionPurchase"
+      derive: "HttpInstance"
+
+  fields:
+    id: Id AuditEntry
+    entityType: AuditEntityType
+    entityId: Text
+    action: AuditAction
+    actorType: ActorType
+    actorId: Maybe Text
+    previousState: Maybe Value
+    newState: Maybe Value
+    metadata: Maybe Value
+    ipAddress: Maybe Text
+    merchantId: Text
+    merchantOperatingCityId: Text
+    createdAt: UTCTime
+
+  sqlType:
+    previousState: jsonb
+    newState: jsonb
+    metadata: jsonb
+
+  constraints:
+    id: PrimaryKey
+    entityId: SecondaryKey
+
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
+
+    findByEntity:
+      kvFunction: findAllWithKV
+      where:
+        and: [entityType, entityId]
+
+    findByActor:
+      kvFunction: findAllWithKV
+      where:
+        and: [actorType, actorId]
+
+    findByAction:
+      kvFunction: findAllWithKV
+      where:
+        and: [entityType, action]
+
+  extraOperations:
+    - EXTRA_QUERY_FILE
+
+  defaultQueryTypeConstraint: "(Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r)"
+  beamInstance: MakeTableInstancesGenericSchema

@@ -1,0 +1,314 @@
+.log-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #0d1117;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  overflow: hidden;
+}
+
+/* --- Header with search + clear --- */
+.log-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid #21262d;
+  flex-shrink: 0;
+  gap: 8px;
+}
+.log-panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.log-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.log-search {
+  width: 280px;
+  padding: 3px 8px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #c9d1d9;
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+}
+.log-search:focus {
+  border-color: #1f6feb;
+  width: 360px;
+}
+.log-search::placeholder {
+  color: #484f58;
+}
+.log-search-clear {
+  background: transparent;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #8b949e;
+  font-size: 10px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.log-search-clear:hover { background: #21262d; color: #f85149; }
+.log-match-count {
+  color: #d29922;
+  font-weight: normal;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.svc-log-matches {
+  color: #d29922;
+  font-weight: normal;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 4px;
+}
+.log-clear-btn {
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #8b949e;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.log-clear-btn:hover {
+  background: #21262d;
+  color: #c9d1d9;
+}
+
+/* --- Body --- */
+.log-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.log-empty { color: #484f58; padding: 12px; }
+
+/* --- Log entry --- */
+.log-entry {
+  border-bottom: 1px solid #161b2200;
+}
+.log-entry:hover {
+  background: #161b22;
+}
+.log-entry-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 12px;
+  line-height: 1.5;
+}
+.log-entry-header.clickable {
+  cursor: pointer;
+}
+.log-time { color: #484f58; flex-shrink: 0; }
+.log-msg { flex: 1; word-break: break-word; }
+.log-info { color: #58a6ff; }
+.log-success { color: #3fb950; }
+.log-error { color: #f85149; }
+.log-warn { color: #d29922; }
+.log-req { color: #bc8cff; }
+.log-toggle { color: #484f58; font-size: 9px; flex-shrink: 0; }
+
+.log-highlight {
+  background: #d2992244;
+  color: #d29922;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* --- Collapsible details --- */
+.log-details {
+  margin: 2px 12px 6px 70px;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.log-detail-section {
+  padding: 6px 10px;
+  border-bottom: 1px solid #21262d;
+}
+.log-detail-section:last-child {
+  border-bottom: none;
+}
+.log-detail-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 8px;
+}
+.log-detail-method {
+  color: #bc8cff;
+  font-weight: 600;
+  margin-right: 6px;
+}
+.log-detail-url {
+  color: #58a6ff;
+  word-break: break-all;
+}
+.log-detail-status {
+  font-weight: 600;
+  margin-left: 4px;
+}
+.log-detail-status.status-ok { color: #3fb950; }
+.log-detail-status.status-error { color: #f85149; }
+.log-detail-body {
+  margin: 4px 0 0 0;
+  padding: 8px;
+  background: #0d1117;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #8b949e;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Per-request filter toolbar (inside an expanded log entry) */
+.log-detail-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #21262d;
+  background: #0a0e13;
+}
+.log-detail-filter {
+  flex: 1;
+  background: #0d1117;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+.log-detail-filter:focus { outline: none; border-color: #58a6ff; }
+.log-detail-filter-clear {
+  background: transparent;
+  color: #8b949e;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.log-detail-filter-clear:hover { color: #f85149; border-color: #f85149; }
+
+/* Headers toggle button + table */
+.log-detail-toggle {
+  margin-left: 8px;
+  background: transparent;
+  color: #8b949e;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.log-detail-toggle:hover { color: #58a6ff; border-color: #58a6ff; }
+
+.log-detail-headers {
+  margin: 6px 0 0 0;
+  border-collapse: collapse;
+  background: #0d1117;
+  border-radius: 4px;
+  font-size: 10px;
+  width: 100%;
+  table-layout: fixed;
+}
+.log-detail-headers td {
+  padding: 3px 8px;
+  vertical-align: top;
+  border-bottom: 1px solid #161b22;
+  word-break: break-all;
+}
+.log-detail-headers tr:last-child td { border-bottom: none; }
+.log-header-key {
+  color: #8b949e;
+  font-weight: 600;
+  width: 30%;
+  white-space: nowrap;
+}
+.log-header-val { color: #c9d1d9; }
+.log-detail-empty {
+  margin: 6px 0 0 0;
+  padding: 4px 8px;
+  font-size: 10px;
+  color: #6e7681;
+  font-style: italic;
+}
+
+/* --- Resize handle --- */
+.log-resize-handle {
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+.log-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: #30363d;
+}
+.log-resize-handle:hover::after,
+.log-resize-handle.dragging::after {
+  width: 3px;
+  left: 1px;
+  background: #1f6feb;
+}
+
+/* Service log tabs */
+.service-log-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 4px 0;
+  flex-wrap: wrap;
+}
+.service-log-tab {
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  color: #8b949e;
+  cursor: pointer;
+}
+.service-log-tab:hover { background: #30363d; color: #c9d1d9; }
+.service-log-tab.active { background: #1f6feb; color: #fff; border-color: #1f6feb; }
+.svc-log-search {
+  margin-left: auto;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-family: inherit;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  color: #c9d1d9;
+  width: 120px;
+}
+.svc-log-search:focus { border-color: #1f6feb; outline: none; }
+.service-log-body { max-height: 300px; overflow-y: auto; }

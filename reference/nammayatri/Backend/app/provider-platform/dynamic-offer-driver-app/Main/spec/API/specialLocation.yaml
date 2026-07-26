@@ -1,0 +1,20 @@
+imports:
+  Text: Data.Text
+  SpecialLocationFull: Lib.Queries.SpecialLocation
+  MerchantOperatingCity: Domain.Types.MerchantOperatingCity
+
+module: SpecialLocation
+types: {}
+apis:
+  # GET /specialLocation/list
+  - GET:
+      endpoint: /specialLocation/list
+      headers:
+        If-None-Match: Text
+      query:
+        isOrigin: Bool
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: "[SpecialLocationFull]"
+      responseHeaders:
+        - ETag: Text

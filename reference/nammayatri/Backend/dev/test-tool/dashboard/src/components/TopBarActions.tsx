@@ -1,0 +1,635 @@
+import React, { useEffect, useRef, useState } from 'react';
+import './TopBarActions.css';
+import { showAlert, showConfirm } from './Dialogs';
+import { RefPicker } from './RefPicker';
+import { loadUiState, saveUiState } from './uiState';
+import { PROXY_BASE as CONTEXT_API, LOCAL_API_BASE, getStackServiceUrl, getCaddyServiceUrl } from '../config';
+import { Terminal as IntegratedTerminal } from './Terminal';
+import { ServicePortsModal } from './ServicePortsModal';
+import { FinanceViewer } from './FinanceViewer';
+
+interface SyncStatus {
+  running: boolean;
+  from?: string | null;
+  started_at?: number | null;
+  finished_at?: number | null;
+  exit_code?: number | null;
+  error?: string | null;
+  log: string[];
+}
+
+interface ControlCenterStatus {
+  running: boolean;
+  ready: boolean;
+  url: string;
+  started_at?: number | null;
+  finished_at?: number | null;
+  exit_code?: number | null;
+  error?: string | null;
+  log: string[];
+  pid?: number | null;
+}
+
+/** Top-bar actions: live next to DB Manager / Metabase.
+ *  - Flush Redis: wipes all Redis keys.
+ *  - Sync Data:  runs config-sync from a chosen env (default: prod) → local.
+ *  - While running, the sync button flips to "Check Status" which opens a
+ *    modal that polls /api/config-sync/status every 2s and streams logs. */
+export const TopBarActions: React.FC = () => {
+  const [flushState, setFlushState] = useState<'idle' | 'flushing' | 'done' | 'error'>('idle');
+  const [syncEnvs, setSyncEnvs] = useState<string[]>([]);
+  const [syncFrom, setSyncFrom] = useState<string>('prod');
+  const [syncRunning, setSyncRunning] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
+  const [forceFetch, setForceFetch] = useState(false);
+
+  // Status modal
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [statusData, setStatusData] = useState<SyncStatus | null>(null);
+  const logBoxRef = useRef<HTMLPreElement | null>(null);
+
+  // Control-center launcher state
+  const [ccData, setCcData] = useState<ControlCenterStatus | null>(null);
+  const [ccModalOpen, setCcModalOpen] = useState(false);
+  const [ccRef, setCcRef] = useState<string>('');
+  const [ccIsStarting, setCcIsStarting] = useState(false);
+  const ccLogBoxRef = useRef<HTMLPreElement | null>(null);
+
+  // Integrated terminal modal state.
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [portsOpen, setPortsOpen] = useState(false);
+
+  // Finance visualization modal state.
+  const [financeOpen, setFinanceOpen] = useState(false);
+
+  // Floating-panel collapse state. The bar used to live inline in the
+  // top bar and crowded out the mode tabs at narrow widths; now it
+  // collapses behind a single toggle in the top-right corner.
+  const [panelOpen, setPanelOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  // Close the panel when the user clicks outside it (but not when they
+  // click inside one of the fullscreen modals — those are siblings, not
+  // descendants of the panel).
+  useEffect(() => {
+    if (!panelOpen) return;
+    const onDocClick = (ev: MouseEvent) => {
+      const target = ev.target as Node | null;
+      if (!target) return;
+      if (panelRef.current?.contains(target)) return;
+      // Don't close if the click landed inside one of our modals.
+      const inModal = (target instanceof Element)
+        && target.closest('.tb-modal-backdrop') !== null;
+      if (inModal) return;
+      setPanelOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [panelOpen]);
+
+
+  // Hydrate dropdown selections (syncFrom, ccRef) from the server-side
+  // ui-state bag, then fall back to the envs endpoint's `default` only if
+  // ui-state had nothing recorded for syncFrom. Order matters: we want the
+  // user's last pick to win over the server's default. Run once on mount.
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimer: number | null = null;
+
+    const fetchEnvs = async (isFirstRun: boolean) => {
+      const [ui, envsRes] = await Promise.all([
+        isFirstRun ? loadUiState() : Promise.resolve(null),
+        fetch(`${CONTEXT_API}/api/config-sync/envs`).then(r => r.ok ? r.json() : { envs: [] }).catch(() => ({ envs: [] })),
+      ]);
+      if (cancelled) return;
+      if (Array.isArray(envsRes.envs) && envsRes.envs.length > 0) {
+        setSyncEnvs(envsRes.envs);
+        if (isFirstRun && ui) {
+          const fromUi = typeof ui.syncFrom === 'string' ? ui.syncFrom : null;
+          if (fromUi) {
+            setSyncFrom(fromUi);
+          } else if (envsRes.default) {
+            setSyncFrom(envsRes.default);
+          }
+          const ccUi = typeof ui.ccRef === 'string' ? ui.ccRef : null;
+          if (ccUi) setCcRef(ccUi);
+        }
+      } else {
+        // test-context-api not up yet — retry every 5s until it responds
+        if (!cancelled) retryTimer = window.setTimeout(() => fetchEnvs(false), 5000);
+      }
+    };
+
+    fetchEnvs(true);
+    return () => {
+      cancelled = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
+  }, []);
+
+  // On mount, fetch current status to detect a sync that was already running
+  // (e.g. the auto-sync triggered on test-context-api startup).
+  useEffect(() => {
+    fetch(`${CONTEXT_API}/api/config-sync/status`)
+      .then(r => r.json())
+      .then((d: SyncStatus) => {
+        setStatusData(d);
+        if (d.running) { setSyncRunning(true); setSyncStatus('running'); }
+      })
+      .catch(() => { });
+  }, []);
+
+  // Poll while sync is running OR while the status modal is open.
+  useEffect(() => {
+    if (!syncRunning && !statusOpen) return;
+    const t = setInterval(async () => {
+      try {
+        const r = await fetch(`${CONTEXT_API}/api/config-sync/status`);
+        const d: SyncStatus = await r.json();
+        setStatusData(d);
+        if (!d.running && syncRunning) {
+          setSyncRunning(false);
+          const failed = !!d.error || (typeof d.exit_code === 'number' && d.exit_code !== 0);
+          setSyncStatus(failed ? 'error' : 'done');
+          setTimeout(() => setSyncStatus('idle'), 4000);
+        }
+      } catch { /* keep polling */ }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [syncRunning, statusOpen]);
+
+  // Auto-scroll the log box to the bottom on update.
+  useEffect(() => {
+    if (statusOpen && logBoxRef.current) {
+      logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
+    }
+  }, [statusData?.log, statusOpen]);
+
+  // Initial fetch of control-center status to recover state across page reloads.
+  useEffect(() => {
+    fetch(`${LOCAL_API_BASE}/api/control-center/status`)
+      .then(r => r.json())
+      .then((d: ControlCenterStatus) => setCcData(d))
+      .catch(() => { });
+  }, []);
+
+  // Poll control-center status while it's running OR while its modal is open.
+  useEffect(() => {
+    const isPolling = (ccData?.running || ccModalOpen) && !ccData?.ready;
+    if (!isPolling && !ccModalOpen) return;
+    const t = setInterval(async () => {
+      try {
+        const r = await fetch(`${LOCAL_API_BASE}/api/control-center/status`);
+        const d: ControlCenterStatus = await r.json();
+        setCcData(d);
+      } catch { /* keep polling */ }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [ccData?.running, ccData?.ready, ccModalOpen]);
+
+  // Auto-scroll cc log box.
+  useEffect(() => {
+    if (ccModalOpen && ccLogBoxRef.current) {
+      ccLogBoxRef.current.scrollTop = ccLogBoxRef.current.scrollHeight;
+    }
+  }, [ccData?.log, ccModalOpen]);
+
+
+  // Top-bar "Sync from <env>" click — open the modal so the user can change
+  // the source env and confirm there. Avoids surprise data wipes from a
+  // single accidental click on the bar.
+  const handleSyncBarClick = () => {
+    setStatusOpen(true);
+  };
+
+  const triggerConfigSync = async () => {
+    if (syncRunning) { setStatusOpen(true); return; }
+    const ok = await showConfirm(
+      `Sync data from "${syncFrom}" → local?${forceFetch ? '\n\nForce-fetch is ON — local patched data will be discarded and re-downloaded from S3.' : ''}\n\nRider, driver, and mock-registry services will be restarted.`,
+      { title: 'Sync Data', confirmLabel: `Sync from ${syncFrom}`, variant: 'info' },
+    );
+    if (!ok) return;
+    setSyncRunning(true);
+    setSyncStatus('running');
+    try {
+      const r = await fetch(`${CONTEXT_API}/api/config-sync/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: syncFrom, forceFetch }),
+      });
+      if (!r.ok) {
+        setSyncRunning(false);
+        setSyncStatus('error');
+        setTimeout(() => setSyncStatus('idle'), 4000);
+      } else {
+        setStatusOpen(true); // open the log modal right away
+      }
+    } catch {
+      setSyncRunning(false);
+      setSyncStatus('error');
+      setTimeout(() => setSyncStatus('idle'), 4000);
+    }
+  };
+
+  // Top-bar buttons just open their respective modals — every action
+  // (Start / Stop / Re-Launch / Open / Retry) lives inside the modal so
+  // the bar stays a status surface, not a control surface.
+  const openCcModal = () => setCcModalOpen(true);
+
+  const handleControlCenterStart = async () => {
+    if (ccIsStarting) return;
+    setCcIsStarting(true);
+    try {
+      const r = await fetch(`${LOCAL_API_BASE}/api/control-center/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ref: ccRef.trim() || undefined }),
+      });
+      if (r.ok) {
+        setCcData(prev => ({ ...(prev ?? { url: '', log: [], ready: false }), running: true, ready: false } as ControlCenterStatus));
+      } else {
+        const err = await r.json().catch(() => ({}));
+        if (!err?.error?.includes('already running')) {
+          showAlert(`${err?.error ?? `HTTP ${r.status}`}`, { title: 'Could not start Control Center', variant: 'danger' });
+        }
+      }
+    } catch (e) {
+      showAlert(String(e), { title: 'Could not start Control Center', variant: 'danger' });
+    } finally {
+      setCcIsStarting(false);
+    }
+  };
+
+  const handleControlCenterOpen = () => {
+    if (ccData?.url) window.open(ccData.url, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleControlCenterStop = async () => {
+    const ok = await showConfirm(
+      'Stop the running control-center launcher?\n\nVite will be killed.',
+      { title: 'Stop Control Center', confirmLabel: 'Stop', variant: 'danger' },
+    );
+    if (!ok) return;
+    try {
+      await fetch(`${LOCAL_API_BASE}/api/control-center/stop`, { method: 'POST' });
+      setCcData(prev => prev ? { ...prev, running: false, ready: false } : prev);
+    } catch (e) {
+      showAlert(String(e), { title: 'Could not stop Control Center', variant: 'danger' });
+    }
+  };
+
+  const flushRedis = async () => {
+    if (flushState === 'flushing') return;
+    const ok = await showConfirm(
+      'Flush ALL Redis keys?\n\nThis cannot be undone — every key in both the standalone and cluster Redis instances will be deleted.',
+      { title: 'Flush Redis', confirmLabel: 'Flush all keys', variant: 'danger' },
+    );
+    if (!ok) return;
+    setFlushState('flushing');
+    try {
+      const res = await fetch(`${CONTEXT_API}/api/redis/flushall`, { method: 'POST' });
+      const data = await res.json();
+      setFlushState(data.result === 'ok' ? 'done' : 'error');
+    } catch {
+      setFlushState('error');
+    }
+    setTimeout(() => setFlushState('idle'), 3000);
+  };
+
+  // Both live on the stack host, not on this machine. DB Manager has to go
+  // through caddy: its static server binds 127.0.0.1 and its bundle resolves
+  // the API against window.location.origin, so only the caddy origin works.
+  // Metabase binds 0.0.0.0, so the direct port is fine (and it dislikes being
+  // served under a path prefix).
+  const dbManagerUrl = getCaddyServiceUrl('db-manager-frontend')
+    ?? getStackServiceUrl('db-manager-frontend');
+  const metabaseUrl = getStackServiceUrl('metabase');
+
+  const syncBtnLabel = syncRunning
+    ? 'Check Status'
+    : syncStatus === 'done' ? 'Synced'
+      : syncStatus === 'error' ? 'Error'
+        : 'Sync Data';
+
+  const ccBtnLabel = ccData?.ready
+    ? 'Open Control Center'
+    : ccData?.running ? 'Check Status'
+      : ccData?.error ? 'Retry Launch'
+        : 'Launch Control Center';
+  const ccElapsed = ccData?.started_at
+    ? Math.floor(((ccData.finished_at ?? Date.now() / 1000) - ccData.started_at))
+    : 0;
+
+  const elapsed = statusData?.started_at
+    ? Math.floor(((statusData.finished_at ?? Date.now() / 1000) - statusData.started_at))
+    : 0;
+
+  // Aggregate "something is happening" for the toggle dot.
+  const anyRunning = syncRunning || (ccData?.running && !ccData.ready);
+  const anyError = syncStatus === 'error' || flushState === 'error' || !!ccData?.error;
+  const anyReady = !!ccData?.ready;
+  const toggleStatus: 'running' | 'error' | 'ready' | 'idle' =
+    anyRunning ? 'running' : anyError ? 'error' : anyReady ? 'ready' : 'idle';
+
+  return (
+    <>
+      <div className="tb-floating" ref={panelRef}>
+        <button
+          className={`tb-floating-toggle is-${toggleStatus}${panelOpen ? ' is-open' : ''}`}
+          onClick={() => setPanelOpen(o => !o)}
+          title={
+            anyRunning ? 'Tools — something is running' :
+            anyError ? 'Tools — last action errored' :
+            anyReady ? 'Tools — control center / app ready' :
+            'Tools — DB / Redis / Sync / Launchers'
+          }
+          aria-expanded={panelOpen}
+          aria-label="Tools menu"
+        >
+          <span className="tb-floating-toggle-icon">🛠</span>
+          <span className="tb-floating-toggle-label">Tools</span>
+          {toggleStatus !== 'idle' && (
+            <span className={`tb-floating-toggle-dot is-${toggleStatus}`} />
+          )}
+          <span className="tb-floating-toggle-caret">{panelOpen ? '▴' : '▾'}</span>
+        </button>
+
+        {panelOpen && (
+          <div className="tb-floating-panel" role="menu">
+            {/* Group 1: Systems */}
+            <div className="tb-floating-section" title="Systems">
+              <div className="tb-floating-section-label">Systems</div>
+              <div className="tb-floating-section-row">
+                <a className="tb-btn" href={dbManagerUrl} target="_blank" rel="noopener noreferrer" title={`DB Manager — browse / edit the rider (atlas_app) and driver (atlas_driver_offer_bpp) schemas (${dbManagerUrl})`}>
+                  🧭 DB Manager
+                </a>
+                <a className="tb-btn" href={metabaseUrl} target="_blank" rel="noopener noreferrer" title={`Metabase — BI / analytics over the stack's DB (${metabaseUrl})`}>
+                  🗄 Metabase
+                </a>
+                <button
+                  className={`tb-btn tb-flush${flushState === 'done' ? ' tb-ok' : flushState === 'error' ? ' tb-err' : ''}`}
+                  onClick={flushRedis}
+                  disabled={flushState === 'flushing'}
+                  title="Flush all Redis keys"
+                >
+                  {flushState === 'flushing' ? '🗑 Flushing…' : flushState === 'done' ? '🗑 Flushed' : flushState === 'error' ? '🗑 Error' : '🗑 Flush Redis'}
+                </button>
+                <button
+                  className="tb-btn"
+                  onClick={() => setTerminalOpen(true)}
+                  title="Open an integrated PTY-backed shell running on the test-context-api host"
+                >
+                  💻 Terminal
+                </button>
+                <button
+                  className="tb-btn"
+                  onClick={() => { setPanelOpen(false); setPortsOpen(true); }}
+                  title="Every resolved service port for the stack in use: direct host:port URLs and the Caddy host:caddyPort/<service> routes"
+                >
+                  🔌 Service Ports
+                </button>
+              </div>
+            </div>
+
+            {/* Group 2: Data Pipeline */}
+            {syncEnvs.length > 0 && (
+              <div className="tb-floating-section" title="Data Pipeline">
+                <div className="tb-floating-section-label">Data Pipeline</div>
+                <div className="tb-floating-section-row">
+                  <button
+                    className={`tb-btn tb-sync${syncStatus === 'done' ? ' tb-ok' : syncStatus === 'error' ? ' tb-err' : ''}${syncRunning ? ' tb-running' : ''}`}
+                    onClick={handleSyncBarClick}
+                    title={syncRunning
+                      ? `Sync from ${syncFrom} in progress — click to view logs / change source`
+                      : `Open Sync Data modal (current source: ${syncFrom}). Imports data from the S3 bundle, applies local-testing-data + feature-migrations, then restarts services.`}
+                  >
+                    ⚡ {syncRunning ? `Sync · ${syncFrom} · ${elapsed}s` : syncStatus === 'done' ? 'Synced' : syncStatus === 'error' ? 'Sync Error' : `Sync Data`}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Group 3: Visualizations */}
+            <div className="tb-floating-section" title="Visualizations">
+              <div className="tb-floating-section-label">Visualizations</div>
+              <div className="tb-floating-section-row">
+                <button
+                  className="tb-btn"
+                  onClick={() => setFinanceOpen(true)}
+                  title="Open Finance Visualization dashboard"
+                >
+                  📊 Finance
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {ccModalOpen && (
+        <div className="tb-modal-backdrop" onClick={() => setCcModalOpen(false)}>
+          <div className="tb-modal" onClick={e => e.stopPropagation()}>
+            <div className="tb-modal-header">
+              <span className="tb-modal-title">
+                Control Center
+                <span className={`tb-pill ${ccData?.ready ? 'tb-pill-ok' : ccData?.error ? 'tb-pill-err' : ccData?.running ? 'tb-pill-run' : ''}`}>
+                  {ccData?.ready ? `ready · ${ccElapsed}s`
+                    : ccData?.running ? `starting · ${ccElapsed}s`
+                      : ccData?.error ? 'error'
+                        : ccData?.exit_code != null ? `exit ${ccData.exit_code}`
+                          : 'idle'}
+                </span>
+              </span>
+              <button className="tb-modal-close" onClick={() => setCcModalOpen(false)} title="Close">✕</button>
+            </div>
+            {/* Action bar: same pattern as the native-app form. RefPicker
+                lets the user override the branch / commit before launch.
+                Buttons swap based on running/ready/error state — exactly
+                one primary action visible at a time. */}
+            <div className="tb-modal-form">
+              <div className="tb-modal-form-field">
+                <RefPicker
+                  repo="nammayatri/control-center"
+                  value={ccRef}
+                  onChange={(v) => { setCcRef(v); saveUiState({ ccRef: v || null }); }}
+                  disabled={ccData?.running}
+                />
+              </div>
+              <div className="tb-modal-form-actions">
+                {!ccData?.running && (
+                  <button
+                    className={`tb-btn tb-modal-form-primary${ccIsStarting ? ' tb-busy' : ''}`}
+                    onClick={handleControlCenterStart}
+                    disabled={ccIsStarting}
+                    title="Clone-or-pull nammayatri/control-center, optionally checkout the chosen ref, npm install, run vite dev (VITE_BAP_URL=http://localhost:8017, VITE_BPP_URL=http://localhost:8018)"
+                  >
+                    {ccIsStarting ? (
+                      <>
+                        <span className="tb-spinner" aria-hidden="true" />
+                        {' '}Starting…
+                      </>
+                    ) : (
+                      <>▶ {ccData?.ready ? 'Re-Launch' : ccData?.error ? 'Retry' : 'Start'}</>
+                    )}
+                  </button>
+                )}
+                {ccData?.running && (
+                  <button
+                    className="tb-btn tb-err"
+                    onClick={handleControlCenterStop}
+                    title="Kill the control-center launcher (vite + npm)"
+                  >
+                    ⏹ Stop
+                  </button>
+                )}
+                {ccData?.ready && (
+                  <button
+                    className="tb-btn tb-ok"
+                    onClick={handleControlCenterOpen}
+                    title={`Open ${ccData.url} in a new tab`}
+                  >
+                    ↗ Open
+                  </button>
+                )}
+              </div>
+            </div>
+            {ccData?.error && (
+              <div className="tb-modal-error">⚠ {ccData.error}</div>
+            )}
+            <pre ref={ccLogBoxRef} className="tb-modal-log">
+              {ccData?.log?.length ? ccData.log.join('\n') : '(no log lines yet — click Start)'}
+            </pre>
+            <div className="tb-modal-footer">
+              <span className="tb-modal-meta">
+                {ccData?.log?.length ?? 0} lines · polling every 2s
+                {ccData?.ready && ccData.url ? ` · serving ${ccData.url}` : ''}
+              </span>
+              <button
+                className="tb-btn"
+                onClick={() => {
+                  if (!ccData?.log) return;
+                  navigator.clipboard?.writeText(ccData.log.join('\n')).catch(() => { });
+                }}
+                title="Copy logs to clipboard"
+              >
+                📋 Copy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {statusOpen && (
+        <div className="tb-modal-backdrop" onClick={() => setStatusOpen(false)}>
+          <div className="tb-modal" onClick={e => e.stopPropagation()}>
+            <div className="tb-modal-header">
+              <span className="tb-modal-title">
+                Config Sync — {statusData?.from ?? syncFrom}
+                <span className={`tb-pill ${statusData?.running ? 'tb-pill-run' : statusData?.error || statusData?.exit_code ? 'tb-pill-err' : 'tb-pill-ok'}`}>
+                  {statusData?.running ? `running · ${elapsed}s`
+                    : statusData?.error ? 'error'
+                      : statusData?.exit_code ? `exit ${statusData.exit_code}`
+                        : statusData ? `done · ${elapsed}s` : 'idle'}
+                </span>
+              </span>
+              <button className="tb-modal-close" onClick={() => setStatusOpen(false)} title="Close">✕</button>
+            </div>
+            {syncEnvs.length > 0 && (
+              <div className="tb-modal-form">
+                <div className="tb-modal-form-field">
+                  <label htmlFor="sync-from">Source environment</label>
+                  <select
+                    id="sync-from"
+                    value={syncFrom}
+                    onChange={e => { setSyncFrom(e.target.value); saveUiState({ syncFrom: e.target.value }); }}
+                    disabled={syncRunning}
+                    title="S3 bundle to import data from"
+                  >
+                    {syncEnvs.map(env => (<option key={env} value={env}>{env}</option>))}
+                  </select>
+                </div>
+                <div className="tb-modal-form-field">
+                  <label htmlFor="sync-force-fetch" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input
+                      id="sync-force-fetch"
+                      type="checkbox"
+                      checked={forceFetch}
+                      onChange={e => setForceFetch(e.target.checked)}
+                      disabled={syncRunning}
+                    />
+                    Force fetch
+                  </label>
+                  <div className="tb-modal-form-hint">
+                    Re-download from S3 even if a patched copy already exists locally.
+                  </div>
+                </div>
+                <div className="tb-modal-form-actions">
+                  <button
+                    className="tb-btn tb-modal-form-primary"
+                    onClick={triggerConfigSync}
+                    disabled={syncRunning}
+                    title={syncRunning ? 'A sync is in progress' : `Import data from ${syncFrom} → local`}
+                  >
+                    {syncRunning ? `Syncing · ${elapsed}s` : 'Sync Data'}
+                  </button>
+                </div>
+              </div>
+            )}
+            {statusData?.error && (
+              <div className="tb-modal-error">⚠ {statusData.error}</div>
+            )}
+            <pre ref={logBoxRef} className="tb-modal-log">
+              {statusData?.log?.length ? statusData.log.join('\n') : '(no log lines yet — pick a source above and click Sync Data)'}
+            </pre>
+            <div className="tb-modal-footer">
+              <span className="tb-modal-meta">
+                {statusData?.log?.length ?? 0} lines · polling every 2s
+              </span>
+              <button
+                className="tb-btn"
+                onClick={() => {
+                  if (!statusData?.log) return;
+                  navigator.clipboard?.writeText(statusData.log.join('\n')).catch(() => { });
+                }}
+                title="Copy logs to clipboard"
+              >
+                📋 Copy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {financeOpen && (
+        <div className="tb-modal-backdrop" onClick={() => setFinanceOpen(false)}>
+          <div className="tb-modal tb-modal-terminal" onClick={e => e.stopPropagation()}>
+            <div className="tb-modal-header">
+              <span className="tb-modal-title">📊 Finance Visualization</span>
+              <button className="tb-modal-close" onClick={() => setFinanceOpen(false)} title="Close">✕</button>
+            </div>
+            <div className="tb-modal-body" style={{ overflow: 'auto' }}>
+              <FinanceViewer />
+            </div>
+          </div>
+        </div>
+      )}
+      {portsOpen && <ServicePortsModal onClose={() => setPortsOpen(false)} />}
+
+      {terminalOpen && (
+        <div className="tb-modal-backdrop" onClick={() => setTerminalOpen(false)}>
+          <div className="tb-modal tb-modal-terminal" onClick={e => e.stopPropagation()}>
+            <div className="tb-modal-header">
+              <span className="tb-modal-title">
+                💻 Terminal
+                <span className="tb-pill tb-pill-run">PTY · bash</span>
+              </span>
+              <button className="tb-modal-close" onClick={() => setTerminalOpen(false)} title="Close terminal (kills the shell)">✕</button>
+            </div>
+            <div className="tb-modal-body">
+              <IntegratedTerminal onClose={() => setTerminalOpen(false)} />
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};

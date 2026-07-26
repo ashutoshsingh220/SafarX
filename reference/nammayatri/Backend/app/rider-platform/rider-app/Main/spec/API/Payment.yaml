@@ -1,0 +1,202 @@
+imports:
+  CustomerCardListResp: Kernel.External.Payment.Interface.Types
+  CustomerId: Kernel.External.Payment.Interface.Types
+  PaymentMethodId: Kernel.External.Payment.Interface.Types
+  APISuccess: Kernel.Types.APISuccess
+  Ride: Domain.Types.Ride
+  PriceAPIEntity: Kernel.Types.Common
+  HighPrecMoney: Kernel.Types.Common
+  Currency: Kernel.Types.Common
+  CreateCustomerResp : Kernel.External.Payment.Interface.Types
+  RefundRequestStatus: Domain.Types.RefundRequest
+  RefundRequestCode: Domain.Types.RefundRequest
+  RefundPurpose: Domain.Types.RefundRequest
+  FareComponent: Domain.Types.FareBreakup
+  FileType: AWS.S3
+  PaymentOrder: Lib.Payment.Domain.Types.PaymentOrder
+  Ride: Domain.Types.Ride
+
+module: RidePayment
+types:
+  SetupIntentResponse:
+    setupIntentClientSecret: Text
+    customerId: CustomerId
+    ephemeralKey: Text
+  PaymentIntentResponse:
+    paymentIntentClientSecret: Text
+    customerId: CustomerId
+    ephemeralKey: Text
+  PaymentMethodsResponse:
+    list: CustomerCardListResp
+    defaultPaymentMethodId: Maybe PaymentMethodId
+  AddTipRequest:
+    recordType: NewType
+    amount: PriceAPIEntity
+  RefundRequestReq:
+    refundComponents: "[RefundComponentReq]"
+    code: RefundRequestCode
+    description: Text
+    evidence: Maybe Text
+    fileType: Maybe FileType
+    reqContentType: Maybe Text
+  RefundRequestResp:
+    rideId: Id Ride
+    requestedAmount: Maybe PriceAPIEntity
+    transactionAmount: PriceAPIEntity
+    refundPurpose: RefundPurpose
+    status: RefundRequestStatus
+    code: RefundRequestCode
+    description: Text
+    responseDescription: Maybe Text
+    refundsAmount: Maybe PriceAPIEntity
+    evidence: Maybe Text
+    createdAt: UTCTime
+    updatedAt: UTCTime
+  RefundRequestListResp:
+    refundRequests: "[RefundRequestResp]"
+  # coarse customer-facing fare bucket — the fare-breakup output + refund-create input
+  # FareComponent lives in Domain.Types.FareBreakup (shared by this API + RefundRequest storage)
+  FareBreakupComponent:
+    component: FareComponent
+    exclTax: PriceAPIEntity
+    tax: PriceAPIEntity
+    total: PriceAPIEntity
+  RefundComponentReq:
+    component: FareComponent
+    amount: PriceAPIEntity
+  FareBreakupRes:
+    components: "Maybe [FareBreakupComponent]"
+    totalAmount: PriceAPIEntity
+  DueAmountRide:
+    rideId: Id Ride
+    amount: HighPrecMoney
+  GetDueAmountResp:
+    rides: "[DueAmountRide]"
+    totalDueAmount: HighPrecMoney
+    rideFareDue: HighPrecMoney
+    gstDue: HighPrecMoney
+    tollFareDue: HighPrecMoney
+    tollVatDue: HighPrecMoney
+    platformFeeDue: HighPrecMoney
+    currency: Maybe Currency
+  ClearDuesStatus:
+    enum: "SUCCESS,FAILED"
+    derive: "HttpInstance"
+  ClearDuesReq:
+    paymentMethodId: Maybe PaymentMethodId
+  ClearDuesResp:
+    orderId: Maybe (Id PaymentOrder)
+    status: ClearDuesStatus
+    amountCleared: HighPrecMoney
+    currency: Currency
+    ridesCleared: "[Id Ride]"
+    errorMessage: Maybe Text
+  VpaFromNumberResp:
+    vpa: Text
+apis:
+  - GET:
+      endpoint: /payment/methods
+      auth: TokenAuth
+      response:
+        type: PaymentMethodsResponse
+  - POST:
+      endpoint: /payment/methods/{paymentMethodId}/makeDefault
+      params:
+        paymentMethodId: PaymentMethodId
+      auth: TokenAuth
+      response:
+        type: APISuccess
+  - GET:
+      endpoint: /payment/intent/setup
+      auth: TokenAuth
+      response:
+        type: SetupIntentResponse
+  - GET:
+      endpoint: /payment/intent/payment
+      auth: TokenAuth
+      response:
+        type: PaymentIntentResponse
+  - POST:
+      endpoint: /payment/{rideId}/method/{paymentMethodId}/update
+      auth: TokenAuth
+      params:
+        rideId: Id Ride
+        paymentMethodId: PaymentMethodId
+      response:
+        type: APISuccess
+  - DELETE:
+      endpoint: /payment/methods/{paymentMethodId}/delete
+      auth: TokenAuth
+      params:
+        paymentMethodId: PaymentMethodId
+      response:
+        type: APISuccess
+  - POST:
+      endpoint: /payment/{rideId}/addTip
+      auth: TokenAuth
+      params:
+        rideId: Id Ride
+      request:
+        type: AddTipRequest
+      response:
+        type: APISuccess
+  - GET:
+      endpoint : /payment/customer
+      auth: TokenAuth
+      response:
+        type: CreateCustomerResp
+  - POST:
+      endpoint: /payment/{rideId}/refundRequest/create
+      auth: TokenAuth
+      params:
+        rideId: Id Ride
+      request:
+        type: RefundRequestReq
+      response:
+        type: APISuccess
+  - GET:
+      endpoint: /payment/{rideId}/refundRequest
+      auth: TokenAuth
+      params:
+        rideId: Id Ride
+      response:
+        type: RefundRequestListResp
+  # per-component fare+tax breakdown; the refundable options feeding refundRequest/create
+  - GET:
+      endpoint: /payment/{rideId}/fareBreakup
+      auth: TokenAuth
+      params:
+        rideId: Id Ride
+      response:
+        type: FareBreakupRes
+  - GET:
+      endpoint: /payment/getDueAmount
+      auth: TokenAuth
+      response:
+        type: GetDueAmountResp
+  - POST:
+      endpoint: /payment/clearDues
+      auth: TokenAuth
+      request:
+        type: ClearDuesReq
+      response:
+        type: ClearDuesResp
+  - POST:
+      endpoint: /payment/ride/{rideId}/capture
+      auth: TokenAuth
+      params:
+        rideId: Id Ride
+      response:
+        type: APISuccess
+  - POST:
+      endpoint: /payment/verifyVpa
+      auth: TokenAuth
+      mandatoryQuery:
+        vpa: Text
+      response:
+        type: APISuccess
+  - GET:
+      endpoint: /payment/vpaFromNumber
+      auth: TokenAuth
+      response:
+        type: VpaFromNumberResp

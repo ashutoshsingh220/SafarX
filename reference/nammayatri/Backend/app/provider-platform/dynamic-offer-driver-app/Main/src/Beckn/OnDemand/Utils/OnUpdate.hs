@@ -1,0 +1,341 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module Beckn.OnDemand.Utils.OnUpdate where
+
+import qualified Beckn.ACL.Common as Common
+import qualified Beckn.OnDemand.Utils.Common as Utils
+import qualified Beckn.Types.Core.Taxi.OnUpdate.OnUpdateEvent.BookingCancelledEvent as BookingCancelledOU
+import qualified Beckn.Types.Core.Taxi.OnUpdate.OnUpdateEvent.RideCompletedEvent as OnUpdate
+import qualified BecknV2.OnDemand.Enums as Enums
+import BecknV2.OnDemand.Tags ((~=), (~=?))
+import qualified BecknV2.OnDemand.Tags as Tags
+import qualified BecknV2.OnDemand.Types as Spec
+import BecknV2.OnDemand.Utils.Payment
+import qualified Data.Text as T
+import Domain.Types
+import qualified Domain.Types.BecknConfig as DBC
+import qualified Domain.Types.Booking as DBooking
+import qualified Domain.Types.Booking as DRB
+import qualified Domain.Types.BookingCancellationReason as SBCR
+import qualified Domain.Types.FareParameters as DFParams
+import qualified Domain.Types.FarePolicy as FarePolicyD
+import Domain.Types.Merchant
+import qualified Domain.Types.MerchantPaymentMethod as DMPM
+import qualified Domain.Types.Ride as DRide
+import EulerHS.Prelude hiding (id, (%~))
+import Kernel.Types.Common hiding (mkPrice)
+import qualified Kernel.Types.Common as Common
+import Kernel.Types.Id
+import Kernel.Utils.Common hiding (mkPrice)
+import SharedLogic.FareCalculator as Fare
+import Tools.Error
+
+-- TODO::Beckn, `Payment.ON_ORDER` Not present in spec.
+mkRideCompletedPaymentType :: Maybe DMPM.PaymentMethodInfo -> Text
+mkRideCompletedPaymentType = show . maybe OnUpdate.ON_FULFILLMENT (Common.castDPaymentType . (.paymentType))
+
+showPaymentCollectedBy :: Maybe DMPM.PaymentMethodInfo -> Text
+showPaymentCollectedBy = show . maybe OnUpdate.BPP (Common.castDPaymentCollector . (.collectedBy))
+
+mkRideCompletedQuote :: MonadFlow m => DRide.Ride -> DFParams.FareParameters -> m Spec.Quotation
+mkRideCompletedQuote ride fareParams = do
+  fare' <- ride.fare & fromMaybeM (InternalError "Ride fare is not present in RideCompletedReq ride.")
+  let fare = highPrecMoneyToText fare'
+  let currency = show ride.currency
+      price =
+        Spec.Price
+          { priceCurrency = Just currency,
+            priceValue = Just fare,
+            priceComputedValue = Nothing,
+            priceMaximumValue = Nothing,
+            priceMinimumValue = Nothing,
+            priceOfferedValue = Nothing
+          }
+      fareBreakup =
+        Fare.mkFareParamsBreakups (mkPrice' currency) mkBreakupItem fareParams
+          & filter (filterRequiredBreakups $ DFParams.getFareParametersType fareParams)
+      tipBreakup = mkTipBreakup currency ride.tipAmount
+      breakup = fareBreakup <> tipBreakup
+  pure
+    Spec.Quotation
+      { quotationBreakup = Just breakup,
+        quotationPrice = Just price,
+        quotationTtl = Nothing
+      }
+  where
+    mkPrice' currency val =
+      Spec.Price
+        { priceCurrency = Just currency,
+          priceValue = Just $ highPrecMoneyToText val,
+          priceComputedValue = Nothing,
+          priceMaximumValue = Nothing,
+          priceMinimumValue = Nothing,
+          priceOfferedValue = Nothing
+        }
+
+    mkBreakupItem :: Text -> Spec.Price -> Spec.QuotationBreakupInner
+    mkBreakupItem title price =
+      Spec.QuotationBreakupInner
+        { quotationBreakupInnerTitle = Just title,
+          quotationBreakupInnerPrice = Just price
+        }
+
+    mkTipBreakup :: Text -> Maybe HighPrecMoney -> [Spec.QuotationBreakupInner]
+    mkTipBreakup currency mTipAmount = maybeToList $ do
+      tipAmt <- mTipAmount
+      guard (tipAmt > 0)
+      pure $
+        Spec.QuotationBreakupInner
+          { quotationBreakupInnerTitle = Just (show Enums.BUYER_ADDITIONAL_AMOUNT),
+            quotationBreakupInnerPrice =
+              Just $
+                Spec.Price
+                  { priceCurrency = Just currency,
+                    priceValue = Just $ highPrecMoneyToText tipAmt,
+                    priceComputedValue = Nothing,
+                    priceMaximumValue = Nothing,
+                    priceMinimumValue = Nothing,
+                    priceOfferedValue = Nothing
+                  }
+          }
+
+    filterRequiredBreakups fParamsType breakup = do
+      let title = breakup.quotationBreakupInnerTitle -- TODO::Beckn, all the titles are not present in spec.
+      case fParamsType of
+        DFParams.Progressive ->
+          title
+            `elem` [ Just (show Enums.BASE_FARE),
+                     Just (show Enums.SERVICE_CHARGE),
+                     Just (show Enums.DEAD_KILOMETER_FARE),
+                     Just (show Enums.DISTANCE_FARE),
+                     Just (show Enums.DRIVER_SELECTED_FARE),
+                     Just (show Enums.CUSTOMER_SELECTED_FARE),
+                     Just (show Enums.TOTAL_FARE),
+                     Just (show Enums.CONGESTION_CHARGE),
+                     Just (show Enums.WAITING_OR_PICKUP_CHARGES),
+                     Just (show Enums.EXTRA_TIME_FARE),
+                     Just (show Enums.RIDE_DURATION_FARE),
+                     Just (show Enums.CANCELLATION_CHARGES),
+                     Just (show Enums.PET_CHARGES),
+                     Just (show Enums.BUSINESS_DISCOUNT),
+                     Just (show Enums.PERSONAL_DISCOUNT),
+                     Just (show Enums.TOLL_CHARGES),
+                     Just (show Enums.PARKING_CHARGE),
+                     Just (show Enums.RIDE_STOP_CHARGES),
+                     Just (show Enums.PER_STOP_CHARGES),
+                     Just (show Enums.NIGHT_SHIFT_CHARGE),
+                     Just (show Enums.LUGGAGE_CHARGE),
+                     Just (show Enums.DRIVER_ALLOWANCE),
+                     Just (show Enums.AIRPORT_CONVENIENCE_FEE),
+                     Just (show Enums.RETURN_FEE),
+                     Just (show Enums.BOOTH_CHARGE),
+                     Just (show Enums.RIDE_VAT),
+                     Just (show Enums.TOLL_VAT),
+                     Just (show Enums.TOLL_FARE_TAX_EXCLUSIVE),
+                     Just (show Enums.TOLL_FARE_TAX),
+                     Just (show Enums.RIDE_FARE_DISCOUNT_APPLICABLE_TAX_EXCLUSIVE),
+                     Just (show Enums.RIDE_FARE_DISCOUNT_APPLICABLE_TAX),
+                     Just (show Enums.RIDE_FARE_NON_DISCOUNT_APPLICABLE_TAX_EXCLUSIVE),
+                     Just (show Enums.RIDE_FARE_NON_DISCOUNT_APPLICABLE_TAX),
+                     Just (show Enums.CANCELLATION_FEE_TAX_EXCLUSIVE),
+                     Just (show Enums.CANCELLATION_TAX),
+                     Just (show Enums.PARKING_CHARGE_TAX_EXCLUSIVE),
+                     Just (show Enums.PARKING_CHARGE_TAX)
+                   ]
+        DFParams.Slab ->
+          title
+            `elem` [ Just (show Enums.BASE_FARE),
+                     Just (show Enums.SERVICE_CHARGE),
+                     Just (show Enums.WAITING_OR_PICKUP_CHARGES),
+                     Just (show Enums.PLATFORM_FEE),
+                     Just (show Enums.SGST),
+                     Just (show Enums.CGST),
+                     Just (show Enums.CONGESTION_CHARGE),
+                     Just (show Enums.FIXED_GOVERNMENT_RATE),
+                     Just (show Enums.TOTAL_FARE),
+                     Just (show Enums.CUSTOMER_SELECTED_FARE),
+                     Just (show Enums.NIGHT_SHIFT_CHARGE),
+                     Just (show Enums.BUSINESS_DISCOUNT),
+                     Just (show Enums.PERSONAL_DISCOUNT),
+                     Just (show Enums.EXTRA_TIME_FARE),
+                     Just (show Enums.CANCELLATION_CHARGES),
+                     Just (show Enums.TOLL_CHARGES),
+                     Just (show Enums.PET_CHARGES),
+                     Just (show Enums.PARKING_CHARGE),
+                     Just (show Enums.LUGGAGE_CHARGE),
+                     Just (show Enums.DRIVER_ALLOWANCE),
+                     Just (show Enums.AIRPORT_CONVENIENCE_FEE),
+                     Just (show Enums.RETURN_FEE),
+                     Just (show Enums.BOOTH_CHARGE),
+                     Just (show Enums.RIDE_VAT),
+                     Just (show Enums.TOLL_VAT),
+                     Just (show Enums.TOLL_FARE_TAX_EXCLUSIVE),
+                     Just (show Enums.TOLL_FARE_TAX),
+                     Just (show Enums.RIDE_FARE_DISCOUNT_APPLICABLE_TAX_EXCLUSIVE),
+                     Just (show Enums.RIDE_FARE_DISCOUNT_APPLICABLE_TAX),
+                     Just (show Enums.RIDE_FARE_NON_DISCOUNT_APPLICABLE_TAX_EXCLUSIVE),
+                     Just (show Enums.RIDE_FARE_NON_DISCOUNT_APPLICABLE_TAX),
+                     Just (show Enums.CANCELLATION_FEE_TAX_EXCLUSIVE),
+                     Just (show Enums.CANCELLATION_TAX),
+                     Just (show Enums.PARKING_CHARGE_TAX_EXCLUSIVE),
+                     Just (show Enums.PARKING_CHARGE_TAX)
+                   ]
+        DFParams.Rental ->
+          title
+            `elem` [ Just (show Enums.BASE_FARE),
+                     Just (show Enums.SERVICE_CHARGE),
+                     Just (show Enums.DEAD_KILOMETER_FARE),
+                     Just (show Enums.DIST_BASED_FARE),
+                     Just (show Enums.TIME_BASED_FARE),
+                     Just (show Enums.DRIVER_SELECTED_FARE),
+                     Just (show Enums.CUSTOMER_SELECTED_FARE),
+                     Just (show Enums.TOTAL_FARE),
+                     Just (show Enums.WAITING_OR_PICKUP_CHARGES),
+                     Just (show Enums.NIGHT_SHIFT_CHARGE),
+                     Just (show Enums.EXTRA_TIME_FARE),
+                     Just (show Enums.BUSINESS_DISCOUNT),
+                     Just (show Enums.PERSONAL_DISCOUNT),
+                     Just (show Enums.CANCELLATION_CHARGES),
+                     Just (show Enums.PET_CHARGES),
+                     Just (show Enums.PARKING_CHARGE),
+                     Just (show Enums.LUGGAGE_CHARGE),
+                     Just (show Enums.DRIVER_ALLOWANCE),
+                     Just (show Enums.AIRPORT_CONVENIENCE_FEE),
+                     Just (show Enums.RETURN_FEE),
+                     Just (show Enums.BOOTH_CHARGE),
+                     Just (show Enums.RIDE_VAT),
+                     Just (show Enums.TOLL_VAT),
+                     Just (show Enums.TOLL_FARE_TAX_EXCLUSIVE),
+                     Just (show Enums.TOLL_FARE_TAX),
+                     Just (show Enums.RIDE_FARE_DISCOUNT_APPLICABLE_TAX_EXCLUSIVE),
+                     Just (show Enums.RIDE_FARE_DISCOUNT_APPLICABLE_TAX),
+                     Just (show Enums.RIDE_FARE_NON_DISCOUNT_APPLICABLE_TAX_EXCLUSIVE),
+                     Just (show Enums.RIDE_FARE_NON_DISCOUNT_APPLICABLE_TAX),
+                     Just (show Enums.CANCELLATION_FEE_TAX_EXCLUSIVE),
+                     Just (show Enums.CANCELLATION_TAX),
+                     Just (show Enums.PARKING_CHARGE_TAX_EXCLUSIVE),
+                     Just (show Enums.PARKING_CHARGE_TAX)
+                   ]
+        DFParams.InterCity ->
+          title
+            `elem` [ Just (show Enums.BASE_FARE),
+                     Just (show Enums.SERVICE_CHARGE),
+                     Just (show Enums.DEAD_KILOMETER_FARE),
+                     Just (show Enums.DIST_BASED_FARE),
+                     Just (show Enums.TIME_BASED_FARE),
+                     Just (show Enums.DRIVER_SELECTED_FARE),
+                     Just (show Enums.CUSTOMER_SELECTED_FARE),
+                     Just (show Enums.TOTAL_FARE),
+                     Just (show Enums.WAITING_OR_PICKUP_CHARGES),
+                     Just (show Enums.NIGHT_SHIFT_CHARGE),
+                     Just (show Enums.EXTRA_TIME_FARE),
+                     Just (show Enums.EXTRA_DISTANCE_FARE),
+                     Just (show Enums.CANCELLATION_CHARGES),
+                     Just (show Enums.PET_CHARGES),
+                     Just (show Enums.LUGGAGE_CHARGE),
+                     Just (show Enums.DRIVER_ALLOWANCE),
+                     Just (show Enums.AIRPORT_CONVENIENCE_FEE),
+                     Just (show Enums.RETURN_FEE),
+                     Just (show Enums.BOOTH_CHARGE),
+                     Just (show Enums.BUSINESS_DISCOUNT),
+                     Just (show Enums.PERSONAL_DISCOUNT),
+                     Just (show Enums.PARKING_CHARGE),
+                     Just (show Enums.RIDE_VAT),
+                     Just (show Enums.TOLL_VAT),
+                     Just (show Enums.TOLL_FARE_TAX_EXCLUSIVE),
+                     Just (show Enums.TOLL_FARE_TAX),
+                     Just (show Enums.RIDE_FARE_DISCOUNT_APPLICABLE_TAX_EXCLUSIVE),
+                     Just (show Enums.RIDE_FARE_DISCOUNT_APPLICABLE_TAX),
+                     Just (show Enums.RIDE_FARE_NON_DISCOUNT_APPLICABLE_TAX_EXCLUSIVE),
+                     Just (show Enums.RIDE_FARE_NON_DISCOUNT_APPLICABLE_TAX),
+                     Just (show Enums.CANCELLATION_FEE_TAX_EXCLUSIVE),
+                     Just (show Enums.CANCELLATION_TAX),
+                     Just (show Enums.PARKING_CHARGE_TAX_EXCLUSIVE),
+                     Just (show Enums.PARKING_CHARGE_TAX)
+                   ]
+        _ -> True
+
+mkPaymentParams :: Maybe DMPM.PaymentMethodInfo -> Maybe Text -> Merchant -> DBC.BecknConfig -> DRB.Booking -> Spec.Payment
+mkPaymentParams _paymentMethodInfo _paymentUrl merchant bppConfig booking = do
+  let mPrice = Just $ Common.mkPrice (Just booking.currency) booking.estimatedFare
+  let mkParams :: (Maybe BknPaymentParams) = decodeFromText =<< bppConfig.paymentParamsJson
+  mkPayment (show merchant.city) (show bppConfig.collectedBy) Enums.NOT_PAID mPrice booking.paymentId mkParams bppConfig.settlementType bppConfig.settlementWindow bppConfig.staticTermsUrl bppConfig.buyerFinderFee False Nothing Nothing
+
+mkPaymentParamsSoftUpdate :: Maybe DMPM.PaymentMethodInfo -> Maybe Text -> Merchant -> DBC.BecknConfig -> HighPrecMoney -> Currency -> Spec.Payment
+mkPaymentParamsSoftUpdate _paymentMethodInfo _paymentUrl merchant bppConfig estimatedFare currency = do
+  let mPrice = Just $ Common.mkPrice (Just currency) estimatedFare
+  let mkParams :: (Maybe BknPaymentParams) = decodeFromText =<< bppConfig.paymentParamsJson
+  mkPayment (show merchant.city) (show bppConfig.collectedBy) Enums.NOT_PAID mPrice Nothing mkParams bppConfig.settlementType bppConfig.settlementWindow bppConfig.staticTermsUrl bppConfig.buyerFinderFee False Nothing Nothing
+
+mkDistanceTagGroup :: MonadFlow m => DRide.Ride -> m (Maybe [Spec.TagGroup])
+mkDistanceTagGroup ride = do
+  chargeableDistance :: HighPrecMeters <-
+    realToFrac <$> ride.chargeableDistance
+      & fromMaybeM (InternalError "Ride chargeable distance is not present in OnUpdateBuildReq ride.")
+  let traveledDistance :: HighPrecMeters = ride.traveledDistance
+  let endOdometerReading :: Maybe Centesimal = (.value) <$> ride.endOdometerReading
+  pure $
+    Tags.buildTagGroups
+      [ Tags.CHARGEABLE_DISTANCE ~= show chargeableDistance,
+        Tags.TRAVELED_DISTANCE ~= show traveledDistance,
+        Tags.END_ODOMETER_READING ~=? (show <$> endOdometerReading)
+      ]
+
+mkPreviousCancellationReasonsTags :: SBCR.CancellationSource -> Maybe [Spec.TagGroup]
+mkPreviousCancellationReasonsTags cancellationSource =
+  Tags.buildTagGroups
+    [ Tags.CANCELLATION_REASON ~= show (castCancellationSource cancellationSource)
+    ]
+
+castCancellationSource :: SBCR.CancellationSource -> BookingCancelledOU.CancellationSource
+castCancellationSource = \case
+  SBCR.ByUser -> BookingCancelledOU.ByUser
+  SBCR.ByDriver -> BookingCancelledOU.ByDriver
+  SBCR.ByMerchant -> BookingCancelledOU.ByMerchant
+  SBCR.ByAllocator -> BookingCancelledOU.ByAllocator
+  SBCR.ByApplication -> BookingCancelledOU.ByApplication
+  SBCR.ByFleetOwner -> BookingCancelledOU.ByFleetOwner
+
+mkNewMessageTags :: Text -> Maybe [Spec.TagGroup]
+mkNewMessageTags message =
+  Tags.buildTagGroups
+    [ Tags.MESSAGE ~= message
+    ]
+
+mkSafetyAlertTags :: Maybe Enums.SafetyReasonCode -> Maybe [Spec.TagGroup]
+mkSafetyAlertTags reason =
+  Tags.buildTagGroups
+    [ Tags.SAFETY_REASON_CODE ~= T.pack (maybe "" show reason)
+    ]
+
+mkUpdatedDistanceTags :: Maybe HighPrecMeters -> Maybe [Spec.TagGroup]
+mkUpdatedDistanceTags = Tags.mkSingleTagGroup Tags.UPDATED_ESTIMATED_DISTANCE
+
+tfItems :: DRide.Ride -> DBooking.Booking -> Utils.MerchantShortId -> Maybe Meters -> Maybe FarePolicyD.FarePolicy -> Maybe Text -> Maybe [Spec.Item]
+tfItems ride booking shortId estimatedDistance mbFarePolicy mbPaymentId =
+  Just
+    [ Spec.Item
+        { itemDescriptor = Utils.tfItemDescriptor booking,
+          itemFulfillmentIds = Just [ride.id.getId],
+          itemId = Just $ maybe (Common.mkItemId shortId booking.vehicleServiceTier) getId (booking.estimateId),
+          itemCategoryIds = Just [Utils.tripCategoryToCategoryCode booking.tripCategory],
+          itemLocationIds = Nothing,
+          itemPaymentIds = Utils.tfPaymentId mbPaymentId,
+          itemPrice = Utils.tfItemPrice booking.estimatedFare booking.currency,
+          itemTags = Utils.mkRateCardTag estimatedDistance booking.fareParams.customerCancellationDues Nothing booking.estimatedFare booking.fareParams.congestionChargeViaDp mbFarePolicy Nothing Nothing Nothing,
+          itemAddOns = Nothing,
+          itemCancellationTerms = Nothing
+        }
+    ]

@@ -1,0 +1,64 @@
+{-# LANGUAGE ApplicativeDo #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
+module Lib.Finance.Domain.Types.Invoice where
+
+import Data.Aeson
+import qualified Domain.Types.Invoice
+import Kernel.Prelude
+import qualified Kernel.Types.Common
+import qualified Kernel.Types.Id
+import Kernel.Utils.TH
+import qualified Lib.Finance.Core.Types
+import qualified Tools.Beam.UtilsTH
+
+data Invoice = Invoice
+  { createdAt :: Kernel.Prelude.UTCTime,
+    createdBy :: Kernel.Prelude.Maybe Lib.Finance.Core.Types.ActorType,
+    createdById :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    currency :: Kernel.Types.Common.Currency,
+    dueAt :: Kernel.Prelude.Maybe Kernel.Prelude.UTCTime,
+    entityReferenceId :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    id :: Kernel.Types.Id.Id Lib.Finance.Domain.Types.Invoice.Invoice,
+    invoiceNumber :: Kernel.Prelude.Text,
+    invoiceType :: Domain.Types.Invoice.InvoiceType,
+    irn :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    issuedAt :: Kernel.Prelude.UTCTime,
+    issuedByAddress :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    issuedById :: Kernel.Prelude.Text,
+    issuedByName :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    issuedByType :: Kernel.Prelude.Text,
+    issuedToAddress :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    issuedToId :: Kernel.Prelude.Text,
+    issuedToName :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    issuedToType :: Domain.Types.Invoice.IssuedToType,
+    lineItems :: Data.Aeson.Value,
+    merchantGstin :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    merchantId :: Kernel.Prelude.Text,
+    merchantOperatingCityId :: Kernel.Prelude.Text,
+    paymentMode :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    periodEnd :: Kernel.Prelude.Maybe Kernel.Prelude.UTCTime,
+    periodStart :: Kernel.Prelude.Maybe Kernel.Prelude.UTCTime,
+    referenceId :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    referenceInvoiceNumber :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    signedQRCode :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    status :: Lib.Finance.Domain.Types.Invoice.InvoiceStatus,
+    subtotal :: Kernel.Types.Common.HighPrecMoney,
+    supplierAddress :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    supplierGSTIN :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    supplierId :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    supplierName :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    supplierTaxNo :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    taxBreakdown :: Kernel.Prelude.Maybe Data.Aeson.Value,
+    totalAmount :: Kernel.Types.Common.HighPrecMoney,
+    updatedBy :: Kernel.Prelude.Maybe Lib.Finance.Core.Types.ActorType,
+    updatedById :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    updatedAt :: Kernel.Prelude.UTCTime
+  }
+  deriving (Generic)
+
+data InvoiceStatus = Draft | Issued | Paid | PartiallyPaid | Cancelled | Voided deriving (Eq, Ord, Show, Read, Generic, ToJSON, FromJSON, ToSchema, ToParamSchema)
+
+$(Tools.Beam.UtilsTH.mkBeamInstancesForEnumAndList (''InvoiceStatus))
+
+$(mkHttpInstancesForEnum (''InvoiceStatus))

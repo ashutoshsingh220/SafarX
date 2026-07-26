@@ -1,0 +1,491 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module SharedLogic.SpecialLocationUpsert
+  ( SpecialLocationCSVRow (..),
+    upsertSpecialLocationsFromCsv,
+    readCsv,
+    makeSpecialLocation,
+    groupSpecialLocationAndGates,
+    processSpecialLocationAndGatesGroup,
+  )
+where
+
+import qualified "dashboard-helper-api" API.Types.ProviderPlatform.Management.Merchant as Common
+import Control.Applicative
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
+import Data.Csv
+import qualified Data.List as DL
+import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import qualified Data.Vector as V
+import qualified Domain.Types.MerchantOperatingCity as DMOC
+import Environment
+import qualified EulerHS.Language as L
+import Kernel.External.Maps.Types (LatLong (..))
+import Kernel.Prelude
+import Kernel.Storage.Esqueleto (runTransaction)
+import qualified Kernel.Types.Beckn.Context as Context
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import Kernel.Utils.Geometry
+import qualified Lib.GateInfo.Geometry as GGeom
+import qualified Lib.Queries.GateInfo as QGI
+import qualified Lib.Queries.SpecialLocation as QSL
+import qualified Lib.Queries.SpecialLocationGeom as QSLG
+import qualified Lib.Queries.SpecialLocationPriority as QSLP
+import qualified Lib.Types.GateInfo as DGI
+import qualified Lib.Types.SpecialLocation as DSL
+import qualified Lib.Types.SpecialLocation as SL
+import qualified Lib.Types.SpecialLocationPriority as SLP
+import Storage.Beam.SpecialZone ()
+import Tools.Error
+
+---------------------------------------------------------------------
+-- CSV Row Data Type
+---------------------------------------------------------------------
+data SpecialLocationCSVRow = SpecialLocationCSVRow
+  { city :: Text,
+    locationName :: Text,
+    enabled :: Text,
+    locationFileName :: Text,
+    locationType :: Text,
+    category :: Text,
+    gateInfoName :: Text,
+    gateInfoFileName :: Text,
+    gateInfoLat :: Text,
+    gateInfoLon :: Text,
+    gateInfoDefaultDriverExtra :: Text,
+    gateInfoAddress :: Text,
+    gateInfoHasGeom :: Text,
+    gateInfoCanQueueUpOnGate :: Text,
+    gateInfoType :: Text,
+    gateInfoGateTags :: Text,
+    gateInfoWalkDescription :: Text,
+    gateInfoEntryFeeAmount :: Maybe Text,
+    priority :: Text,
+    pickupPriority :: Text,
+    dropPriority :: Text,
+    specialLocationId :: Text,
+    isQueueEnabled :: Maybe Text,
+    supportNumber :: Maybe Text,
+    gateInfoMinDriverThreshold :: Maybe Text,
+    gateInfoDemandThreshold :: Maybe Text,
+    gateInfoNotificationCooldownInSec :: Maybe Text,
+    gateInfoMaxRideSkipsBeforeQueueRemoval :: Maybe Text,
+    gateInfoPickupZoneArrivalTimeoutInSec :: Maybe Text,
+    gateInfoPickupRequestResponseTimeoutInSec :: Maybe Text,
+    gateInfoMaxDriverThreshold :: Maybe Text,
+    gateInfoMinDriverThresholdsJson :: Maybe Text,
+    gateInfoMaxDriverThresholdsJson :: Maybe Text,
+    gateInfoDemandThresholdsJson :: Maybe Text,
+    gateInfoNavigationInstructionsJson :: Maybe Text,
+    gateInfoId :: Maybe Text,
+    gateInfoNotificationActiveTillInSec :: Maybe Text,
+    enforceTollRoute :: Maybe Text,
+    render :: Maybe Text,
+    fetchAllGateFareProduct :: Maybe Text,
+    enableQueueFilter :: Maybe Text,
+    paymentModes :: Maybe Text,
+    fareSettlementType :: Maybe Text,
+    boothSpecificFleet :: Maybe Text
+  }
+  deriving (Show)
+
+instance FromNamedRecord SpecialLocationCSVRow where
+  parseNamedRecord r = do
+    city <- r .: "city"
+    locationName <- r .: "location_name"
+    enabled <- r .: "enabled"
+    locationFileName <- r .: "location_file_name"
+    locationType <- r .: "location_type"
+    category <- r .: "category"
+    gateInfoName <- r .: "gate_info_name"
+    gateInfoFileName <- r .: "gate_info_file_name"
+    gateInfoLat <- r .: "gate_info_lat"
+    gateInfoLon <- r .: "gate_info_lon"
+    gateInfoDefaultDriverExtra <- r .: "gate_info_default_driver_extra"
+    gateInfoAddress <- r .: "gate_info_address"
+    gateInfoHasGeom <- r .: "gate_info_has_geom"
+    gateInfoCanQueueUpOnGate <- r .: "gate_info_can_queue_up_on_gate"
+    gateInfoType <- r .: "gate_info_type"
+    gateInfoGateTags <- r .: "gate_info_tags"
+    gateInfoWalkDescription <- r .: "gate_info_walk_description"
+    gateInfoEntryFeeAmount <- optional (r .: "gate_info_entry_fee_amount")
+    priority <- r .: "priority"
+    pickupPriority <- r .: "pickup_priority"
+    dropPriority <- r .: "drop_priority"
+    specialLocationId <- r .: "special_location_id"
+    isQueueEnabled <- optional (r .: "is_queue_enabled")
+    supportNumber <- optional (r .: "support_number")
+    gateInfoMinDriverThreshold <- optional (r .: "gate_info_min_driver_threshold")
+    gateInfoDemandThreshold <- optional (r .: "gate_info_demand_threshold")
+    gateInfoNotificationCooldownInSec <- optional (r .: "gate_info_notification_cooldown_in_sec")
+    gateInfoMaxRideSkipsBeforeQueueRemoval <- optional (r .: "gate_info_max_ride_skips_before_queue_removal")
+    gateInfoPickupZoneArrivalTimeoutInSec <- optional (r .: "gate_info_pickup_zone_arrival_timeout_in_sec")
+    gateInfoPickupRequestResponseTimeoutInSec <- optional (r .: "gate_info_pickup_request_response_timeout_in_sec")
+    gateInfoMaxDriverThreshold <- optional (r .: "gate_info_max_driver_threshold")
+    gateInfoMinDriverThresholdsJson <- optional (r .: "gate_info_min_driver_thresholds")
+    gateInfoMaxDriverThresholdsJson <- optional (r .: "gate_info_max_driver_thresholds")
+    gateInfoDemandThresholdsJson <- optional (r .: "gate_info_demand_thresholds")
+    gateInfoNavigationInstructionsJson <- optional (r .: "gate_info_navigation_instructions")
+    gateInfoId <- optional (r .: "gate_info_id")
+    gateInfoNotificationActiveTillInSec <- optional (r .: "gate_info_notification_active_till_in_sec")
+    enforceTollRoute <- optional (r .: "enforce_toll_route")
+    render <- optional (r .: "render")
+    fetchAllGateFareProduct <- optional (r .: "fetch_all_gate_fare_product")
+    enableQueueFilter <- optional (r .: "enable_queue_filter")
+    paymentModes <- optional (r .: "payment_modes")
+    fareSettlementType <- optional (r .: "fare_settlement_type")
+    boothSpecificFleet <- optional (r .: "booth_specific_fleet")
+    pure SpecialLocationCSVRow {..}
+
+---------------------------------------------------------------------
+-- CSV Helper Functions
+---------------------------------------------------------------------
+cleanField :: Text -> Maybe Text
+cleanField t =
+  case T.strip t of
+    "" -> Nothing
+    s -> Just s
+
+readCSVField :: Read a => Int -> Text -> Text -> Flow a
+readCSVField idx fieldValue fieldName =
+  cleanField fieldValue >>= readMaybe . T.unpack & fromMaybeM (InvalidRequest $ "Invalid " <> fieldName <> ": " <> show fieldValue <> " at row: " <> show idx)
+
+readMaybeCSVField :: Read a => Int -> Text -> Text -> Maybe a
+readMaybeCSVField _ fieldValue _ =
+  cleanField fieldValue >>= readMaybe . T.unpack
+
+cleanCSVField :: Int -> Text -> Text -> Flow Text
+cleanCSVField idx fieldValue fieldName =
+  cleanField fieldValue & fromMaybeM (InvalidRequest $ "Invalid " <> fieldName <> ": " <> show fieldValue <> " at row: " <> show idx)
+
+cleanMaybeCSVField :: Int -> Text -> Text -> Maybe Text
+cleanMaybeCSVField _ fieldValue _ = cleanField fieldValue
+
+parseJsonMap :: Maybe Text -> Maybe (Map.Map Text Int)
+parseJsonMap mbT = do
+  t <- mbT >>= cleanField
+  Aeson.decodeStrict (TE.encodeUtf8 t)
+
+parseJsonTextMap :: Maybe Text -> Maybe (Map.Map Text Text)
+parseJsonTextMap mbT = do
+  t <- mbT >>= cleanField
+  Aeson.decodeStrict (TE.encodeUtf8 t)
+
+parseBoolMap :: Maybe Text -> Maybe (Map.Map Text Bool)
+parseBoolMap mbT = do
+  t <- mbT >>= cleanField
+  Aeson.decodeStrict (TE.encodeUtf8 t)
+
+parseGateTags :: Text -> Maybe [Text]
+parseGateTags fieldValue =
+  case cleanField fieldValue of
+    Nothing -> Nothing
+    Just tags ->
+      let tagList = filter (not . T.null) $ map T.strip $ T.splitOn "," tags
+       in if null tagList then Nothing else Just tagList
+
+-- | Resolve the payment-modes CSV cell, throwing on an invalid token (rather than
+--   silently dropping it). Returns 'Nothing' when the cell is omitted/blank so the
+--   merge step can distinguish "not provided" (preserve existing / default on create)
+--   from an explicit value. Parsing/normalization live in 'SL.parsePaymentModes'.
+resolvePaymentModes :: Int -> Maybe Text -> Flow (Maybe [SL.PaymentMode])
+resolvePaymentModes idx mbFieldValue =
+  case SL.parsePaymentModes mbFieldValue of
+    Left badToken -> throwError $ InvalidRequest $ "Invalid payment mode: " <> badToken <> " at row: " <> show idx
+    Right mbModes -> pure mbModes
+
+---------------------------------------------------------------------
+-- Main Upsert Function
+---------------------------------------------------------------------
+upsertSpecialLocationsFromCsv ::
+  Context.City ->
+  DMOC.MerchantOperatingCity ->
+  FilePath ->
+  [(Text, FilePath)] ->
+  [(Text, FilePath)] ->
+  Flow Common.APISuccessWithUnprocessedEntities
+upsertSpecialLocationsFromCsv opCity merchantOpCity csvFile locationGeoms gateGeoms = do
+  flatSpecialLocationAndGateInfo <- readCsv csvFile locationGeoms gateGeoms merchantOpCity
+  let groupedSpecialLocationAndGateInfo = groupSpecialLocationAndGates flatSpecialLocationAndGateInfo
+  unprocessedEntities <-
+    foldlM
+      ( \unprocessedEntities specialLocationAndGates -> do
+          withTryCatch
+            "processSpecialLocationAndGatesGroup"
+            (processSpecialLocationAndGatesGroup opCity merchantOpCity specialLocationAndGates)
+            >>= \case
+              Left err -> return $ unprocessedEntities <> ["Unable to add special location : " <> show err]
+              Right _ -> return unprocessedEntities
+      )
+      []
+      groupedSpecialLocationAndGateInfo
+  return $ Common.APISuccessWithUnprocessedEntities unprocessedEntities
+
+---------------------------------------------------------------------
+-- Read CSV
+---------------------------------------------------------------------
+readCsv ::
+  FilePath ->
+  [(Text, FilePath)] ->
+  [(Text, FilePath)] ->
+  DMOC.MerchantOperatingCity ->
+  Flow [(Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Int, Int, Maybe Text)]
+readCsv csvFile locationGeomFiles gateGeomFiles merchantOpCity = do
+  csvData <- L.runIO $ BS.readFile csvFile
+  case (decodeByName $ LBS.fromStrict csvData :: Either String (Header, V.Vector SpecialLocationCSVRow)) of
+    Left err -> throwError (InvalidRequest $ show err)
+    Right (_, v) -> V.imapM (makeSpecialLocation locationGeomFiles gateGeomFiles merchantOpCity) v >>= (pure . V.toList)
+
+---------------------------------------------------------------------
+-- Make Special Location
+---------------------------------------------------------------------
+makeSpecialLocation ::
+  [(Text, FilePath)] ->
+  [(Text, FilePath)] ->
+  DMOC.MerchantOperatingCity ->
+  Int ->
+  SpecialLocationCSVRow ->
+  Flow (Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Int, Int, Maybe Text)
+makeSpecialLocation locationGeomFiles gateGeomFiles merchantOpCity idx row = do
+  now <- getCurrentTime
+  city :: Context.City <- readCSVField idx row.city "City"
+  locationName :: Text <- cleanCSVField idx row.locationName "Location Name"
+  locationFileName :: Text <- cleanCSVField idx row.locationFileName "Location File Name"
+  (_, locationGeomFile) <- find (\(geomFileName, _) -> locationFileName == geomFileName) locationGeomFiles & fromMaybeM (InvalidRequest $ "KML file missing for location: " <> locationName)
+  locationGeom <- getGeomFromKML locationGeomFile >>= fromMaybeM (InvalidRequest $ "Not able to convert the given KML to PostGis geom for location: " <> locationName)
+  locationGeomGeoJson <- GGeom.getGeoJsonFromKML locationGeomFile >>= fromMaybeM (InvalidRequest $ "Not able to convert the given KML to GeoJSON for location: " <> locationName)
+  category :: Text <- cleanCSVField idx row.category "Category"
+  let locationType :: Maybe SL.SpecialLocationType = readMaybeCSVField idx row.locationType "Location Type"
+      mbSpecialLocationId :: Maybe Text = cleanField row.specialLocationId
+  enabled :: Bool <- readCSVField idx row.enabled "Enabled"
+  let priority :: Maybe Int = readMaybeCSVField idx row.priority "Priority"
+      mbIsQueueEnabled :: Maybe Bool = readMaybeCSVField idx (fromMaybe "" row.isQueueEnabled) "Is Queue Enabled"
+      supportNumber :: Maybe Text = cleanMaybeCSVField idx (fromMaybe "" row.supportNumber) "Support Number"
+      boothSpecificFleet :: Maybe Text = cleanMaybeCSVField idx (fromMaybe "" row.boothSpecificFleet) "Booth Specific Fleet"
+      mbRender :: Maybe DSL.RenderType = readMaybeCSVField idx (fromMaybe "" row.render) "Render"
+      mbFareSettlementType :: Maybe DSL.FareSettlementType = readMaybeCSVField idx (fromMaybe "" row.fareSettlementType) "Payment Collection Mode"
+      mbFetchAllGateFareProduct :: Maybe Bool = readMaybeCSVField idx (fromMaybe "" row.fetchAllGateFareProduct) "Fetch All Gate Fare Product"
+  pickupPriority :: Int <- readCSVField idx row.pickupPriority "Pickup Priority"
+  dropPriority :: Int <- readCSVField idx row.dropPriority "Drop Priority"
+  gateInfoId <- maybe generateGUID (pure . Id) (cleanField =<< row.gateInfoId)
+  gateInfoName :: Text <- cleanCSVField idx row.gateInfoName "Gate Info (name)"
+  gateInfoLat :: Double <- readCSVField idx row.gateInfoLat "Gate Info (latitude)"
+  gateInfoLon :: Double <- readCSVField idx row.gateInfoLon "Gate Info (longitude)"
+  let gateInfoDefaultDriverExtra :: Maybe Int = readMaybeCSVField idx row.gateInfoDefaultDriverExtra "Gate Info (default_driver_extra)"
+      gateInfoAddress :: Maybe Text = cleanMaybeCSVField idx row.gateInfoAddress "Gate Info (address)"
+      gateInfoGateTags :: Maybe [Text] = parseGateTags row.gateInfoGateTags
+      gateInfoWalkDescription :: Maybe Text = cleanMaybeCSVField idx row.gateInfoWalkDescription "Gate Info (walk_description)"
+      gateInfoEntryFeeAmount :: Maybe Double = row.gateInfoEntryFeeAmount >>= \v -> readMaybeCSVField idx v "Gate Info (entry_fee_amount)"
+  gateInfoType :: DGI.GateType <- readCSVField idx row.gateInfoType "Gate Info (type)"
+  gateInfoHasGeom :: Bool <- readCSVField idx row.gateInfoHasGeom "Gate Info (geom)"
+  gateInfoCanQueueUpOnGate :: Bool <- readCSVField idx row.gateInfoCanQueueUpOnGate "Gate Info (can_queue_up_on_gate)"
+  let mbEnforceTollRoute :: Maybe Bool = readMaybeCSVField idx (fromMaybe "" row.enforceTollRoute) "Enforce Toll Route"
+  gateInfoGeom <- do
+    if gateInfoHasGeom
+      then do
+        gateInfoFileName :: Text <- cleanCSVField idx row.gateInfoFileName "Gate Info (file_name)"
+        (_, gateInfoGeomFile) <- find (\(gateFileName, _) -> gateInfoFileName == gateFileName) gateGeomFiles & fromMaybeM (InvalidRequest $ "KML file missing for gateInfo: " <> gateInfoName)
+        gateGeom <- GGeom.getGeoJsonFromKML gateInfoGeomFile >>= fromMaybeM (InvalidRequest $ "Not able to convert the given KML to GeoJSON for gateInfo: " <> gateInfoName)
+        return $ Just gateGeom
+      else return Nothing
+  resolvedPaymentModes <- resolvePaymentModes idx row.paymentModes
+  let specialLocation =
+        DSL.SpecialLocation
+          { id = Id locationName,
+            enabled = enabled,
+            isOpenMarketEnabled = True,
+            locationName = locationName,
+            category = category,
+            merchantId = Just (cast merchantOpCity.merchantId),
+            merchantOperatingCityId = Just (cast merchantOpCity.id),
+            linkedLocationsIds = [],
+            gates = [],
+            priority = fromMaybe 0 priority,
+            locationType = fromMaybe SL.Open locationType,
+            geom = Just $ T.pack locationGeom,
+            geomGeoJson = Just locationGeomGeoJson,
+            createdAt = now,
+            updatedAt = now,
+            isQueueEnabled = mbIsQueueEnabled,
+            enforceTollRoute = mbEnforceTollRoute,
+            render = mbRender,
+            fetchAllGateFareProduct = mbFetchAllGateFareProduct,
+            supportNumber = supportNumber,
+            paymentModes = resolvedPaymentModes,
+            fareSettlementType = mbFareSettlementType,
+            boothSpecificFleet = boothSpecificFleet
+          }
+      gateInfo =
+        DGI.GateInfo
+          { id = gateInfoId,
+            point = LatLong {lat = gateInfoLat, lon = gateInfoLon},
+            specialLocationId = Id locationName,
+            defaultDriverExtra = gateInfoDefaultDriverExtra,
+            name = gateInfoName,
+            address = gateInfoAddress,
+            geomGeoJson = gateInfoGeom,
+            canQueueUpOnGate = gateInfoCanQueueUpOnGate,
+            gateType = gateInfoType,
+            merchantId = Just (cast merchantOpCity.merchantId),
+            merchantOperatingCityId = Just (cast merchantOpCity.id),
+            createdAt = now,
+            updatedAt = now,
+            gateTags = gateInfoGateTags,
+            walkDescription = gateInfoWalkDescription,
+            entryFeeAmount = gateInfoEntryFeeAmount,
+            minDriverThresholds = parseJsonMap row.gateInfoMinDriverThresholdsJson,
+            maxDriverThresholds = parseJsonMap row.gateInfoMaxDriverThresholdsJson,
+            demandThresholds = parseJsonMap row.gateInfoDemandThresholdsJson,
+            navigationInstructions = parseJsonTextMap row.gateInfoNavigationInstructionsJson,
+            defaultMinDriverThreshold = readMaybeCSVField idx (fromMaybe "" row.gateInfoMinDriverThreshold) "Gate Info (min_driver_threshold)",
+            defaultMaxDriverThreshold = readMaybeCSVField idx (fromMaybe "" row.gateInfoMaxDriverThreshold) "Gate Info (max_driver_threshold)",
+            defaultDemandThreshold = readMaybeCSVField idx (fromMaybe "" row.gateInfoDemandThreshold) "Gate Info (demand_threshold)",
+            notificationCooldownInSec = readMaybeCSVField idx (fromMaybe "" row.gateInfoNotificationCooldownInSec) "Gate Info (notification_cooldown_in_sec)",
+            maxRideSkipsBeforeQueueRemoval = readMaybeCSVField idx (fromMaybe "" row.gateInfoMaxRideSkipsBeforeQueueRemoval) "Gate Info (max_ride_skips_before_queue_removal)",
+            pickupZoneArrivalTimeoutInSec = readMaybeCSVField idx (fromMaybe "" row.gateInfoPickupZoneArrivalTimeoutInSec) "Gate Info (pickup_zone_arrival_timeout_in_sec)",
+            pickupRequestResponseTimeoutInSec = readMaybeCSVField idx (fromMaybe "" row.gateInfoPickupRequestResponseTimeoutInSec) "Gate Info (pickup_request_response_timeout_in_sec)",
+            notificationActiveTillInSec = readMaybeCSVField idx (fromMaybe "" row.gateInfoNotificationActiveTillInSec) "Gate Info (notification_active_till_in_sec)",
+            enableQueueFilter = parseBoolMap row.enableQueueFilter
+          }
+  return (city, locationName, (specialLocation, gateInfo), pickupPriority, dropPriority, mbSpecialLocationId)
+
+---------------------------------------------------------------------
+-- Group Special Locations and Gates
+---------------------------------------------------------------------
+groupSpecialLocationAndGates ::
+  [(Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Int, Int, Maybe Text)] ->
+  [[(Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Int, Int, Maybe Text)]]
+groupSpecialLocationAndGates = DL.groupBy (\a b -> fst2 a == fst2 b) . DL.sortBy (compare `on` fst2)
+  where
+    fst2 (c, l, _, _, _, _) = (c, l)
+
+---------------------------------------------------------------------
+-- Run Validation on Special Location and Gates Group
+---------------------------------------------------------------------
+runValidationOnSpecialLocationAndGatesGroup ::
+  Context.City ->
+  DMOC.MerchantOperatingCity ->
+  [(Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Int, Int, Maybe Text)] ->
+  Flow ()
+runValidationOnSpecialLocationAndGatesGroup _ _ [] = throwError $ InvalidRequest "Empty Special Location Group"
+runValidationOnSpecialLocationAndGatesGroup opCity merchantOpCity (x : _) = do
+  let (city, _locationName, (specialLocation, _), pickupPriority, dropPriority, _) = x
+  if city /= opCity
+    then throwError $ InvalidRequest ("Can't process special location for different city: " <> show city <> ", please login with this city in dashboard")
+    else do
+      -- TODO :: Add Validation for Overlapping Geometries
+      QSLP.findByMerchantOpCityIdAndCategory merchantOpCity.id.getId specialLocation.category
+        >>= \case
+          Just _ -> return ()
+          Nothing -> do
+            when (pickupPriority < 0 || dropPriority < 0) $ throwError $ InvalidRequest ("Pickup and Drop Priority must be greater than or equal to 0 for category: " <> specialLocation.category <> " and merchantOpCity: " <> merchantOpCity.id.getId)
+            priorityId <- generateGUID
+            let newPriority =
+                  SLP.SpecialLocationPriority
+                    { id = Id priorityId,
+                      merchantId = merchantOpCity.merchantId.getId,
+                      merchantOperatingCityId = merchantOpCity.id.getId,
+                      category = specialLocation.category,
+                      pickupPriority = pickupPriority,
+                      dropPriority = dropPriority
+                    }
+            void $ runTransaction $ QSLP.create newPriority
+            return ()
+
+---------------------------------------------------------------------
+-- Process Special Location and Gates Group
+---------------------------------------------------------------------
+processSpecialLocationAndGatesGroup ::
+  Context.City ->
+  DMOC.MerchantOperatingCity ->
+  [(Context.City, Text, (DSL.SpecialLocation, DGI.GateInfo), Int, Int, Maybe Text)] ->
+  Flow ()
+processSpecialLocationAndGatesGroup _ _ [] = throwError $ InvalidRequest "Empty Special Location Group"
+processSpecialLocationAndGatesGroup opCity merchantOpCity specialLocationAndGates@(x : _) = do
+  void $ runValidationOnSpecialLocationAndGatesGroup opCity merchantOpCity specialLocationAndGates
+  let (_city, locationName, (specialLocation, _), _, _, mbSpecialLocationIdFromCsv) = x
+  mbExisting <-
+    case mbSpecialLocationIdFromCsv of
+      Just splId -> QSL.findById (Id splId)
+      Nothing ->
+        QSL.findByLocationNameAndCity locationName merchantOpCity.id.getId
+          |<|>| QSL.findByLocationName locationName
+  existingGatesByName <- case mbExisting of
+    Just spl -> do
+      gates <- QGI.findAllGatesBySpecialLocationIdWithoutGeoJson spl.id
+      return $ Map.fromList [(g.name, g) | g <- gates]
+    Nothing -> return Map.empty
+  -- Fetch any existing gates by gate ids supplied via CSV (works across SLs).
+  existingGatesById <-
+    fmap (Map.fromList . catMaybes) $
+      forM specialLocationAndGates $ \(_, _, (_, gi), _, _, _) -> do
+        mbGate <- QGI.findById gi.id
+        pure $ (gi.id,) <$> mbGate
+  whenJust mbExisting $ \spl -> do
+    void $ runTransaction $ QSL.deleteById spl.id
+    QGI.deleteAll spl.id
+  specialLocationId <-
+    case mbSpecialLocationIdFromCsv of
+      Just splId -> return $ Id splId
+      Nothing -> maybe generateGUID (return . (.id)) mbExisting
+  let mergedSL = mergeSpecialLocationWithExisting specialLocation mbExisting
+  void $ runTransaction $ QSLG.create $ mergedSL {DSL.id = specialLocationId}
+  mapM_
+    ( \(_, _, (_, gateInfo), _, _, _) -> do
+        let mbExistingGate =
+              Map.lookup gateInfo.id existingGatesById
+                <|> Map.lookup gateInfo.name existingGatesByName
+            merged = mergeGateInfoWithExisting gateInfo mbExistingGate
+        QGI.create $ merged {DGI.specialLocationId = specialLocationId}
+    )
+    specialLocationAndGates
+  QSL.clearSpecialZoneInMemCache
+
+---------------------------------------------------------------------
+-- Merge helpers — preserve existing DB values when CSV value is Nothing
+-- for fields parsed via `optional` in the FromNamedRecord instance.
+---------------------------------------------------------------------
+mergeSpecialLocationWithExisting :: DSL.SpecialLocation -> Maybe DSL.SpecialLocation -> DSL.SpecialLocation
+mergeSpecialLocationWithExisting new Nothing =
+  new{DSL.paymentModes = new.paymentModes <|> Just SL.defaultPaymentModes}
+mergeSpecialLocationWithExisting new (Just old) =
+  new{DSL.isQueueEnabled = new.isQueueEnabled <|> old.isQueueEnabled,
+      DSL.paymentModes = new.paymentModes <|> old.paymentModes
+     }
+
+mergeGateInfoWithExisting :: DGI.GateInfo -> Maybe DGI.GateInfo -> DGI.GateInfo
+mergeGateInfoWithExisting new Nothing = new
+mergeGateInfoWithExisting new (Just old) =
+  new{DGI.entryFeeAmount = new.entryFeeAmount <|> old.entryFeeAmount,
+      DGI.minDriverThresholds = new.minDriverThresholds <|> old.minDriverThresholds,
+      DGI.maxDriverThresholds = new.maxDriverThresholds <|> old.maxDriverThresholds,
+      DGI.demandThresholds = new.demandThresholds <|> old.demandThresholds,
+      DGI.navigationInstructions = new.navigationInstructions <|> old.navigationInstructions,
+      DGI.defaultMinDriverThreshold = new.defaultMinDriverThreshold <|> old.defaultMinDriverThreshold,
+      DGI.defaultMaxDriverThreshold = new.defaultMaxDriverThreshold <|> old.defaultMaxDriverThreshold,
+      DGI.defaultDemandThreshold = new.defaultDemandThreshold <|> old.defaultDemandThreshold,
+      DGI.notificationCooldownInSec = new.notificationCooldownInSec <|> old.notificationCooldownInSec,
+      DGI.maxRideSkipsBeforeQueueRemoval = new.maxRideSkipsBeforeQueueRemoval <|> old.maxRideSkipsBeforeQueueRemoval,
+      DGI.pickupZoneArrivalTimeoutInSec = new.pickupZoneArrivalTimeoutInSec <|> old.pickupZoneArrivalTimeoutInSec,
+      DGI.pickupRequestResponseTimeoutInSec = new.pickupRequestResponseTimeoutInSec <|> old.pickupRequestResponseTimeoutInSec,
+      -- Preserve operator-configured active-till on CSV re-upserts when not in the file.
+      DGI.notificationActiveTillInSec = new.notificationActiveTillInSec <|> old.notificationActiveTillInSec,
+      DGI.enableQueueFilter = new.enableQueueFilter <|> old.enableQueueFilter
+     }

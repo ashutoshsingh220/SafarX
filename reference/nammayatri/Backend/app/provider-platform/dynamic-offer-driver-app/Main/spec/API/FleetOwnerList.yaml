@@ -1,0 +1,44 @@
+imports:
+  Person: Domain.Types.Person
+  Merchant: Domain.Types.Merchant
+  MerchantOperatingCity: Domain.Types.MerchantOperatingCity
+  FleetType: Domain.Types.FleetOwnerInformation
+  Address: Kernel.External.Payment.Stripe.Types
+  DocsVerificationStatus: Domain.Types.DocsVerificationStatus
+module: FleetOwnerList
+
+types:
+  FleetOwnerListItem:
+    - fleetOwnerId: Id Person
+    - fleetOwnerName: Text
+    - merchantId: Id Merchant
+    - merchantOperatingCityId: Id MerchantOperatingCity
+    - fleetType: FleetType
+    - enabled: Bool
+    - verified: Bool
+    - blocked: Bool
+    - isEligibleForSubscription: Bool
+    - address: Maybe Address
+    - fleetName: Maybe Text
+    - email: Maybe Text
+    - mobileNumber: Maybe Text
+    - docsVerificationStatus: Maybe DocsVerificationStatus
+    - mobileCountryCode: Maybe Text
+    - createdAt: Maybe UTCTime
+
+apis:
+  - GET:
+      endpoint: /fleetOwner/list
+      auth: TokenAuth PROVIDER_TYPE
+      query:
+        blocked: Bool
+        fleetType: FleetType
+        onlyEnabled: Bool
+        mbSearchString: Text
+        fromDate: UTCTime
+        toDate: UTCTime
+        limit: Int
+        offset: Int
+        docsVerificationStatus: DocsVerificationStatus
+      response:
+        type: "[FleetOwnerListItem]"

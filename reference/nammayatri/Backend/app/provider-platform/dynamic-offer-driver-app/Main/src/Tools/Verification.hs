@@ -1,0 +1,507 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module Tools.Verification
+  ( module Reexport,
+    verifyDL,
+    verifyBankAccountAsync,
+    verifyCRCAsync,
+    verifyGstAsync,
+    verifyPanAsync,
+    verifyPanAadhaarLinkAsync,
+    verifyUdyamAadhaarAsync,
+    verifyRC,
+    validateImage,
+    extractRCImage,
+    extractDLImage,
+    extractPanImage,
+    extractGSTImage,
+    extractAadhaarImage,
+    validateFaceImage,
+    faceCompare,
+    verifySdkResp,
+    getTask,
+    nameCompare,
+    getDigiLockerFile,
+    pullDigiLockerDrivingLicense,
+    fetchAndExtractVerifiedDL,
+    fetchAndExtractVerifiedPan,
+    fetchAndExtractVerifiedAadhaar,
+    getVerifiedAadhaarXML,
+  )
+where
+
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
+import qualified Domain.Types.Merchant as DM
+import qualified Domain.Types.MerchantOperatingCity as DMOC
+import qualified Domain.Types.MerchantServiceConfig as DMSC
+import Domain.Types.MerchantServiceUsageConfig
+import qualified Domain.Types.VehicleCategory as DVC
+import qualified Kernel.External.Tokenize.Interface as TI
+import qualified Kernel.External.Tokenize.Interface.Types as TIFT
+import qualified Kernel.External.Tokenize.Types as TT
+import Kernel.External.Types (ServiceFlow)
+import Kernel.External.Verification as Reexport hiding
+  ( extractAadhaarImage,
+    extractDLImage,
+    extractGSTImage,
+    extractPanImage,
+    extractRCImage,
+    faceCompare,
+    fetchAndExtractVerifiedAadhaar,
+    fetchAndExtractVerifiedDL,
+    fetchAndExtractVerifiedPan,
+    getTask,
+    getVerifiedAadhaarXML,
+    nameCompare,
+    searchAgent,
+    validateFaceImage,
+    validateImage,
+    verifyBankAccountAsync,
+    verifyCRCAsync,
+    verifyDL,
+    verifyGstAsync,
+    verifyPanAadhaarLinkAsync,
+    verifyPanAsync,
+    verifyRC,
+    verifySdkResp,
+    verifyUdyamAadhaarAsync,
+  )
+import qualified Kernel.External.Verification as Verification
+import qualified Kernel.External.Verification.Digilocker.Types as DigiTypes
+import Kernel.External.Verification.Interface.InternalScripts
+import qualified Kernel.External.Verification.Types as VT
+import Kernel.Prelude
+import qualified Kernel.Storage.Hedis as Redis
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import Kernel.Utils.Forkable (runWithFallbackAndTimeout)
+import Lib.ConfigPilot.Interface.Types (getOneConfig)
+import Storage.Beam.GovtDataRC ()
+import qualified Storage.Cac.MerchantServiceUsageConfig as CMSUC
+import qualified Storage.CachedQueries.Merchant.MerchantServiceConfig as CQMSC
+import Storage.ConfigPilot.Config.MerchantServiceConfig (MerchantServiceConfigDimensions (..))
+import Storage.ConfigPilot.Config.MerchantServiceUsageConfig (MerchantServiceUsageConfigDimensions (..))
+import Tools.Error
+import Tools.Metrics (CoreMetrics)
+
+verifyDL ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  VerifyDLReq ->
+  m VerifyDLResp
+verifyDL _ merchantOpCityId req = do
+  merchantServiceUsageConfig <-
+    getOneConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (CMSUC.findByMerchantOpCityId merchantOpCityId Nothing))
+      >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOpCityId.getId)
+  fromMaybeM (InternalError $ "Providers not configured in the priority list !!!!!" <> show merchantServiceUsageConfig.verificationProvidersPriorityList) (listToMaybe merchantServiceUsageConfig.verificationProvidersPriorityList) >>= \provider -> callService merchantOpCityId provider Verification.verifyDL req -- TODO: Using first element of priority list as of now would be soon replacing this with a proper fallback implementation.
+
+verifyBankAccountAsync ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  VerifyBankAccountAsyncReq ->
+  m VerifyBankAccountAsyncResp
+verifyBankAccountAsync = runWithServiceConfig Verification.verifyBankAccountAsync (.verificationService)
+
+verifyCRCAsync ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  VerifyCRCReq ->
+  m VerifyCRCAsyncResp
+verifyCRCAsync = runWithServiceConfig Verification.verifyCRCAsync (.verificationService)
+
+verifyPanAadhaarLinkAsync ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  VerifyPanAadhaarLinkAsyncReq ->
+  m VerifyPanAadhaarLinkAsyncResp
+verifyPanAadhaarLinkAsync = runWithServiceConfig Verification.verifyPanAadhaarLinkAsync (.verificationService)
+
+verifyGstAsync ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  VerifyGstAsyncReq ->
+  m VerifyGstAsyncResp
+verifyGstAsync _ merchantOpCityId req = do
+  merchantServiceUsageConfig <-
+    getOneConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (CMSUC.findByMerchantOpCityId merchantOpCityId Nothing))
+      >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOpCityId.getId)
+  fromMaybeM (InternalError $ "Providers not configured in the priority list !!!!!" <> show merchantServiceUsageConfig.verificationProvidersPriorityList) (listToMaybe merchantServiceUsageConfig.verificationProvidersPriorityList) >>= \provider -> callService merchantOpCityId provider Verification.verifyGstAsync req
+
+verifyPanAsync ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  VerifyPanAsyncReq ->
+  m VerifyPanAsyncResp
+verifyPanAsync _ merchantOpCityId req = do
+  merchantServiceUsageConfig <-
+    getOneConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (CMSUC.findByMerchantOpCityId merchantOpCityId Nothing))
+      >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOpCityId.getId)
+  fromMaybeM (InternalError $ "Providers not configured in the priority list !!!!!" <> show merchantServiceUsageConfig.verificationProvidersPriorityList) (listToMaybe merchantServiceUsageConfig.verificationProvidersPriorityList) >>= \provider -> callService merchantOpCityId provider Verification.verifyPanAsync req -- TODO: Using first element of priority list as of now would be soon replacing this with a proper fallback implementation.
+
+verifyUdyamAadhaarAsync ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  VerifyUdyamAadhaarAsyncReq ->
+  m VerifyUdyamAadhaarAsyncResp
+verifyUdyamAadhaarAsync _ merchantOpCityId req = do
+  merchantServiceUsageConfig <-
+    getOneConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (CMSUC.findByMerchantOpCityId merchantOpCityId Nothing))
+      >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOpCityId.getId)
+  fromMaybeM (InternalError $ "Providers not configured in the priority list !!!!!" <> show merchantServiceUsageConfig.verificationProvidersPriorityList) (listToMaybe merchantServiceUsageConfig.verificationProvidersPriorityList) >>= \provider -> callService merchantOpCityId provider Verification.verifyUdyamAadhaarAsync req
+
+verifyRC ::
+  ( ServiceFlow m r,
+    CoreMetrics m,
+    HasField "ttenTokenCacheExpiry" r Seconds
+  ) =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  Bool ->
+  Maybe [VerificationService] ->
+  Maybe DVC.VehicleCategory ->
+  VerifyRCReq ->
+  m RCRespWithRemPriorityList
+verifyRC _ merchantOptCityId useCategoryBasedPriority mbRemPriorityList mbVehicleCategory req = do
+  let (providerKey :: ProviderLookUpKey) = fromMaybe CAR $ getProviderKeyFromVehicleCategory mbVehicleCategory req.udinNo
+  finalVerificationProviderPriorityList <-
+    case mbRemPriorityList of
+      Nothing -> do
+        merchantServiceUsageConfig <-
+          getOneConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = merchantOptCityId.getId}) (Just (CMSUC.findByMerchantOpCityId merchantOptCityId Nothing))
+            >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOptCityId.getId)
+        if useCategoryBasedPriority
+          then do
+            let mbList = merchantServiceUsageConfig.categoryBasedVerificationPriorityList >>= Map.lookup (show providerKey)
+            fromMaybeM (InternalError $ "Providers not configured in the priority list !!!!!" <> show merchantServiceUsageConfig.categoryBasedVerificationPriorityList) mbList
+          else do
+            case providerKey of
+              TOTO_UDIN -> pure (fromMaybe [VT.Tten] merchantServiceUsageConfig.totoVerificationPriorityList)
+              TOTO -> pure [VT.Idfy]
+              _ -> pure merchantServiceUsageConfig.verificationProvidersPriorityList
+      Just remPriorityList -> return remPriorityList
+  mbToken' <-
+    if providerKey == TOTO_UDIN && VT.Tten `elem` finalVerificationProviderPriorityList
+      then do
+        token <- getOrCreateTtenToken merchantOptCityId
+        return (Just token)
+      else return Nothing
+  let reqWithToken = req {token = mbToken'}
+  Verification.verifyRC (getServiceConfig merchantOptCityId) finalVerificationProviderPriorityList reqWithToken
+  where
+    getOrCreateTtenToken :: (ServiceFlow m r, CoreMetrics m, HasField "ttenTokenCacheExpiry" r Seconds) => Id DMOC.MerchantOperatingCity -> m Text
+    getOrCreateTtenToken merchantOpCityId = do
+      let tokenCacheKey = makeTtenTokenCacheKey merchantOpCityId
+      mbToken <- Redis.withCrossAppRedis $ Redis.safeGet tokenCacheKey
+      case mbToken of
+        Just cachedToken -> do
+          return cachedToken
+        Nothing -> do
+          tokenServiceConfigJSON <- getTtenTokenizationServiceConfig merchantOpCityId
+          tokenResp <-
+            withTryCatch "tokenizeTtenCertificate" $
+              TI.tokenize
+                tokenServiceConfigJSON
+                (TIFT.TokenizationReq {expiry = Nothing, code = Nothing, codeVerifier = Nothing})
+          case tokenResp of
+            Left err -> throwError $ InvalidRequest $ show err
+            Right tokenResp' -> do
+              now <- getCurrentTime
+              ttenTokenCacheExpiry <- asks (.ttenTokenCacheExpiry)
+              let expiryTime = fromMaybe (addUTCTime (secondsToNominalDiffTime ttenTokenCacheExpiry) now) tokenResp'.expiresAt
+                  expirySeconds = round $ diffUTCTime expiryTime now
+              Redis.withCrossAppRedis $ Redis.setExp tokenCacheKey tokenResp'.token expirySeconds
+              return tokenResp'.token
+
+    getTtenTokenizationServiceConfig :: (ServiceFlow m r, CoreMetrics m) => Id DMOC.MerchantOperatingCity -> m TIFT.TokenizationServiceConfig
+    getTtenTokenizationServiceConfig mocid = do
+      merchantServiceConfig <-
+        getOneConfig (MerchantServiceConfigDimensions {merchantOperatingCityId = mocid.getId, merchantId = Nothing, serviceName = Just (DMSC.TokenizationService TT.Tten)}) (Just (maybeToList <$> CQMSC.findByServiceAndCity (DMSC.TokenizationService TT.Tten) mocid))
+          >>= fromMaybeM
+            ( MerchantServiceConfigNotFound mocid.getId "tokenization" $
+                show (DMSC.TokenizationService TT.Tten)
+            )
+      case merchantServiceConfig.serviceConfig of
+        DMSC.TokenizationServiceConfig vsc -> return vsc
+        _ -> throwError $ InternalError "Unknown Service Config"
+
+    makeTtenTokenCacheKey :: Id DMOC.MerchantOperatingCity -> Text
+    makeTtenTokenCacheKey opCityId = "TtenToken:MerchantOpCityId-" <> opCityId.getId
+
+    getProviderKeyFromVehicleCategory :: Maybe DVC.VehicleCategory -> Maybe Text -> Maybe ProviderLookUpKey
+    getProviderKeyFromVehicleCategory mbVc udinNo = case mbVc of
+      Nothing -> Nothing
+      Just DVC.TOTO -> Just $ if isJust udinNo then TOTO_UDIN else TOTO
+      Just DVC.CAR -> Just CAR
+      Just DVC.AUTO_CATEGORY -> Just AUTO_CATEGORY
+      Just DVC.MOTORCYCLE -> Just MOTORCYCLE
+      Just DVC.TRUCK -> Just TRUCK
+      Just DVC.BOAT -> Just BOAT
+      Just DVC.AMBULANCE -> Just AMBULANCE
+      Just DVC.BUS -> Just BUS
+      Just DVC.TRAIN -> Just TRAIN
+      Just DVC.FLIGHT -> Just FLIGHT
+
+getServiceConfig :: ServiceFlow m r => Id DMOC.MerchantOperatingCity -> VerificationService -> m VerificationServiceConfig
+getServiceConfig merchantOptCityId cfg = case cfg of
+  GovtData -> return $ GovtDataConfig {}
+  _ -> do
+    merchantServiceConfig <- getOneConfig (MerchantServiceConfigDimensions {merchantOperatingCityId = merchantOptCityId.getId, merchantId = Nothing, serviceName = Just (DMSC.VerificationService cfg)}) (Just (maybeToList <$> CQMSC.findByServiceAndCity (DMSC.VerificationService cfg) merchantOptCityId)) >>= fromMaybeM (MerchantServiceConfigNotFound merchantOptCityId.getId "verification" $ show cfg)
+    case merchantServiceConfig.serviceConfig of
+      DMSC.VerificationServiceConfig vsc -> return vsc
+      _ -> throwError $ InternalError "Unknown Service Config"
+
+validateImage ::
+  ( ServiceFlow m r,
+    Forkable m,
+    HasField "imageExtractionTimeoutSec" r Seconds
+  ) =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  ValidateImageReq ->
+  m ValidateImageResp
+validateImage _merchantId merchantOpCityId req = do
+  msuc <- getMerchantServiceUsageConfig merchantOpCityId
+  timeoutSec <- asks ((.getSeconds) . (.imageExtractionTimeoutSec))
+  let providers = fromMaybe [msuc.verificationService] msuc.imageExtractionProvidersPriorityList
+  runWithFallbackAndTimeout "validateImage" providers timeoutSec (const True) $ \provider -> do
+    cfg <- getVerificationServiceConfig merchantOpCityId provider
+    Verification.validateImage cfg req
+
+validateFaceImage ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  FaceValidationReq ->
+  m FaceValidationRes
+validateFaceImage = runWithServiceConfig Verification.validateFaceImage (.faceVerificationService)
+
+faceCompare ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  FaceCompareReq ->
+  m FaceCompareResp
+faceCompare = runWithServiceConfig Verification.faceCompare (.faceMatchService)
+
+extractRCImage ::
+  ( ServiceFlow m r,
+    Forkable m,
+    HasField "imageExtractionTimeoutSec" r Seconds
+  ) =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  ExtractRCImageReq ->
+  m ExtractRCImageResp
+extractRCImage _merchantId merchantOpCityId req =
+  Verification.extractRCImage (mkImageExtractionHandler merchantOpCityId) req
+
+extractPanImage ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  ExtractPanImage ->
+  m ExtractedPanImageResp
+extractPanImage = runWithServiceConfig Verification.extractPanImage (.verificationService)
+
+extractGSTImage ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  ExtractGSTImage ->
+  m ExtractedGSTImageResp
+extractGSTImage = runWithServiceConfig Verification.extractGSTImage (.verificationService)
+
+extractAadhaarImage ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  ExtractAadhaarImageReq ->
+  m ExtractAadhaarImageRes
+extractAadhaarImage = runWithServiceConfig Verification.extractAadhaarImage (.verificationService)
+
+nameCompare ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  NameCompareReq ->
+  m NameCompareResp
+nameCompare = runWithServiceConfig Verification.nameCompare (.verificationService)
+
+extractDLImage ::
+  ( ServiceFlow m r,
+    Forkable m,
+    HasField "imageExtractionTimeoutSec" r Seconds
+  ) =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  ExtractDLImageReq ->
+  m ExtractDLImageResp
+extractDLImage _merchantId merchantOpCityId req =
+  Verification.extractDLImage (mkImageExtractionHandler merchantOpCityId) req
+
+mkImageExtractionHandler ::
+  ( ServiceFlow m r,
+    HasField "imageExtractionTimeoutSec" r Seconds
+  ) =>
+  Id DMOC.MerchantOperatingCity ->
+  Verification.ImageExtractionHandler m
+mkImageExtractionHandler merchantOpCityId =
+  Verification.ImageExtractionHandler
+    { getProvidersPriorityList = do
+        msuc <- getMerchantServiceUsageConfig merchantOpCityId
+        pure $ fromMaybe [msuc.verificationService] msuc.imageExtractionProvidersPriorityList,
+      getProviderTimeout = asks ((.getSeconds) . (.imageExtractionTimeoutSec)),
+      getProviderConfig = getVerificationServiceConfig merchantOpCityId
+    }
+
+verifySdkResp ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  VerifySdkDataReq ->
+  m VerifySdkDataResp
+verifySdkResp = runWithServiceConfig Verification.verifySdkResp (.sdkVerificationService)
+
+getTask ::
+  ServiceFlow m r =>
+  Id DMOC.MerchantOperatingCity ->
+  VerificationService ->
+  GetTaskReq ->
+  (Text -> Maybe Text -> Text -> m ()) ->
+  m GetTaskResp
+getTask merchantOpCityId config req updateResp = do
+  merchantServiceConfig <-
+    getOneConfig (MerchantServiceConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId, merchantId = Nothing, serviceName = Just (DMSC.VerificationService config)}) (Just (maybeToList <$> CQMSC.findByServiceAndCity (DMSC.VerificationService config) merchantOpCityId))
+      >>= fromMaybeM (InternalError $ "No verification service provider configured for the merchant, merchantOpCityId:" <> merchantOpCityId.getId <> " Service : " <> T.pack (show config))
+  case merchantServiceConfig.serviceConfig of
+    DMSC.VerificationServiceConfig vsc -> Verification.getTask vsc req updateResp
+    _ -> throwError $ InternalError "Unknown Service Config"
+
+runWithServiceConfig ::
+  ServiceFlow m r =>
+  (VerificationServiceConfig -> req -> m resp) ->
+  (MerchantServiceUsageConfig -> VerificationService) ->
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  req ->
+  m resp
+runWithServiceConfig func getCfg _merchantId merchantOpCityId req = do
+  merchantServiceUsageConfig <- getMerchantServiceUsageConfig merchantOpCityId
+  callService merchantOpCityId (getCfg merchantServiceUsageConfig) func req
+
+getMerchantServiceUsageConfig :: ServiceFlow m r => Id DMOC.MerchantOperatingCity -> m MerchantServiceUsageConfig
+getMerchantServiceUsageConfig merchantOpCityId =
+  getOneConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId}) (Just (CMSUC.findByMerchantOpCityId merchantOpCityId Nothing))
+    >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOpCityId.getId)
+
+callService :: ServiceFlow m r => Id DMOC.MerchantOperatingCity -> VerificationService -> (VerificationServiceConfig -> req -> m resp) -> req -> m resp
+callService merchantOpCityId vsc func req = do
+  vsc' <- getVerificationServiceConfig merchantOpCityId vsc
+  func vsc' req
+
+getVerificationServiceConfig :: ServiceFlow m r => Id DMOC.MerchantOperatingCity -> VerificationService -> m VerificationServiceConfig
+getVerificationServiceConfig merchantOpCityId vsc = do
+  merchantServiceConfig <-
+    getOneConfig (MerchantServiceConfigDimensions {merchantOperatingCityId = merchantOpCityId.getId, merchantId = Nothing, serviceName = Just (DMSC.VerificationService vsc)}) (Just (maybeToList <$> CQMSC.findByServiceAndCity (DMSC.VerificationService vsc) merchantOpCityId))
+      >>= fromMaybeM (InternalError $ "No verification service provider configured for the merchant, merchantOpCityId:" <> merchantOpCityId.getId <> " Service : " <> T.pack (show vsc))
+  case merchantServiceConfig.serviceConfig of
+    DMSC.VerificationServiceConfig vsc' -> pure vsc'
+    _ -> throwError $ InternalError "Unknown Service Config"
+
+-- DigiLocker specific functions
+
+-- | Get file (PDF) from DigiLocker for S3 storage
+getDigiLockerFile ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  DigiTypes.DigiLockerGetFileReq ->
+  m BSL.ByteString
+getDigiLockerFile _merchantId merchantOpCityId req = do
+  logInfo $
+    "Tools.Verification.getDigiLockerFile - Request: merchantOpCityId="
+      <> merchantOpCityId.getId
+      <> ", uri="
+      <> req.uri
+  resp <- callService merchantOpCityId DigiLocker Verification.getFile req
+  logInfo $
+    "Tools.Verification.getDigiLockerFile - Response bytes: "
+      <> show (BSL.length resp)
+  pure resp
+
+-- | Pull Driving License from DigiLocker (requires DL number)
+pullDigiLockerDrivingLicense ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  DigiTypes.DigiLockerPullDrivingLicenseReq ->
+  m DigiTypes.DigiLockerPullDocumentResponse
+pullDigiLockerDrivingLicense _merchantId merchantOpCityId req =
+  callService merchantOpCityId DigiLocker Verification.pullDrivingLicense req
+
+-- | Fetch and extract verified Driving License from DigiLocker
+-- Combines XML fetching and parsing in one call
+fetchAndExtractVerifiedDL ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  DigiTypes.DigiLockerExtractDLReq ->
+  m ExtractedDigiLockerDLResp
+fetchAndExtractVerifiedDL _merchantId merchantOpCityId req =
+  callService merchantOpCityId DigiLocker Verification.fetchAndExtractVerifiedDL req
+
+-- | Fetch and extract verified PAN card from DigiLocker
+-- Combines XML fetching and parsing in one call
+fetchAndExtractVerifiedPan ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  DigiTypes.DigiLockerExtractPanReq ->
+  m ExtractedDigiLockerPanResp
+fetchAndExtractVerifiedPan _merchantId merchantOpCityId req =
+  callService merchantOpCityId DigiLocker Verification.fetchAndExtractVerifiedPan req
+
+-- | Fetch and extract verified Aadhaar from DigiLocker
+-- Combines XML fetching and parsing in one call
+-- Note: Aadhaar uses different endpoint, doesn't require URI
+fetchAndExtractVerifiedAadhaar ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  DigiTypes.DigiLockerExtractAadhaarReq ->
+  m ExtractedDigiLockerAadhaarResp
+fetchAndExtractVerifiedAadhaar _merchantId merchantOpCityId req =
+  callService merchantOpCityId DigiLocker Verification.fetchAndExtractVerifiedAadhaar req
+
+-- | Get verified Aadhaar XML from DigiLocker (raw XML for S3 storage)
+-- Returns raw XML text that can be stored in Image table
+-- Note: Aadhaar doesn't support getFile API, so we get XML directly
+getVerifiedAadhaarXML ::
+  ServiceFlow m r =>
+  Id DM.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  DigiTypes.DigiLockerExtractAadhaarReq ->
+  m Text
+getVerifiedAadhaarXML _merchantId merchantOpCityId req =
+  callService merchantOpCityId DigiLocker Verification.getVerifiedAadhaarXML req

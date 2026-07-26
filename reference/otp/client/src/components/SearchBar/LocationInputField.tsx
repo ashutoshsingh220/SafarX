@@ -1,0 +1,58 @@
+import { Form } from 'react-bootstrap';
+import { toString, parseLocation } from '../../util/locationConverter.ts';
+import { TripQueryVariables } from '../../gql/graphql.ts';
+import { useCallback, useState } from 'react';
+
+interface Props {
+  id: string;
+  label: string;
+  tripQueryVariables: TripQueryVariables;
+  setTripQueryVariables: (tripQueryVariables: TripQueryVariables) => void;
+  locationFieldKey: 'from' | 'to';
+}
+
+export function LocationInputField({ id, label, tripQueryVariables, setTripQueryVariables, locationFieldKey }: Props) {
+  const currentLocation = tripQueryVariables[locationFieldKey];
+  const locationString = toString(currentLocation) || '';
+  const [value, setValue] = useState(locationString);
+
+  const [prevLocation, setPrevLocation] = useState(currentLocation);
+  if (prevLocation !== currentLocation) {
+    setPrevLocation(currentLocation);
+    setValue(locationString);
+  }
+
+  const onLocationChange = useCallback(
+    (value: string) => {
+      const newLocation = parseLocation(value) || {};
+
+      setTripQueryVariables({
+        ...tripQueryVariables,
+        [locationFieldKey]: newLocation,
+      });
+    },
+    [tripQueryVariables, setTripQueryVariables, locationFieldKey],
+  );
+
+  return (
+    <Form.Group>
+      <Form.Label column="sm" htmlFor={id}>
+        {label}
+      </Form.Label>
+      <Form.Control
+        type="text"
+        id={id}
+        size="sm"
+        placeholder="[Click in map]"
+        className="input-medium"
+        onChange={(e) => {
+          setValue(e.target.value);
+        }}
+        onBlur={(event) => {
+          onLocationChange(event.target.value);
+        }}
+        value={value}
+      />
+    </Form.Group>
+  );
+}

@@ -1,0 +1,42 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+
+module Domain.Action.UI.City where
+
+import qualified Domain.Types.City as DTC
+import qualified Domain.Types.Merchant as DM
+import Domain.Types.MerchantOperatingCity (MerchantOperatingCity (..))
+import Environment
+import EulerHS.Prelude hiding (id, state)
+import Kernel.Types.Id
+import Lib.ConfigPilot.Interface.Types (getOneConfig)
+import qualified Storage.Cac.TransporterConfig as SCTC
+import qualified Storage.CachedQueries.Merchant.MerchantOperatingCity as CQMOC
+import Storage.ConfigPilot.Config.TransporterConfig (TransporterConfigDimensions (..))
+import Tools.Auth
+
+listCities :: Id DM.Merchant -> Flow [DTC.CityRes]
+listCities mId = do
+  merchantOperatingCities <- CQMOC.findAllByMerchantId (merchantIdFallback mId)
+  mapM mkCityRes merchantOperatingCities
+  where
+    mkCityRes MerchantOperatingCity {..} = do
+      mbTransporterConfig <- getOneConfig (TransporterConfigDimensions {merchantOperatingCityId = id.getId}) (Just (SCTC.findByMerchantOpCityId id Nothing))
+      return $
+        DTC.CityRes
+          { code = city,
+            name = show city,
+            subscription = maybe False (.subscription) mbTransporterConfig,
+            ..
+          }

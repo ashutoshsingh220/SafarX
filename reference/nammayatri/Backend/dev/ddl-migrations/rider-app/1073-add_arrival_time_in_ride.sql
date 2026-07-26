@@ -1,0 +1,1 @@
+ALTER TABLE atlas_app.estimate ADD COLUMN waiting_time_estimated_threshold int;

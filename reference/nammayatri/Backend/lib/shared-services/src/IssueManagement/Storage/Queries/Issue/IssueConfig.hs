@@ -1,0 +1,68 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+module IssueManagement.Storage.Queries.Issue.IssueConfig where
+
+import IssueManagement.Common
+import IssueManagement.Domain.Types.Issue.IssueConfig
+import qualified IssueManagement.Storage.Beam.Issue.IssueConfig as BeamIC
+import IssueManagement.Storage.BeamFlow
+import IssueManagement.Tools.UtilsTH
+import Kernel.Types.Id
+
+create :: BeamFlow m r => IssueConfig -> m ()
+create = createWithKV
+
+findByMerchantOpCityId :: BeamFlow m r => Id MerchantOperatingCity -> m (Maybe IssueConfig)
+findByMerchantOpCityId (Id merchantOpCityId) = findOneWithKV [Is BeamIC.merchantOperatingCityId $ Eq merchantOpCityId]
+
+findAllByMerchantOperatingCityId :: BeamFlow m r => Id MerchantOperatingCity -> m [IssueConfig]
+findAllByMerchantOperatingCityId (Id merchantOpCityId) = findAllWithKV [Is BeamIC.merchantOperatingCityId $ Eq merchantOpCityId]
+
+updateByPrimaryKey :: BeamFlow m r => IssueConfig -> m ()
+updateByPrimaryKey IssueConfig {..} =
+  updateWithKV
+    [ Set BeamIC.autoMarkIssueClosedDuration autoMarkIssueClosedDuration,
+      Set BeamIC.onCreateIssueMsgs (getId <$> onCreateIssueMsgs),
+      Set BeamIC.onAutoMarkIssueClsMsgs (getId <$> onAutoMarkIssueClsMsgs),
+      Set BeamIC.onIssueReopenMsgs (getId <$> onIssueReopenMsgs),
+      Set BeamIC.onKaptMarkIssueResMsgs (getId <$> onKaptMarkIssueResMsgs),
+      Set BeamIC.onCustomerNotSatisfiedMsgs (getId <$> onCustomerNotSatisfiedMsgs),
+      Set BeamIC.onIssueCloseMsgs (getId <$> onIssueCloseMsgs),
+      Set BeamIC.reopenCount reopenCount,
+      Set BeamIC.messageTransformationConfig messageTransformationConfig,
+      Set BeamIC.updatedAt updatedAt
+    ]
+    [Is BeamIC.id $ Eq (getId id)]
+
+instance FromTType' BeamIC.IssueConfig IssueConfig where
+  fromTType' BeamIC.IssueConfigT {..} = do
+    pure $
+      Just
+        IssueConfig
+          { id = Id id,
+            merchantOperatingCityId = Id merchantOperatingCityId,
+            onCreateIssueMsgs = Id <$> onCreateIssueMsgs,
+            onAutoMarkIssueClsMsgs = Id <$> onAutoMarkIssueClsMsgs,
+            onIssueReopenMsgs = Id <$> onIssueReopenMsgs,
+            onKaptMarkIssueResMsgs = Id <$> onKaptMarkIssueResMsgs,
+            onCustomerNotSatisfiedMsgs = Id <$> onCustomerNotSatisfiedMsgs,
+            merchantId = Id merchantId,
+            onIssueCloseMsgs = Id <$> onIssueCloseMsgs,
+            ..
+          }
+
+instance ToTType' BeamIC.IssueConfig IssueConfig where
+  toTType' IssueConfig {..} = do
+    BeamIC.IssueConfigT
+      { BeamIC.id = getId id,
+        BeamIC.merchantOperatingCityId = getId merchantOperatingCityId,
+        BeamIC.onCreateIssueMsgs = getId <$> onCreateIssueMsgs,
+        BeamIC.onAutoMarkIssueClsMsgs = getId <$> onAutoMarkIssueClsMsgs,
+        BeamIC.onIssueReopenMsgs = getId <$> onIssueReopenMsgs,
+        BeamIC.onKaptMarkIssueResMsgs = getId <$> onKaptMarkIssueResMsgs,
+        BeamIC.onCustomerNotSatisfiedMsgs = getId <$> onCustomerNotSatisfiedMsgs,
+        BeamIC.merchantId = getId merchantId,
+        BeamIC.onIssueCloseMsgs = getId <$> onIssueCloseMsgs,
+        ..
+      }

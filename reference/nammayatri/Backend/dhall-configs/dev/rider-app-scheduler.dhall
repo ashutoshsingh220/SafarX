@@ -1,0 +1,60 @@
+let common = ../generic/common.dhall
+
+let appCfg = ./rider-app.dhall
+
+let sec = ./secrets/rider-app.dhall
+
+let inMemConfig = { enableInMem = False, maxInMemSize = +100000000 }
+
+let schedulerConfig =
+      { loggerConfig =
+              common.loggerConfig
+          //  { logRawSql = True
+              , logFilePath = "/tmp/rider-app-scheduler-internal.log"
+              , logToConsole = False
+              , logToFile = True
+              , prettyPrinting = True
+              }
+      , esqDBCfg = appCfg.esqDBCfg
+      , esqDBReplicaCfg = appCfg.esqDBReplicaCfg
+      , metricsPort = Natural/toInteger (env:METRICS_PORT ? 8056)
+      , hedisCfg = appCfg.hedisCfg
+      , hedisClusterCfg = appCfg.hedisClusterCfg
+      , hedisSecondaryClusterCfg = appCfg.hedisSecondaryClusterCfg
+      , hedisNonCriticalCfg = appCfg.hedisCfg
+      , hedisNonCriticalClusterCfg = appCfg.hedisClusterCfg
+      , hedisMigrationStage = False
+      , cutOffHedisCluster = False
+      , hedisPrefix = "driver-offer-scheduler"
+      , port = Natural/toInteger (env:SERVICE_PORT ? 8058)
+      , loopIntervalSec = +5
+      , expirationTime = +60
+      , waitBeforeRetry = +1
+      , tasksPerIteration = +20
+      , graceTerminationPeriod = +10
+      , enableRedisLatencyLogging = False
+      , enablePrometheusMetricLogging = True
+      , groupName = "myGroup_Rider"
+      , schedulerType = common.schedulerType.RedisBased
+      , schedulerSetName = "Scheduled_Jobs_Rider"
+      , streamName = "Available_Jobs_Rider"
+      , maxThreads = +10
+      , block = +10000
+      , readCount = +1
+      , kafkaProducerCfg = appCfg.kafkaProducerCfg
+      , secondaryKafkaProducerCfg = appCfg.secondaryKafkaProducerCfg
+      , cacConfig = appCfg.cacConfig
+      , inMemConfig
+      , blackListedJobs = [] : List Text
+      }
+
+in  { appCfg =
+            appCfg
+        //  { loggerConfig =
+                    appCfg.loggerConfig
+                //  { logFilePath = "/tmp/rider-app-scheduler.log"
+                    , logToFile = False
+                    }
+            }
+    , schedulerConfig
+    }

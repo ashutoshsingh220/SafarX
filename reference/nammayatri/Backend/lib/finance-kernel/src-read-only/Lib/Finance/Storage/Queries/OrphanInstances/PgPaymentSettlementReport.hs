@@ -1,0 +1,135 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
+module Lib.Finance.Storage.Queries.OrphanInstances.PgPaymentSettlementReport where
+
+import Kernel.Beam.Functions
+import Kernel.External.Encryption
+import Kernel.Prelude
+import Kernel.Types.Error
+import qualified Kernel.Types.Id
+import Kernel.Utils.Common (CacheFlow, EsqDBFlow, MonadFlow, fromMaybeM, getCurrentTime)
+import qualified Lib.Finance.Domain.Types.PgPaymentSettlementReport
+import qualified Lib.Finance.Storage.Beam.PgPaymentSettlementReport as Beam
+
+instance FromTType' Beam.PgPaymentSettlementReport Lib.Finance.Domain.Types.PgPaymentSettlementReport.PgPaymentSettlementReport where
+  fromTType' (Beam.PgPaymentSettlementReportT {..}) = do
+    pure $
+      Just
+        Lib.Finance.Domain.Types.PgPaymentSettlementReport.PgPaymentSettlementReport
+          { bankCode = bankCode,
+            bankId = bankId,
+            cardNumber = cardNumber,
+            cardType = cardType,
+            chargebackAmount = chargebackAmount,
+            chargebackId = chargebackId,
+            chargebackReasonCode = chargebackReasonCode,
+            chargebackStatus = chargebackStatus,
+            createdAt = createdAt,
+            createdBy = createdBy,
+            createdById = createdById,
+            currency = currency,
+            disputeId = disputeId,
+            disputeType = disputeType,
+            id = Kernel.Types.Id.Id id,
+            isValidSubscriptionPurchase = isValidSubscriptionPurchase,
+            merchantId = merchantId,
+            merchantOperatingCityId = merchantOperatingCityId,
+            orderId = orderId,
+            orderType = orderType,
+            paymentGateway = paymentGateway,
+            paymentMethod = paymentMethod,
+            paymentMethodSubType = paymentMethodSubType,
+            pgApprovalCode = pgApprovalCode,
+            pgBaseFee = pgBaseFee,
+            pgTax = pgTax,
+            rawData = rawData,
+            referenceId = referenceId,
+            referenceType = referenceType,
+            refundAmount = refundAmount,
+            refundArn = refundArn,
+            refundBaseFee = refundBaseFee,
+            refundDate = refundDate,
+            refundId = refundId,
+            refundMethod = refundMethod,
+            refundReasonCode = refundReasonCode,
+            refundTax = refundTax,
+            rrn = rrn,
+            settlementAmount = settlementAmount,
+            settlementDate = settlementDate,
+            settlementId = settlementId,
+            settlementMode = settlementMode,
+            settlementType = settlementType,
+            subscriptionPurchaseId = subscriptionPurchaseId,
+            txnAmount = txnAmount,
+            txnDate = txnDate,
+            txnId = txnId,
+            txnStatus = txnStatus,
+            txnType = txnType,
+            uniqueSplitId = uniqueSplitId,
+            updatedAt = updatedAt,
+            updatedBy = updatedBy,
+            updatedById = updatedById,
+            utr = utr,
+            vendorId = vendorId
+          }
+
+instance ToTType' Beam.PgPaymentSettlementReport Lib.Finance.Domain.Types.PgPaymentSettlementReport.PgPaymentSettlementReport where
+  toTType' (Lib.Finance.Domain.Types.PgPaymentSettlementReport.PgPaymentSettlementReport {..}) = do
+    Beam.PgPaymentSettlementReportT
+      { Beam.bankCode = bankCode,
+        Beam.bankId = bankId,
+        Beam.cardNumber = cardNumber,
+        Beam.cardType = cardType,
+        Beam.chargebackAmount = chargebackAmount,
+        Beam.chargebackId = chargebackId,
+        Beam.chargebackReasonCode = chargebackReasonCode,
+        Beam.chargebackStatus = chargebackStatus,
+        Beam.createdAt = createdAt,
+        Beam.createdBy = createdBy,
+        Beam.createdById = createdById,
+        Beam.currency = currency,
+        Beam.disputeId = disputeId,
+        Beam.disputeType = disputeType,
+        Beam.id = Kernel.Types.Id.getId id,
+        Beam.isValidSubscriptionPurchase = isValidSubscriptionPurchase,
+        Beam.merchantId = merchantId,
+        Beam.merchantOperatingCityId = merchantOperatingCityId,
+        Beam.orderId = orderId,
+        Beam.orderType = orderType,
+        Beam.paymentGateway = paymentGateway,
+        Beam.paymentMethod = paymentMethod,
+        Beam.paymentMethodSubType = paymentMethodSubType,
+        Beam.pgApprovalCode = pgApprovalCode,
+        Beam.pgBaseFee = pgBaseFee,
+        Beam.pgTax = pgTax,
+        Beam.rawData = rawData,
+        Beam.referenceId = referenceId,
+        Beam.referenceType = referenceType,
+        Beam.refundAmount = refundAmount,
+        Beam.refundArn = refundArn,
+        Beam.refundBaseFee = refundBaseFee,
+        Beam.refundDate = refundDate,
+        Beam.refundId = refundId,
+        Beam.refundMethod = refundMethod,
+        Beam.refundReasonCode = refundReasonCode,
+        Beam.refundTax = refundTax,
+        Beam.rrn = rrn,
+        Beam.settlementAmount = settlementAmount,
+        Beam.settlementDate = settlementDate,
+        Beam.settlementId = settlementId,
+        Beam.settlementMode = settlementMode,
+        Beam.settlementType = settlementType,
+        Beam.subscriptionPurchaseId = subscriptionPurchaseId,
+        Beam.txnAmount = txnAmount,
+        Beam.txnDate = txnDate,
+        Beam.txnId = txnId,
+        Beam.txnStatus = txnStatus,
+        Beam.txnType = txnType,
+        Beam.uniqueSplitId = uniqueSplitId,
+        Beam.updatedAt = updatedAt,
+        Beam.updatedBy = updatedBy,
+        Beam.updatedById = updatedById,
+        Beam.utr = utr,
+        Beam.vendorId = vendorId
+      }

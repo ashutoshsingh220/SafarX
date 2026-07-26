@@ -1,0 +1,103 @@
+imports:
+  Merchant: Domain.Types.Merchant
+  MerchantOperatingCity: Domain.Types.MerchantOperatingCity
+  Plan: Domain.Types.Plan
+  Frequency: Domain.Types.Plan
+  PaymentOrder: Lib.Payment.Domain.Types.PaymentOrder
+  UTCTime: Kernel.Prelude
+  HighPrecMoney: Kernel.Types.Common
+  VehicleCategory: Domain.Types.VehicleCategory
+  WaiveOffMode: Domain.Types.DriverPlan
+  ServiceNames: Domain.Types.Extra.Plan
+  Invoice: Lib.Finance.Domain.Types.Invoice
+  Value: Data.Aeson
+  ActorType: Lib.Finance.Core.Types
+
+SubscriptionPurchase:
+  tableName: subscription_purchase
+  derives: "Generic, Show, Eq"
+
+  types:
+    SubscriptionPurchaseStatus:
+      enum: "PENDING,ACTIVE,EXPIRED,FAILED,EXHAUSTED"
+      derive': "Generic, Show, ToJSON, FromJSON, ToSchema, Ord, Eq, Read, ToParamSchema"
+    SubscriptionOwnerType:
+      enum: "DRIVER, FLEET_OWNER"
+      derive': "Generic, Show, ToJSON, FromJSON, ToSchema, Ord, Eq, Read, ToParamSchema"
+
+  # Audit: SharedLogic.Finance.SubscriptionPurchase.
+  # NOTE: Do not use create/update queries directly (except updateReconciliationStatus). Mask sensitive values in subscriptionPurchaseToAuditValue
+  fields:
+    id: Id SubscriptionPurchase
+    ownerId: Text
+    ownerType: SubscriptionOwnerType
+    planId: Id Plan
+    planFrequency: Frequency
+    planRideCredit: HighPrecMoney
+    planFee: HighPrecMoney
+    purchaseTimestamp: UTCTime
+    paymentOrderId: Id PaymentOrder
+    financeInvoiceId: Maybe (Id Invoice)
+    status: SubscriptionPurchaseStatus
+    expiryDate: Maybe UTCTime
+    startDate: Maybe UTCTime
+    vehicleCategory: Maybe VehicleCategory
+    enableServiceUsageCharge: Bool
+    waiverOffPercentage: HighPrecMoney
+    waiveOfMode: WaiveOffMode
+    waiveOffEnabledOn: Maybe UTCTime
+    waiveOffValidTill: Maybe UTCTime
+    serviceName: ServiceNames
+    merchantId: Id Merchant
+    merchantOperatingCityId: Id MerchantOperatingCity
+    reconciliationStatus: Maybe Value
+
+    # --- Audit ---
+    createdBy: Maybe ActorType                     # Who created this record
+    createdById: Maybe Text                        # requestId for UNKNOWN/SYSTEM, jobId for JOB, personId for PERSON/DASHBOARD_PERSON
+    updatedBy: Maybe ActorType                     # Who updated this record
+    updatedById: Maybe Text                        # requestId for UNKNOWN/SYSTEM, jobId for JOB, personId for PERSON/DASHBOARD_PERSON
+
+  domainInstance:
+    - Custom Kernel.Beam.Lib.UtilsTH.mkBeamInstancesForEnumAndList <SubscriptionPurchaseStatus>
+    - Custom Kernel.Utils.TH.mkHttpInstancesForEnum <SubscriptionPurchaseStatus>
+    - Custom Kernel.Beam.Lib.UtilsTH.mkBeamInstancesForEnumAndList <SubscriptionOwnerType>
+
+  constraints:
+    id: PrimaryKey
+    paymentOrderId: "!SecondaryKey"
+    ownerId: "!SecondaryKey"
+    financeInvoiceId: "!SecondaryKey"
+
+  default:
+    enableServiceUsageCharge: "true"
+    waiverOffPercentage: "0"
+    waiveOfMode: "'NO_WAIVE_OFF'"
+    serviceName: "'PREPAID_SUBSCRIPTION'"
+
+  queries:
+    findByPaymentOrderId:
+      kvFunction: findOneWithKV
+      where: paymentOrderId
+
+    findAllByOwnerAndStatus:
+      kvFunction: findAllWithKV
+      where:
+        and: [ownerId, ownerType, status]
+
+    findActiveByOwner:
+      kvFunction: findOneWithKV
+      where:
+        and: [ownerId, ownerType, status]
+
+    updateStatusById:
+      kvFunction: updateOneWithKV
+      params: [status, updatedAt, updatedBy, updatedById]
+      where: id
+    updateReconciliationStatus:
+      kvFunction: updateOneWithKV
+      params: [reconciliationStatus, updatedAt] # reconciliation snapshot only: no audit, no updatedBy/updatedById
+      where: id
+
+  extraOperations:
+    - EXTRA_QUERY_FILE

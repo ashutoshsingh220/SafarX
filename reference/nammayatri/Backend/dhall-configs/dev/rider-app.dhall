@@ -1,0 +1,544 @@
+let common = ./common.dhall
+
+let sec = ./secrets/rider-app.dhall
+
+let globalCommon = ../generic/common.dhall
+
+let riderAppPort = Natural/show (env:SERVICE_PORT ? 8013)
+
+let mockServerPort = Natural/show (env:MOCK_SERVER_PORT ? 8080)
+
+let ltsPort = Natural/show (env:LOCATION_TRACKING_SERVICE_PORT ? 8081)
+
+let driverAppInternalPort = Natural/show (env:DRIVER_APP_INTERNAL_PORT ? 8116)
+
+let ondcUrl = "https://analytics-api.aws.ondc.org/v1/api/push-txn-logs"
+
+let sosAlertsTopicARN =
+      "arn:aws:chatbot::463356420488:chat-configuration/slack-channel/sos-notifications"
+
+let slackNotificationConfig =
+      { snsTopicArn = Some sosAlertsTopicARN
+      , gcpProjectId = Some "ny-sandbox"
+      , gcpTopicId = Some "slack-alerts"
+      , isForcedAWS = True
+      }
+
+let esqDBCfg =
+      { connectHost = "localhost"
+      , connectPort = env:DB_PRIMARY_PORT ? 5434
+      , connectUser = sec.dbUserId
+      , connectPassword = sec.dbPassword
+      , connectDatabase = "atlas_dev"
+      , connectSchemaName = "atlas_app"
+      , connectionPoolCount = +10
+      }
+
+let esqDBReplicaCfg =
+      { connectHost = esqDBCfg.connectHost
+      , connectPort = env:DB_PRIMARY_PORT ? 5434
+      , connectUser = esqDBCfg.connectUser
+      , connectPassword = esqDBCfg.connectPassword
+      , connectDatabase = esqDBCfg.connectDatabase
+      , connectSchemaName = esqDBCfg.connectSchemaName
+      , connectionPoolCount = esqDBCfg.connectionPoolCount
+      }
+
+let rcfg =
+      { connectHost = "localhost"
+      , connectPort = env:REDIS_PORT ? 6379
+      , connectAuth = None Text
+      , connectDatabase = +0
+      , connectMaxConnections = +50
+      , connectMaxIdleTime = +30
+      , connectTimeout = None Integer
+      , connectReadOnly = True
+      }
+
+let hcfg =
+      { connectHost = rcfg.connectHost
+      , connectPort = rcfg.connectPort
+      , connectAuth = rcfg.connectAuth
+      , connectDatabase = rcfg.connectDatabase
+      , connectMaxConnections = rcfg.connectMaxConnections
+      , connectMaxIdleTime = rcfg.connectMaxIdleTime
+      , connectTimeout = rcfg.connectTimeout
+      , connectReadOnly = True
+      }
+
+let ltsRedis =
+      { connectHost = "localhost"
+      , connectPort = env:REDIS_PORT ? 6379
+      , connectAuth = None Text
+      , connectDatabase = +1
+      , connectMaxConnections = +50
+      , connectMaxIdleTime = +30
+      , connectTimeout = None Integer
+      , connectReadOnly = True
+      }
+
+let ltsSecondaryRedis =
+      { connectHost = "localhost"
+      , connectPort = env:REDIS_PORT ? 6379
+      , connectAuth = None Text
+      , connectDatabase = +0
+      , connectMaxConnections = +50
+      , connectMaxIdleTime = +30
+      , connectTimeout = None Integer
+      , connectReadOnly = True
+      }
+
+let smsConfig =
+      { sessionConfig = common.smsSessionConfig
+      , credConfig =
+        { username = common.smsUserName
+        , password = common.smsPassword
+        , otpHash = sec.smsOtpHash
+        , token = None Text
+        }
+      , useFakeSms = Some 7891
+      , url = "http://localhost:${mockServerPort}/sms"
+      , sender = "JUSPAY"
+      }
+
+let InfoBIPConfig =
+      { username = common.InfoBIPConfig.username
+      , password = common.InfoBIPConfig.password
+      , token = common.InfoBIPConfig.token
+      , url = "https://gye1yw.api.infobip.com"
+      , webhookurl = "http://localhost:${riderAppPort}/v2/update/status"
+      , sender = "JUSPAY"
+      }
+
+let sampleKafkaConfig
+    : globalCommon.kafkaConfig
+    = { topicName = "rider-app-events-updates", kafkaKey = "rider-app" }
+
+let autoCompleteKafkaConfig
+    : globalCommon.kafkaConfig
+    = { topicName = "AutoCompleteData"
+      , kafkaKey = "rider-app-autocomplete-events"
+      }
+
+let marketingParamsKafkaConfig
+    : globalCommon.kafkaConfig
+    = { topicName = "MarketingParamsData"
+      , kafkaKey = "rider-app-marketing-events"
+      }
+
+let marketingParamsPreLoginKafkaConfig
+    : globalCommon.kafkaConfig
+    = { topicName = "MarketingParamsPreLoginData"
+      , kafkaKey = "rider-app-marketing-events"
+      }
+
+let routeDataKafkaConfig
+    : globalCommon.kafkaConfig
+    = { topicName = "RouteCollection"
+      , kafkaKey = "rider-app-route-data-events"
+      }
+
+let exophoneKafkaConfig
+    : globalCommon.kafkaConfig
+    = { topicName = "ExophoneData", kafkaKey = "rider-app-exophone-events" }
+
+let sampleLogConfig
+    : Text
+    = "log-stream"
+
+let samplePrometheusConfig
+    : Text
+    = "prometheus-stream"
+
+let eventStreamMappings =
+      [ { streamName = globalCommon.eventStreamNameType.KAFKA_STREAM
+        , streamConfig = globalCommon.streamConfig.KafkaStream sampleKafkaConfig
+        , eventTypes =
+          [ globalCommon.eventType.RideCreated
+          , globalCommon.eventType.RideStarted
+          , globalCommon.eventType.RideEnded
+          , globalCommon.eventType.RideCancelled
+          , globalCommon.eventType.BookingCreated
+          , globalCommon.eventType.BookingCancelled
+          , globalCommon.eventType.BookingCompleted
+          , globalCommon.eventType.SearchRequest
+          , globalCommon.eventType.Quotes
+          , globalCommon.eventType.Estimate
+          ]
+        }
+      , { streamName = globalCommon.eventStreamNameType.KAFKA_STREAM
+        , streamConfig =
+            globalCommon.streamConfig.KafkaStream exophoneKafkaConfig
+        , eventTypes = [ globalCommon.eventType.ExophoneData ]
+        }
+      , { streamName = globalCommon.eventStreamNameType.LOG_STREAM
+        , streamConfig = globalCommon.streamConfig.LogStream sampleLogConfig
+        , eventTypes =
+          [ globalCommon.eventType.RideEnded
+          , globalCommon.eventType.RideCancelled
+          ]
+        }
+      , { streamName = globalCommon.eventStreamNameType.PROMETHEUS_STREAM
+        , streamConfig =
+            globalCommon.streamConfig.PrometheusStream samplePrometheusConfig
+        , eventTypes =
+          [ globalCommon.eventType.RideCreated
+          , globalCommon.eventType.SearchRequest
+          ]
+        }
+      , { streamName = globalCommon.eventStreamNameType.KAFKA_STREAM
+        , streamConfig =
+            globalCommon.streamConfig.KafkaStream autoCompleteKafkaConfig
+        , eventTypes = [ globalCommon.eventType.AutoCompleteData ]
+        }
+      , { streamName = globalCommon.eventStreamNameType.KAFKA_STREAM
+        , streamConfig =
+            globalCommon.streamConfig.KafkaStream routeDataKafkaConfig
+        , eventTypes = [ globalCommon.eventType.RouteCollection ]
+        }
+      , { streamName = globalCommon.eventStreamNameType.KAFKA_STREAM
+        , streamConfig =
+            globalCommon.streamConfig.KafkaStream marketingParamsKafkaConfig
+        , eventTypes = [ globalCommon.eventType.MarketingParamsData ]
+        }
+      , { streamName = globalCommon.eventStreamNameType.KAFKA_STREAM
+        , streamConfig =
+            globalCommon.streamConfig.KafkaStream
+              marketingParamsPreLoginKafkaConfig
+        , eventTypes = [ globalCommon.eventType.MarketingParamsPreLoginData ]
+        }
+      ]
+
+let apiRateLimitOptions = { limit = +8000, limitResetTimeInSec = +1 }
+
+let searchRateLimitOptions = { limit = +8000, limitResetTimeInSec = +1 }
+
+let slackCfg =
+      { channelName = "#beckn-driver-onboard-test"
+      , slackToken = common.slackToken
+      }
+
+let encTools = { service = common.passetto, hashSalt = sec.encHashSalt }
+
+let kafkaProducerCfg =
+      { brokers =
+        [ "localhost:${Natural/show (env:KAFKA_BROKER_PORT ? 29092)}" ]
+      , kafkaCompression = common.kafkaCompression.LZ4
+      }
+
+let secondaryKafkaProducerCfg = Some kafkaProducerCfg
+
+let cacheConfig = { configsExpTime = +86400 }
+
+let cacheTranslationConfig = { expTranslationTime = +3600 }
+
+let cacheFeedbackFormConfig = { configsExpTime = +5184000 }
+
+let hccfg =
+      { connectHost = "localhost"
+      , connectPort = env:REDIS_CLUSTER_PORT ? 30001
+      , connectAuth = None Text
+      , connectDatabase = +0
+      , connectMaxConnections = +50
+      , connectMaxIdleTime = +30
+      , connectTimeout = None Integer
+      , connectReadOnly = True
+      }
+
+let hccfgSecondary =
+      { connectHost = "localhost"
+      , connectPort = env:REDIS_SECONDARY_CLUSTER_PORT ? 30002
+      , connectAuth = None Text
+      , connectDatabase = +0
+      , connectMaxConnections = +50
+      , connectMaxIdleTime = +30
+      , connectTimeout = None Integer
+      , connectReadOnly = True
+      }
+
+let kvConfigUpdateFrequency = +10
+
+let RiderJobType =
+      < CheckPNAndSendSMS
+      | ScheduledRidePopupToRider
+      | ScheduledRideNotificationsToRider
+      | ScheduleTagActionNotification
+      | SafetyIVR
+      | CallPoliceApi
+      | SafetyCSAlert
+      | CheckExotelCallStatusAndNotifyBPP
+      | ExecutePaymentIntent
+      | CancelExecutePaymentIntent
+      | OtherJobTypes
+      | MetroIncentivePayout
+      | Daily
+      | Weekly
+      | Monthly
+      | Quarterly
+      | DailyUpdateTag
+      | WeeklyUpdateTag
+      | MonthlyUpdateTag
+      | QuarterlyUpdateTag
+      | PostRideSafetyNotification
+      | UpdateCrisUtsData
+      | CheckMultimodalConfirmFail
+      | CheckRefundStatus
+      | ExecuteCashRideCashbackPayout
+      | MetroBusinessHour
+      | NyRegularMaster
+      | NyRegularInstance
+      | CrisRecon
+      | PaymentOrderStatusCheck
+      | PartnerInvoiceDataExport
+      | UnblockCustomer
+      | UpdateCRISRDSBalance
+      | FRFSSeatHoldReaper
+      | DailyPassStatusUpdate
+      | PassExpiryReminderMaster
+      | SettlementReportIngestion
+      | ReconcileRewardInflight
+      >
+
+let jobInfoMapx =
+      [ { mapKey = RiderJobType.CheckPNAndSendSMS, mapValue = True }
+      , { mapKey = RiderJobType.ScheduledRidePopupToRider, mapValue = False }
+      , { mapKey = RiderJobType.ScheduledRideNotificationsToRider
+        , mapValue = True
+        }
+      , { mapKey = RiderJobType.ScheduleTagActionNotification
+        , mapValue = False
+        }
+      , { mapKey = RiderJobType.SafetyIVR, mapValue = False }
+      , { mapKey = RiderJobType.ExecutePaymentIntent, mapValue = True }
+      , { mapKey = RiderJobType.CancelExecutePaymentIntent, mapValue = True }
+      , { mapKey = RiderJobType.CallPoliceApi, mapValue = False }
+      , { mapKey = RiderJobType.SafetyCSAlert, mapValue = False }
+      , { mapKey = RiderJobType.CheckExotelCallStatusAndNotifyBPP
+        , mapValue = False
+        }
+      , { mapKey = RiderJobType.OtherJobTypes, mapValue = False }
+      , { mapKey = RiderJobType.MetroIncentivePayout, mapValue = True }
+      , { mapKey = RiderJobType.Daily, mapValue = True }
+      , { mapKey = RiderJobType.Weekly, mapValue = True }
+      , { mapKey = RiderJobType.Monthly, mapValue = True }
+      , { mapKey = RiderJobType.Quarterly, mapValue = True }
+      , { mapKey = RiderJobType.DailyUpdateTag, mapValue = True }
+      , { mapKey = RiderJobType.WeeklyUpdateTag, mapValue = True }
+      , { mapKey = RiderJobType.MonthlyUpdateTag, mapValue = True }
+      , { mapKey = RiderJobType.QuarterlyUpdateTag, mapValue = True }
+      , { mapKey = RiderJobType.PostRideSafetyNotification, mapValue = False }
+      , { mapKey = RiderJobType.UpdateCrisUtsData, mapValue = True }
+      , { mapKey = RiderJobType.CheckMultimodalConfirmFail, mapValue = True }
+      , { mapKey = RiderJobType.CheckRefundStatus, mapValue = True }
+      , { mapKey = RiderJobType.ExecuteCashRideCashbackPayout, mapValue = True }
+      , { mapKey = RiderJobType.MetroBusinessHour, mapValue = True }
+      , { mapKey = RiderJobType.NyRegularInstance, mapValue = True }
+      , { mapKey = RiderJobType.NyRegularMaster, mapValue = True }
+      , { mapKey = RiderJobType.CrisRecon, mapValue = True }
+      , { mapKey = RiderJobType.PaymentOrderStatusCheck, mapValue = True }
+      , { mapKey = RiderJobType.PartnerInvoiceDataExport, mapValue = True }
+      , { mapKey = RiderJobType.UnblockCustomer, mapValue = True }
+      , { mapKey = RiderJobType.UpdateCRISRDSBalance, mapValue = True }
+      , { mapKey = RiderJobType.FRFSSeatHoldReaper, mapValue = True }
+      , { mapKey = RiderJobType.DailyPassStatusUpdate, mapValue = True }
+      , { mapKey = RiderJobType.PassExpiryReminderMaster, mapValue = True }
+      , { mapKey = RiderJobType.SettlementReportIngestion, mapValue = True }
+      , { mapKey = RiderJobType.ReconcileRewardInflight, mapValue = False }
+      ]
+
+let cacConfig =
+      { host = "http://localhost:${mockServerPort}"
+      , interval = 10
+      , tenant = "test"
+      , retryConnection = False
+      , cacExpTime = +86400
+      , enablePolling = True
+      , enableCac = False
+      }
+
+let cacTenants = [ "dev", "test" ]
+
+let superPositionConfig =
+      { host = "http://localhost:${mockServerPort}"
+      , interval = 10
+      , tenants = [ "dev", "test" ]
+      , retryConnection = False
+      , enablePolling = True
+      , enableSuperPosition = False
+      }
+
+let LocationTrackingeServiceConfig =
+      { url = "http://localhost:${ltsPort}/", secondaryUrl = None Text }
+
+let kafkaClickhouseCfg =
+      { username = sec.clickHouseUsername
+      , host = "localhost"
+      , port = env:CLICKHOUSE_PORT ? 8123
+      , password = sec.clickHousePassword
+      , database = "atlas_kafka"
+      , tls = False
+      , retryInterval = [ +0 ]
+      }
+
+let riderClickhouseCfg =
+      { username = sec.clickHouseUsername
+      , host = "localhost"
+      , port = env:CLICKHOUSE_PORT ? 8123
+      , password = sec.clickHousePassword
+      , database = "atlas_app"
+      , tls = False
+      , retryInterval = [ +0 ]
+      }
+
+let nearByDriverAPIRateLimitOptions = { limit = +5, limitResetTimeInSec = +30 }
+
+let seatBookingConfirmAPIRateLimitOptions =
+      { limit = +1, limitResetTimeInSec = +30 }
+
+let sosTrackingRateLimitOptions = { limit = +60, limitResetTimeInSec = +60 }
+
+let erssStatusUpdateRateLimitOptions =
+      { limit = +20, limitResetTimeInSec = +60 }
+
+let dashboardClickhouseCfg = riderClickhouseCfg
+
+let tsServiceConfig = { url = "http://0.0.0.0:3001/" }
+
+let inMemConfig = { enableInMem = True, maxInMemSize = +100000000 }
+
+let disableViaPointTimetableCheck = False
+
+let noSignatureSubscribers =
+      [ "pre-prod-ondc-ticketing-api-delhi.transportstack.in" ]
+
+let emailServiceConfig =
+      { sendGridUrl = Some "https://api.sendgrid.com/v3/mail/send"
+      , isForcedAWS = True
+      }
+
+in  { esqDBCfg
+    , esqDBReplicaCfg
+    , hedisCfg = hcfg
+    , hedisClusterCfg = hccfg
+    , hedisSecondaryClusterCfg = hccfgSecondary
+    , hedisNonCriticalCfg = hcfg
+    , hedisNonCriticalClusterCfg = hccfg
+    , hedisMigrationStage = False
+    , ltsRedis
+    , ltsSecondaryRedis
+    , cutOffHedisCluster = False
+    , cutOffNonCriticalHedisCluster = False
+    , smsCfg = smsConfig
+    , infoBIPCfg = InfoBIPConfig
+    , port = Natural/toInteger (env:SERVICE_PORT ? 8013)
+    , metricsPort = Natural/toInteger (env:METRICS_PORT ? 9999)
+    , hostName = "localhost"
+    , nwAddress = "http://localhost:${riderAppPort}/beckn/cab/v1"
+    , selfUIUrl = "http://localhost:${riderAppPort}/v2/"
+    , selfBaseUrl = "http://localhost:${riderAppPort}/"
+    , signingKey = sec.signingKey
+    , signatureExpiry = common.signatureExpiry
+    , s3Config = common.s3Config
+    , s3PublicConfig = common.s3PublicConfig
+    , s3RewardsConfig = common.s3RewardsConfig
+    , searchRequestExpiry = Some +600
+    , migrationPath =
+      [ "dev/migrations-read-only/rider-app"
+      , "dev/ddl-migrations/scheduler"
+      , env:RIDER_APP_MIGRATION_PATH as Text ? "dev/ddl-migrations/rider-app"
+      ]
+    , autoMigrate = True
+    , coreVersion = "0.9.4"
+    , loggerConfig =
+            common.loggerConfig
+        //  { logFilePath = "/tmp/rider-app.log", logRawSql = True }
+    , googleTranslateUrl = common.googleTranslateUrl
+    , googleTranslateKey = common.googleTranslateKey
+    , internalAPIKey = sec.internalAPIKey
+    , internalClickhouseAPIKey = sec.internalClickhouseAPIKey
+    , metricsSearchDurationTimeout = +45
+    , graceTerminationPeriod = +90
+    , apiRateLimitOptions
+    , searchRateLimitOptions
+    , slackCfg
+    , searchLimitExceedNotificationTemplate =
+        "Customer with {#cust-id#} is exceeding the search limit."
+    , httpClientOptions = common.httpClientOptions
+    , shortDurationRetryCfg = common.shortDurationRetryCfg
+    , longDurationRetryCfg = common.longDurationRetryCfg
+    , authTokenCacheExpiry = +600
+    , disableSignatureAuth = False
+    , encTools
+    , kafkaProducerCfg
+    , secondaryKafkaProducerCfg
+    , dashboardToken = sec.dashboardToken
+    , cacheConfig
+    , cacheTranslationConfig
+    , cacheFeedbackFormConfig
+    , maxEmergencyNumberCount = +3
+    , storeRidesTimeLimit = +3600
+    , minTripDistanceForReferralCfg = Some +1000
+    , enableRedisLatencyLogging = False
+    , enablePrometheusMetricLogging = True
+    , eventStreamMap = eventStreamMappings
+    , kvConfigUpdateFrequency
+    , incomingAPIResponseTimeout = +15
+    , maxShards = +5
+    , jobInfoMapx
+    , internalEndPointMap = common.internalEndPointMap
+    , schedulerSetName = "Scheduled_Jobs_Rider"
+    , schedulerType = common.schedulerType.RedisBased
+    , _version = "2.1.0"
+    , hotSpotExpiry = +604800
+    , cacConfig
+    , cacTenants
+    , tsServiceConfig
+    , superPositionConfig
+    , kafkaClickhouseCfg
+    , riderClickhouseCfg
+    , dashboardClickhouseCfg
+    , ondcTokenMap = sec.ondcTokenMap
+    , iosValidateEnpoint = "http://localhost:3000/validateIosToken?idToken="
+    , isMetroTestTransaction = False
+    , urlShortnerConfig = common.urlShortnerConfig
+    , sosAlertsTopicARN
+    , slackNotificationConfig
+    , ondcRegistryUrl = common.ondcRegistryUrl
+    , ondcGatewayUrl = common.ondcGatewayUrl
+    , nyRegistryUrl = common.nyRegistryUrl
+    , nyGatewayUrl = common.nyGatewayUrl
+    , ltsCfg = LocationTrackingeServiceConfig
+    , nammayatriRegistryConfig = common.nammayatriRegistryConfig
+    , googleSAPrivateKey = sec.googleSAPrivateKey
+    , locationTrackingServiceKey = sec.locationTrackingServiceKey
+    , zendeskWebhookToken = sec.zendeskWebhookToken
+    , nearByDriverAPIRateLimitOptions
+    , seatBookingConfirmAPIRateLimitOptions
+    , sosTrackingRateLimitOptions
+    , erssStatusUpdateRateLimitOptions
+    , inMemConfig
+    , disableViaPointTimetableCheck
+    , parkingApiKey = sec.parkingApiKey
+    , frfsMetricsRateLimitHits = +100
+    , frfsMetricsRateLimitWindowSec = +60
+    , corporatePartnerApiToken = sec.corporatePartnerApiToken
+    , noSignatureSubscribers
+    , sftpConfig =
+      { host = "localhost"
+      , port = +22
+      , username = "dev"
+      , privateKeyPath = None Text
+      , password = Some "dev_password"
+      , remotePath = "/tmp/remote_path"
+      }
+    , blackListedJobs = [] : List Text
+    , useCachedActiveRidesList = False
+    , emailServiceConfig
+    , masterCloudProxyConfig =
+      { masterUrl = Some "http://localhost:${driverAppInternalPort}"
+      , masterSecret = Some "123"
+      }
+    , bapHostRedirectMap = [] : List { mapKey : Text, mapValue : Optional Text }
+    , xyneWebhookSigningSecret = "<XYNE_WEBHOOK_SIGNING_SECRET>"
+    , xyneWebhookBearerToken = "<XYNE_WEBHOOK_BEARER_TOKEN>"
+    }

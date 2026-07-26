@@ -1,0 +1,66 @@
+# Finance Kernel - Account Table
+# Namma-DSL YAML specification
+
+imports:
+  UTCTime: Kernel.Prelude
+  Currency: Kernel.Types.Common
+  HighPrecMoney: Kernel.Types.Common
+
+Account:
+  tableName: finance_account
+  derives: "Generic"
+
+  types:
+    AccountType:
+      enum: "Asset,Liability,Revenue,Expense,External,RideCredit,Control"
+      derive: "ToParamSchema"
+
+    CounterpartyType:
+      enum: "BUYER,SELLER,DRIVER,FLEET_OWNER,GOVERNMENT_DIRECT,GOVERNMENT_INDIRECT,AIRPORT,PG_PAYMENT_JUSPAY,PG_PAYOUT_JUSPAY,RIDER,LOYALTY_WALLET"
+      derive: "ToParamSchema"
+
+    AccountStatus:
+      enum: "Active,Suspended,Closed"
+      derive: "ToParamSchema"
+
+  fields:
+    id: Id Account
+    accountType: AccountType
+    counterpartyType: Maybe CounterpartyType
+    counterpartyId: Maybe Text
+    subLedger: Maybe Text
+    currency: Currency
+    balance: HighPrecMoney
+    status: AccountStatus
+    description: Maybe Text
+    merchantId: Text
+    merchantOperatingCityId: Text
+    createdAt: UTCTime
+    updatedAt: UTCTime
+
+  constraints:
+    id: PrimaryKey
+    counterpartyId: "!SecondaryKey"
+
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
+
+    findByCounterpartyAndTypeAndSubLedger:
+      kvFunction: findOneWithKV
+      where:
+        and: [counterpartyType, counterpartyId, accountType, subLedger]
+
+    updateBalance:
+      kvFunction: updateWithKV
+      params: [balance, updatedAt]
+      where: id
+
+    updateStatus:
+      kvFunction: updateWithKV
+      params: [status, updatedAt]
+      where: id
+
+  defaultQueryTypeConstraint: "(Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r)"
+  beamInstance: MakeTableInstancesGenericSchema

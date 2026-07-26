@@ -1,0 +1,126 @@
+imports:
+  Id: Kernel.Types.Id
+  UTCTime: Data.Time
+  APISuccess: Kernel.Types.APISuccess
+  LedgerEntry: Lib.Finance.Domain.Types.LedgerEntry
+  EntryStatus: Lib.Finance.Domain.Types.LedgerEntry
+  Location: Domain.Types.Location
+  HighPrecMoney: Kernel.Types.Common
+  Ride: Domain.Types.Ride
+  PlanSubscribeRes: Domain.Action.UI.Plan
+  PayoutRequestStatus: Lib.Payment.Domain.Types.PayoutRequest
+  EntityName: Lib.Payment.Domain.Types.Common
+  PaymentOrder: Lib.Payment.Domain.Types.PaymentOrder
+  WalletTransactionStatus: Domain.Types.WalletTransaction
+
+module: DriverWallet
+
+types:
+  WalletItem:
+    itemReference: Text
+    itemName: Text
+    itemValue: HighPrecMoney
+    redeemableBalance: HighPrecMoney
+    nonRedeemableBalance: HighPrecMoney
+  WalletItemGroup:
+    totalAmount: HighPrecMoney
+    items: "[WalletItem]"
+  AggregationLevel:
+    enum: "Day,Week,Month"
+    derive: "HttpInstance"
+  WalletAggregateBucket:
+    earnings: HighPrecMoney
+    deductions: HighPrecMoney
+    netEarnings: HighPrecMoney
+    from: UTCTime
+    to: UTCTime
+  WalletSummaryResponse:
+    currentBalance: HighPrecMoney
+    redeemableBalance: HighPrecMoney
+    nonRedeemableBalance: HighPrecMoney
+    netEarningsBalance: HighPrecMoney
+    additions: WalletItemGroup
+    deductions: WalletItemGroup
+    agg: "[WalletAggregateBucket]"
+  TopUpRequest:
+    amount: HighPrecMoney
+    purpose: Maybe Text  # Optional. Use "airport" for airport entry fee recharge; omit for general wallet topup.
+  PayoutHistoryItem:
+    amount: Maybe HighPrecMoney
+    payoutFee: HighPrecMoney
+    entityName: Maybe EntityName
+    status: PayoutRequestStatus
+    timestamp: UTCTime
+    payoutMethod: Text
+    payoutVpa: Maybe Text
+  PayoutHistoryResponse:
+    totalPaidOut: HighPrecMoney
+    lastPayout: Maybe PayoutHistoryItem
+    totalPending: HighPrecMoney
+    items: "[PayoutHistoryItem]"
+
+  WalletBalanceResponse:
+    currentBalance: HighPrecMoney
+
+  PaymentOrderInfo:
+    id: Id PaymentOrder
+    walletStatus: WalletTransactionStatus
+  WalletTransactionHistoryItem:
+    itemReference: Text
+    itemName: Text
+    itemValue: HighPrecMoney
+    isCredit: Bool
+    status: EntryStatus
+    paymentOrder: Maybe PaymentOrderInfo
+    date: UTCTime
+  WalletTransactionHistoryResponse:
+    items: "[WalletTransactionHistoryItem]"
+
+apis:
+  - GET:
+      endpoint: /wallet/balance
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: WalletBalanceResponse
+  - GET:
+      endpoint: /wallet/transactions
+      auth: TokenAuth PROVIDER_TYPE
+      query:
+        - fromDate: UTCTime
+        - toDate: UTCTime
+        - aggBy: AggregationLevel
+      response:
+        type: WalletSummaryResponse
+  - POST:
+      endpoint: /wallet/payout
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: APISuccess
+  - POST:
+      endpoint: /wallet/topup
+      auth: TokenAuth PROVIDER_TYPE
+      request:
+        type: TopUpRequest
+      response:
+        type: PlanSubscribeRes
+  - GET:
+      endpoint: /wallet/payoutHistory
+      auth: TokenAuth PROVIDER_TYPE
+      query:
+        - from: UTCTime
+        - to: UTCTime
+        - status: "[PayoutRequestStatus]"
+        - limit: Int
+        - offset: Int
+      response:
+        type: PayoutHistoryResponse
+  - GET:
+      endpoint: /wallet/transactionHistory
+      auth: TokenAuth PROVIDER_TYPE
+      query:
+        - fromDate: UTCTime
+        - toDate: UTCTime
+        - limit: Int
+        - offset: Int
+      response:
+        type: WalletTransactionHistoryResponse

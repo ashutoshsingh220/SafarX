@@ -1,0 +1,391 @@
+@token1 = {{driver-offer-bpp-auto-token1}}
+@token2 = {{driver-offer-bpp-auto-token2}}
+@driverId = favorit-auto2-0000000000000000000000
+@driver-offer-bpp-host = http://localhost:8016
+@location-tracking-service-host = http://localhost:8081
+@merchantId = favorit0-0000-0000-0000-00000favorit
+
+
+@app-host = http://localhost:8013/v2
+
+# @name healthcheck
+GET {{driver-offer-bpp-host}}/ui
+
+###
+
+# @name healthcheck
+GET {{app-host}}
+
+###
+
+@adminToken = favorit-admin-0000000000000000-token
+
+# @name updateVehicle
+
+POST {{driver-offer-bpp-host}}/ui/org/vehicle/{{driverId}}
+content-type: application/json
+token: {{adminToken}}
+
+{
+    "variant" : "AUTO_RICKSHAW"
+}
+
+###
+
+# driverId is taken from token in DEV move
+
+# @name updateInitial
+POST {{location-tracking-service-host}}/ui/driver/location
+token: {{driverId}}
+mid: {{merchantId}}
+vt: AUTO_RICKSHAW
+dm: ONLINE
+content-type: application/json
+
+[
+    {
+        "pt": {
+            "lat": 14.445332,
+            "lon": 75.919028
+
+        },
+        "ts": "{{$localDatetime iso8601}}",
+        "acc": 0
+    }
+]
+
+###
+
+# @name setActive
+# UPDATE atlas_driver_offer_bpp.person SET merchant_id = 'favorit0-0000-0000-0000-00000favorit' WHERE id = 'favorit-auto1-0000000000000000000000'
+# UPDATE atlas_driver_offer_bpp.registration_token SET merchant_id = 'favorit0-0000-0000-0000-00000favorit' WHERE id = 'favorit-auto1-0000000000000000000000'
+
+POST {{driver-offer-bpp-host}}/ui/driver/setActivity?active=true&mode="ONLINE"
+content-type: application/json
+token: {{token2}}
+
+###
+
+# @name search
+POST {{app-host}}/rideSearch
+content-type: application/json
+token: {{app-token}}
+
+{
+  "fareProductType" : "ONE_WAY",
+  "contents" : {
+    "origin": {
+      "address": {
+          "street": "60 Feet Rd",
+          "state": "Karnataka",
+          "door": "",
+          "country": "India",
+          "city": "Davanagere'test",
+          "building": " ",
+          "areaCode": "",
+          "area": "Vidyanagar"
+      },
+      "gps": {
+          "lat": 14.445332,
+          "lon": 75.919028
+      }
+    },
+    "destination": {
+      "address": {
+              "street": "Hadadi Rd",
+              "state": "Karnataka",
+              "door": "",
+              "country": "India",
+              "city": "Davanagere",
+              "building": "207",
+              "areaCode": "",
+              "area": "Nituvalli"
+          },
+      "gps": {
+          "lat": 14.441555,
+          "lon": 75.922259
+      }
+    }
+  }
+}
+
+###
+
+@searchId = {{search.response.body.searchId}}
+
+# @name quotes
+GET {{app-host}}/rideSearch/{{searchId}}/results
+content-type: application/json
+token: {{app-token}}
+
+###
+
+# @name select
+@estimateId = {{quotes.response.body.estimates[0].id}}
+
+@paymentMethodId = {{quotes.response.body.paymentMethods[0].id}}
+
+# paymentMethodId will work only if autoAssignEnabledV2 is true
+# else paymentMethodId should be specified in confirm API
+
+# "paymentMethodId" : "{{paymentMethodId}}"
+
+POST {{app-host}}/estimate/{{estimateId}}/select2 HTTP/1.1
+content-type: application/json
+token: {{app-token}}
+
+{
+  "customerExtraFeeWithCurrency" : {
+        "amount": 10,
+        "currency" : "INR"
+        },
+  "autoAssignEnabled" : false,
+  "autoAssignEnabledV2" : false,
+  "paymentMethodId" : null,
+  "paymentInstrument" :
+    { "instrumentType": "Cash",
+      "instrumentName": null
+    }
+}
+
+###
+
+# @name nearbySearchRequest
+GET {{driver-offer-bpp-host}}/ui/driver/nearbyRideRequest
+token: {{token2}}
+
+###
+
+# @name offerQuote
+POST {{driver-offer-bpp-host}}/ui/driver/searchRequest/quote/respond
+token: {{token2}}
+content-type: application/json
+
+{
+    "offeredFare": 10,
+    "searchTryId": "{{nearbySearchRequest.response.body.searchRequestsForDriver[0].searchTryId}}",
+    "response" : "Accept"
+}
+
+###
+
+# @name selectedQuotes
+GET {{app-host}}/estimate/{{estimateId}}/quotes
+content-type: application/json
+token: {{app-token}}
+
+###
+
+@selectedQuoteId = {{selectedQuotes.response.body.selectedQuotes[0].id}}
+
+# @name confirmQuote
+
+# POST {{app-host}}/rideSearch/quotes/{{selectedQuoteId}}/confirm?paymentMethodId={{paymentMethodId}}
+
+POST {{app-host}}/rideSearch/quotes/{{selectedQuoteId}}/confirm?paymentInstrument=Cash
+content-type: application/json
+token: {{app-token}}
+
+###
+
+@bookingId = {{confirmQuote.response.body.bookingId}}
+
+# @name list2
+GET {{app-host}}/rideBooking/list
+  ?offset=0
+  &limit=50
+  &onlyActive=false
+content-type: application/json
+token: {{app-token}}
+
+###
+
+# @name listOfCompleted
+GET {{app-host}}/rideBooking/list
+  ?offset=0
+  &limit=50
+  &status="COMPLETED"
+content-type: application/json
+token: {{app-token}}
+
+###
+
+# @name driverList
+GET {{driver-offer-bpp-host}}/ui/driver/ride/list?limit=100&offset=0
+token: {{token2}}
+
+###
+
+# @name driverArrivedPickup
+POST {{driver-offer-bpp-host}}/ui/driver/ride/{{rideId}}/arrived/pickup
+token: {{token2}}
+content-type: application/json
+
+{
+    "lat": 14.445332,
+    "lon": 75.919028
+}
+
+###
+
+@rideId = {{driverList.response.body.list[0].id}}
+@otp = {{list2.response.body.list[0].rideList[0].rideOtp}}
+
+# @name startRide
+POST {{driver-offer-bpp-host}}/ui/driver/ride/{{rideId}}/start
+token: {{token2}}
+content-type: application/json
+
+{
+    "rideOtp": "{{otp}}",
+    "point": {
+            "lat": 14.445332,
+            "lon": 75.919028
+    }
+}
+
+###
+
+# location updates taken from karnatakaLocationUpdates, so mock-google could handle it
+
+# @name update1
+POST {{location-tracking-service-host}}/ui/driver/location
+token: {{driverId}}
+mid: {{merchantId}}
+vt: AUTO_RICKSHAW
+dm: ONLINE
+content-type: application/json
+
+[
+    {
+        "pt": {
+            "lat": 14.445332,
+            "lon": 75.919028
+
+        },
+        "ts": "{{$localDatetime iso8601}}"
+    },
+    {
+        "pt": {
+            "lat": 14.445488,
+            "lon": 75.919687
+
+        },
+        "ts": "{{$localDatetime iso8601}}",
+        "aux": "Tharalabalu Badavane"
+    },
+    {
+        "pt": {
+            "lat": 14.445093,
+            "lon": 75.919955
+
+        },
+        "ts": "{{$localDatetime iso8601}}"
+    },
+    {
+        "pt": {
+            "lat": 14.444636,
+            "lon": 75.920288
+        },
+        "ts": "{{$localDatetime iso8601}}",
+        "aux": "1st Main Rd"
+    }
+]
+
+###
+
+
+# @name update2
+POST {{location-tracking-service-host}}/ui/driver/location
+token: {{driverId}}
+mid: {{merchantId}}
+vt: AUTO_RICKSHAW
+dm: ONLINE
+content-type: application/json
+
+[
+    {
+        "pt": {
+            "lat": 14.444491,
+            "lon": 75.920846
+        },
+        "ts": "{{$localDatetime iso8601}}",
+        "aux": "2nd Cross Rd"
+    },
+    {
+        "pt": {
+            "lat": 14.443816,
+            "lon": 75.921533
+        },
+        "ts": "{{$localDatetime iso8601}}",
+        "aux": "1, Hadadi Rd"
+    },
+    {
+        "pt": {
+            "lat": 14.441555,
+            "lon": 75.922259
+        },
+        "ts": "{{$localDatetime iso8601}}",
+        "aux": "1, Hadadi Rd"
+    }
+]
+
+###
+
+# for testing thresholds specific for bpp, run
+# INSERT INTO atlas_driver_offer_bpp.transporter_config (organization_id, pickup_loc_threshold, drop_loc_threshold, created_at, updated_at) VALUES
+# 	('favorit0-0000-0000-0000-00000favorit', 500, 500, '2022-04-12 15:15:42.233691+00', '2022-04-12 15:15:42.233691+00'),
+# 	('nearest-drivers-testing-organization', 500, 500, '2022-04-12 15:15:42.233691+00', '2022-04-12 15:15:42.233691+00');
+
+# @name rideEnd
+POST {{driver-offer-bpp-host}}/ui/driver/ride/{{rideId}}/end
+token: {{token2}}
+content-type: application/json
+
+{
+  "point": {
+    "lat": 14.441555,
+    "lon": 75.922259
+  }
+}
+
+###
+
+# @name rideCancelByDriver
+POST {{driver-offer-bpp-host}}/ui/driver/ride/{{rideId}}/cancel
+token: {{token2}}
+content-type: application/json
+
+{
+  "reasonCode": "CUSTOMER_NO_SHOW",
+  "additionalInfo" : "User does not showed after 4 minutes"
+}
+
+###
+
+# @name rideCancelByUser
+POST {{app-host}}/rideBooking/{{bookingId}}/cancel
+content-type: application/json
+token: {{app-token}}
+
+{
+  "reasonCode": "OTHER",
+  "reasonStage": "OnAssign",
+  "additionalInfo": "driver is late"
+}
+
+### OnSearch | OnConfirm | OnAssign
+###
+
+@bapRideId = {{list2.response.body.list[0].rideList[0].id}}
+
+# @name feedback
+POST {{app-host}}/feedback/rateRide
+token: {{app-token}}
+content-type: application/json
+
+{
+  "rideId": "{{bapRideId}}",
+  "rating" : 5,
+  "feedbackDetails": "The ride was good"
+}

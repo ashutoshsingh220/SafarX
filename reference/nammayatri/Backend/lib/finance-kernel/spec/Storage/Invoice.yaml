@@ -1,0 +1,139 @@
+# Finance Kernel - Invoice & Invoice Ledger Link Tables
+# Namma-DSL YAML specification
+
+imports:
+  UTCTime: Kernel.Prelude
+  Currency: Kernel.Types.Common
+  HighPrecMoney: Kernel.Types.Common
+  Value: Data.Aeson
+  LedgerEntry: Lib.Finance.Domain.Types.LedgerEntry
+  InvoiceType: Domain.Types.Invoice
+  IssuedToType: Domain.Types.Invoice
+  ActorType: Lib.Finance.Core.Types
+
+Invoice:
+  tableName: finance_invoice
+  derives: "Generic"
+
+  types:
+    InvoiceStatus:
+      enum: "Draft,Issued,Paid,PartiallyPaid,Cancelled,Voided"
+      derive: "HttpInstance"
+
+  # NOTE: Mask sensitive values in invoiceToAuditValue (Invoice.Service)
+  fields:
+    id: Id Invoice
+    invoiceNumber: Text
+    invoiceType: InvoiceType
+    entityReferenceId: Maybe Text
+    issuedToType: IssuedToType
+    issuedToId: Text
+    issuedToName: Maybe Text # SENSITIVE
+    issuedToAddress: Maybe Text # SENSITIVE
+    issuedByType: Text
+    issuedById: Text
+    issuedByName: Maybe Text
+    issuedByAddress: Maybe Text
+    supplierName: Maybe Text
+    supplierAddress: Maybe Text
+    supplierGSTIN: Maybe Text # SENSITIVE
+    supplierTaxNo: Maybe Text # SENSITIVE
+    supplierId: Maybe Text
+    merchantGstin: Maybe Text
+    referenceId: Maybe Text
+    referenceInvoiceNumber: Maybe Text
+    lineItems: Value
+    subtotal: HighPrecMoney
+    taxBreakdown: Maybe Value
+    totalAmount: HighPrecMoney
+    currency: Currency
+    status: InvoiceStatus
+    issuedAt: UTCTime
+    dueAt: Maybe UTCTime
+    periodStart: Maybe UTCTime
+    periodEnd: Maybe UTCTime
+    merchantId: Text
+    merchantOperatingCityId: Text
+    createdAt: UTCTime
+    irn : Maybe Text # SENSITIVE
+    signedQRCode : Maybe Text # SENSITIVE
+    paymentMode: Maybe Text
+
+    # --- Audit ---
+    createdBy: Maybe ActorType                     # Who created this record
+    createdById: Maybe Text                        # requestId for UNKNOWN/SYSTEM, jobId for JOB, personId for PERSON/DASHBOARD_PERSON
+    updatedBy: Maybe ActorType                     # Who updated this record
+    updatedById: Maybe Text                        # requestId for UNKNOWN/SYSTEM, jobId for JOB, personId for PERSON/DASHBOARD_PERSON
+
+  sqlType:
+    lineItems: jsonb
+
+  constraints:
+    id: PrimaryKey
+    invoiceNumber: "!SecondaryKey"
+    issuedToId: "!SecondaryKey"
+    entityReferenceId: "!SecondaryKey"
+    supplierId: "!SecondaryKey"
+    referenceId: "!SecondaryKey"
+
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
+
+    findByNumber:
+      kvFunction: findOneWithKV
+      where: invoiceNumber
+
+    findByIssuedTo:
+      kvFunction: findAllWithKV
+      where:
+        and: [issuedToType, issuedToId]
+
+    updateStatus:
+      kvFunction: updateWithKV
+      params: [status, updatedBy, updatedById]
+      where: id
+
+    updateIrnAndSignedQRByInvoiceId:
+      kvFunction: updateWithKV
+      params: [irn, signedQRCode, updatedBy, updatedById]
+      where: id
+
+    findByReferenceId:
+      kvFunction: findAllWithKV
+      where: referenceId
+
+  extraOperations:
+    - EXTRA_QUERY_FILE
+
+  defaultQueryTypeConstraint: "(Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r)"
+  beamInstance: MakeTableInstancesGenericSchema
+
+InvoiceLedgerLink:
+  tableName: finance_invoice_ledger_link
+  derives: "Generic"
+  fields:
+    id: Id InvoiceLedgerLink
+    invoiceId: Id Invoice
+    ledgerEntryId: Id LedgerEntry
+    merchantId: Text
+    merchantOperatingCityId: Text
+    createdAt: UTCTime
+
+  constraints:
+    id: PrimaryKey
+    invoiceId: SecondaryKey
+    ledgerEntryId: SecondaryKey
+
+  queries:
+    findByInvoice:
+      kvFunction: findAllWithKV
+      where: invoiceId
+
+    findByLedgerEntry:
+      kvFunction: findOneWithKV
+      where: ledgerEntryId
+
+  defaultQueryTypeConstraint: "(Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r)"
+  beamInstance: MakeTableInstancesGenericSchema

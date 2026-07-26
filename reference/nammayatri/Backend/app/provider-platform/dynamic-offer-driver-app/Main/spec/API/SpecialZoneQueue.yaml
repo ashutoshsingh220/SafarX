@@ -1,0 +1,56 @@
+imports:
+  Id: Kernel.Types.Id
+  APISuccess: Kernel.Types.APISuccess
+  HighPrecMoney: Kernel.Types.Common
+  SpecialZoneQueueRequest: Domain.Types.SpecialZoneQueueRequest
+  SpecialZoneQueueRequestResponse: Domain.Types.SpecialZoneQueueRequest
+  SpecialZoneQueueRequestStatus: Domain.Types.SpecialZoneQueueRequest
+
+module: SpecialZoneQueue
+
+types:
+  SpecialZoneQueueRequestRes:
+    requestId: Id SpecialZoneQueueRequest
+    gateId: Text
+    gateName: Text
+    specialLocationId: Text
+    specialLocationName: Text
+    vehicleType: Text
+    validTill: UTCTime
+    status: SpecialZoneQueueRequestStatus
+    perKmFare: Maybe HighPrecMoney
+    isDemandHigh: Bool
+    demandCount: Int
+
+  SpecialZoneQueueRequestListRes:
+    requests: "[SpecialZoneQueueRequestRes]"
+    currentSkipCount: Int
+    maxSkipsBeforeQueueRemoval: Maybe Int
+
+  SpecialZoneQueueRespondReq:
+    response: SpecialZoneQueueRequestResponse
+
+apis:
+  - GET:
+      endpoint: /specialZoneQueue/request
+      auth: TokenAuth PROVIDER_TYPE
+      response:
+        type: SpecialZoneQueueRequestListRes
+
+  - POST:
+      endpoint: /specialZoneQueue/request/{requestId}/respond
+      auth: TokenAuth PROVIDER_TYPE
+      params:
+        requestId: Id SpecialZoneQueueRequest
+      request:
+        type: SpecialZoneQueueRespondReq
+      response:
+        type: APISuccess
+
+  - POST:
+      endpoint: /specialZoneQueue/request/{requestId}/cancel
+      auth: TokenAuth PROVIDER_TYPE
+      params:
+        requestId: Id SpecialZoneQueueRequest
+      response:
+        type: APISuccess

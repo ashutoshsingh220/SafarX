@@ -1,0 +1,246 @@
+name: rider-app
+version: 0.1.0.0
+github: "nammayatri/nammayatri"
+license: AllRightsReserved
+author: "nammayatri"
+maintainer: "nammayatri"
+copyright: "2023 Juspay Technologies Private Limited"
+
+synopsis: The nammayatri rider application
+
+flags:
+  Local:
+    description: Enable this flag for faster compile times
+    manual: true
+    default: false
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description: Please see the README on GitHub at <https://github.com/nammayatri/nammayatri#readme>
+
+default-extensions:
+  - ConstraintKinds
+  - DataKinds
+  - DefaultSignatures
+  - DerivingStrategies
+  - DeriveAnyClass
+  - DeriveFunctor
+  - DeriveGeneric
+  - DerivingStrategies
+  - DuplicateRecordFields
+  - ExplicitNamespaces
+  - FlexibleContexts
+  - FlexibleInstances
+  - FunctionalDependencies
+  - GADTs
+  - LambdaCase
+  - MultiParamTypeClasses
+  - MultiWayIf
+  - NamedFieldPuns
+  - NoImplicitPrelude
+  - OverloadedStrings
+  - PatternSynonyms
+  - PolyKinds
+  - RankNTypes
+  - RecordWildCards
+  - ScopedTypeVariables
+  - StandaloneDeriving
+  - TupleSections
+  - TypeApplications
+  - TypeFamilies
+  - TypeOperators
+  - ViewPatterns
+  - BlockArguments
+  - TypeSynonymInstances
+  - UndecidableInstances
+  - PackageImports
+  - TemplateHaskell
+
+dependencies:
+  - aeson
+  - amazonka-core
+  - amazonka-ses
+  - base >= 4.7 && < 5
+  - base64-bytestring
+  - bytestring
+  - cryptonite
+  - cryptostore >= 0.2.3.0
+  - x509
+  - euler-hs
+  - lens
+  - memory
+  - prometheus-client
+  - wai-middleware-prometheus
+  - prometheus-metrics-ghc
+  - unliftio-core
+  - servant
+  - servant-client
+  - servant-client-core
+  - servant-server
+  - http-media
+  - text
+  - wai
+  - uuid
+  - wai-extra
+  - http-types
+  - hedis
+  - http-api-data
+  - warp
+  - time
+  - record-hasfield
+  - record-dot-preprocessor
+  - servant-openapi3
+  - openapi3
+  - persistent
+  - extra
+  - text-conversions
+  - dashboard-helper-api
+  - data-default-class
+  - http-types
+  - containers
+  - geohash == 1.0.1
+  - euler-hs
+  - unordered-containers
+  - passetto-client
+  - passetto-lib
+  - vector
+  - cereal
+  - beam-core
+  - beam-mysql
+  - beam-postgres
+  - template-haskell
+  - sequelize
+  - casing
+  - postgresql-simple
+  - process
+  - random
+  - cassava
+  - split
+  - raw-strings-qq
+  - directory
+  - filepath
+  - scheduler
+  - regex-compat
+  - singletons
+  - singletons-th
+  - regex-posix
+  - pureMD5
+  - lens-aeson
+  - string-conversions
+  - http-client
+  - http-client-tls
+  - hashable
+  - json-logic-hs
+  - yudhishthira
+  - config-pilot
+  - text-format
+  - scientific
+  - resource-pool
+  - jwt
+  - insert-ordered-containers
+  - mtl
+  - transformers
+  - morpheus-graphql-client
+  - xml-conduit
+  - servant-xml
+  - xmlbf
+
+ghc-options:
+  - -fwrite-ide-info
+  - -hiedir=.hie
+  - -fplugin=RecordDotPreprocessor
+
+library:
+  source-dirs:
+    - src
+    - src-read-only
+  ghc-options:
+    - -Wall
+    - -Wcompat
+    - -Widentities
+    - -fhide-source-paths
+    - -Werror
+    - -Wwarn=ambiguous-fields
+  when:
+    - condition: flag(Local)
+      then:
+        ghc-options:
+          - -Wno-ambiguous-fields
+          - -Wno-incomplete-uni-patterns
+          - -Wno-incomplete-record-updates
+          - -O0
+          - -funfolding-use-threshold20
+          - -fno-cse
+          - -fmax-simplifier-iterations1
+          - -fno-specialise-aggressively
+          - -j4
+      else:
+        ghc-options:
+          - -O2
+          - -j4
+  dependencies:
+    - mobility-core
+    - haskell-cac
+    - beckn-spec
+    - special-zone-a
+    - special-zone
+    - payment
+    - sessionizer-metrics
+    - beckn-services
+    - shared-services
+    - finance-kernel
+    - utils
+    - external
+    - communication-engine
+
+executables:
+  rider-app-exe:
+    main: Main.hs
+    source-dirs: server
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - '"-with-rtsopts=-N -T"'
+    when:
+    - condition: flag(Local)
+      then:
+        ghc-options:
+          - -Wno-ambiguous-fields
+          - -Wno-incomplete-uni-patterns
+          - -Wno-incomplete-record-updates
+          - -O0
+          - -funfolding-use-threshold20
+          - -fno-cse
+          - -fmax-simplifier-iterations1
+          - -fno-specialise-aggressively
+          - -j4
+      else:
+        ghc-options:
+          - -O2
+          - -j4
+    dependencies:
+      - rider-app
+      - mobility-core
+      - beckn-spec
+
+tests:
+  rider-app-test:
+    main: Main.hs
+    source-dirs: test
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - rider-app
+      - mobility-core
+      - tasty
+      - tasty-hunit
+      - tasty-quickcheck
+      - safe-exceptions
+      - base64-bytestring
+      - cryptonite
+      - time
+      - text
+      - bytestring

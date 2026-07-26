@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+sqlalchemy
+asyncpg
+alembic
+pydantic
+pydantic-settings
+geoalchemy2
+shapely
+redis
+google-generativeai
+python-dotenv
+pytest
+pytest-asyncio
+httpx
+scikit-learn

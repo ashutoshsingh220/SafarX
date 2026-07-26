@@ -1,0 +1,2015 @@
+{-# OPTIONS_GHC -Wno-deprecations #-}
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+{-# OPTIONS_GHC -Wwarn=incomplete-record-updates #-}
+
+module Domain.Action.Beckn.Common
+  ( module Domain.Action.Beckn.Common,
+    module Reexport,
+  )
+where
+
+import qualified BecknV2.OnDemand.Enums as BecknEnums
+import qualified BecknV2.OnDemand.Utils.Common as Utils
+import Control.Applicative ((<|>))
+import Control.Monad.Extra (mapMaybeM)
+import Data.Either.Extra (eitherToMaybe)
+import qualified Data.Geohash as Geohash
+import qualified Data.HashMap.Strict as HM
+import qualified Data.Text as Text
+import Data.Time hiding (getCurrentTime)
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
+import qualified Domain.Action.Rewards.Consumer as RewardsConsumer
+import Domain.Action.UI.Cancel (makeCustomerBlockingKey)
+import Domain.Action.UI.HotSpot
+import Domain.Action.UI.RidePayment as Reexport
+import qualified Domain.SharedLogic.RideDiscount as RD
+import qualified Domain.Types.Booking as DRB
+import qualified Domain.Types.BookingCancellationReason as DBCR
+import qualified Domain.Types.BookingStatus as BT
+import qualified Domain.Types.BookingStatus as DRB
+import qualified Domain.Types.Client as DC
+import qualified Domain.Types.ClientPersonInfo as DPCI
+import qualified Domain.Types.FareBreakup as DFareBreakup
+import Domain.Types.HotSpot
+import qualified Domain.Types.Journey as DJourney
+import qualified Domain.Types.Merchant as DMerchant
+import qualified Domain.Types.MerchantMessage as DMM
+import qualified Domain.Types.MerchantOperatingCity as DMOC
+import qualified Domain.Types.MerchantPaymentMethod as DMPM
+import qualified Domain.Types.OfferEntity as DOfferEntity
+import qualified Domain.Types.Person as DPerson
+import qualified Domain.Types.PersonFlowStatus as DPFS
+import qualified Domain.Types.PersonStats as DPS
+import qualified Domain.Types.RecentLocation as DTRL
+import qualified Domain.Types.Ride as DRide
+import qualified Domain.Types.RideRelatedNotificationConfig as DRN
+import qualified Domain.Types.RideStatus as DRide
+import qualified Domain.Types.RiderConfig as DRC
+import qualified Domain.Types.Trip as Trip
+import qualified Domain.Types.VehicleVariant as DV
+import qualified Domain.Types.Yudhishthira as Y
+import Environment
+import Kernel.Beam.Functions as B
+import Kernel.Beam.Lib.Utils (pushToKafka)
+import Kernel.External.Encryption
+import Kernel.External.Payment.Interface.Types as Payment
+import qualified Kernel.External.Payout.Interface as Payout
+import qualified Kernel.External.Ticket.Interface.Types as TIT
+import Kernel.External.Types (SchedulerFlow, ServiceFlow)
+import Kernel.Prelude
+import Kernel.Sms.Config (SmsConfig)
+import Kernel.Storage.Clickhouse.Config
+import Kernel.Storage.Esqueleto.Config (EsqDBReplicaFlow)
+import qualified Kernel.Storage.Hedis as Redis
+import Kernel.Streaming.Kafka.Producer.Types (HasKafkaProducer)
+import Kernel.Tools.Metrics.CoreMetrics
+import qualified Kernel.Types.Beckn.Context as Context
+import Kernel.Types.Confidence
+import qualified Kernel.Types.Flow
+import Kernel.Types.Id
+import qualified Kernel.Types.SlidingWindowCounters as SW
+import Kernel.Types.Version
+import Kernel.Utils.Common
+import qualified Kernel.Utils.SlidingWindowCounters as SWC
+import qualified Kernel.Utils.Time as KUT
+import Lib.ConfigPilot.Interface.Types (getConfig, getOneConfig)
+import qualified Lib.Finance.Core.Types as Finance
+import Lib.Finance.FinanceM (FinanceCtx (..))
+import qualified Lib.Finance.Storage.Beam.BeamFlow as FinanceBeamFlow
+import qualified Lib.Payment.Domain.Action as DPayment
+import qualified Lib.Payment.Domain.Action as Payout
+import qualified Lib.Payment.Domain.Types.Common as DLP
+import qualified Lib.Payment.Domain.Types.PaymentOrder as DOrder
+import qualified Lib.Payment.Storage.Queries.PaymentOrder as QPaymentOrder
+import Lib.Scheduler.JobStorageType.SchedulerType (createJobIn)
+import Lib.SessionizerMetrics.Types.Event
+import qualified Lib.Yudhishthira.Tools.DebugLog as LYDL
+import qualified Lib.Yudhishthira.Tools.Utils as Yudhishthira
+import qualified Lib.Yudhishthira.Types as LYT
+import qualified Lib.Yudhishthira.Types as Yudhishthira
+import qualified Safety.Domain.Action.UI.Sos as SafetySos
+import qualified Safety.Domain.Types.Sos as SafetyDSos
+import qualified Safety.Storage.CachedQueries.Sos as SafetyCQSos
+import qualified Safety.Storage.Queries.SafetySettings as QSafetySettings
+import qualified Safety.Storage.Queries.Sos as SafetyQSos
+import qualified SharedLogic.BehaviourManagement.CustomerCancellationRate as CCR
+import SharedLogic.Booking
+import qualified SharedLogic.CallBPP as CallBPP
+import qualified SharedLogic.CallBPPInternal as CallBPPInternal
+import qualified SharedLogic.CancellationFee as CancellationFee
+import qualified SharedLogic.EditLocationThrottle as EditLocationThrottle
+import qualified SharedLogic.FareBreakupInfo as SFareBreakupInfo
+import qualified SharedLogic.Finance.RidePayment as RidePaymentFinance
+import qualified SharedLogic.Insurance as SI
+import SharedLogic.JobScheduler
+import qualified SharedLogic.MerchantConfig as SMC
+import qualified SharedLogic.MessageBuilder as MessageBuilder
+import qualified SharedLogic.Offer as SOffer
+import SharedLogic.Payment as SPayment
+import qualified SharedLogic.ScheduledNotifications as SN
+import qualified SharedLogic.Scheduler.Jobs.SafetyCSAlert as SIVR
+import Storage.Beam.Yudhishthira ()
+import qualified Storage.CachedQueries.BppDetails as CQBPP
+import qualified Storage.CachedQueries.Exophone as CQExophone
+import qualified Storage.CachedQueries.Merchant as CQM
+import qualified Storage.CachedQueries.Merchant.MerchantMessage as CMM
+import qualified Storage.CachedQueries.Merchant.MerchantOperatingCity as CQMOC
+import qualified Storage.CachedQueries.Merchant.MerchantPushNotification as CPN
+import qualified Storage.CachedQueries.Merchant.MerchantServiceUsageConfig as CQMSUC
+import qualified Storage.CachedQueries.Merchant.PayoutConfig as CQPayoutCfg
+import qualified Storage.CachedQueries.Merchant.RiderConfig as CQRC
+import qualified Storage.CachedQueries.MerchantConfig as CQMerchantCfg
+import qualified Storage.CachedQueries.Person as CQPerson
+import qualified Storage.CachedQueries.Person.PersonFlowStatus as QPFS
+import qualified Storage.CachedQueries.RideRelatedNotificationConfig as CQRRNC
+import qualified Storage.CachedQueries.ValueAddNP as CQVAN
+import Storage.ConfigPilot.Config.Exophone (ExophoneDimensions (..))
+import Storage.ConfigPilot.Config.MerchantConfig (MerchantConfigDimensions (..))
+import Storage.ConfigPilot.Config.MerchantServiceUsageConfig (MerchantServiceUsageConfigDimensions (..))
+import Storage.ConfigPilot.Config.PayoutConfig (PayoutConfigDimensions (..))
+import Storage.ConfigPilot.Config.RideRelatedNotificationConfig (RideRelatedNotificationConfigDimensions (..))
+import Storage.ConfigPilot.Config.RiderConfig (RiderConfigDimensions (..))
+import qualified Storage.Queries.Booking as QRB
+import qualified Storage.Queries.BookingCancellationReason as QBCR
+import qualified Storage.Queries.BookingExtra as QRBE
+import qualified Storage.Queries.BookingPartiesLink as QBPL
+import qualified Storage.Queries.CallStatus as QCallStatus
+import qualified Storage.Queries.ClientPersonInfo as QCP
+import qualified Storage.Queries.Journey as QJourney
+import qualified Storage.Queries.JourneyLeg as QJL
+import qualified Storage.Queries.OfferEntity as QOfferEntity
+import qualified Storage.Queries.Person as QP
+import qualified Storage.Queries.PersonStats as QPersonStats
+import qualified Storage.Queries.QueriesExtra.RideLite as QRideLite
+import qualified Storage.Queries.RecentLocation as SQRL
+import qualified Storage.Queries.Ride as QRide
+import qualified Storage.Queries.RideExtra as QERIDE
+import Tools.Constants
+import Tools.Error
+import Tools.Event
+import qualified Tools.EventTracking as ET
+import Tools.Maps (LatLong (..))
+import Tools.Metrics (HasBAPMetrics, incrementRideCreatedRequestCount)
+import qualified Tools.Notifications as Notify
+import qualified Tools.Payout as TP
+import qualified Tools.SMS as Sms
+import qualified Tools.Ticket as Ticket
+import qualified Tools.Whatsapp as Whatsapp
+import TransactionLogs.Types
+import qualified UrlShortner.Common as UrlShortner
+
+data BookingDetails = BookingDetails
+  { bppBookingId :: Id DRB.BPPBooking,
+    bppRideId :: Id DRide.BPPRide,
+    driverName :: Text,
+    driverImage :: Maybe Text,
+    driverMobileNumber :: Text,
+    driverAlternatePhoneNumber :: Maybe Text,
+    driverMobileCountryCode :: Maybe Text,
+    driverRating :: Maybe Centesimal,
+    driverRegisteredAt :: Maybe UTCTime,
+    vehicleNumber :: Text,
+    vehicleColor :: Maybe Text,
+    vehicleModel :: Text,
+    otp :: Text,
+    isInitiatedByCronJob :: Bool,
+    isTierUpgrade :: Bool,
+    assignedServiceTierName :: Maybe Text
+  }
+
+data RideAssignedReq = RideAssignedReq
+  { bookingDetails :: BookingDetails,
+    transactionId :: Text,
+    bppUri :: Maybe BaseUrl,
+    isDriverBirthDay :: Bool,
+    vehicleAge :: Maybe Months,
+    isFreeRide :: Bool,
+    driverAccountId :: Maybe Payment.AccountId,
+    previousRideEndPos :: Maybe LatLong,
+    isAlreadyFav :: Bool,
+    favCount :: Maybe Int,
+    fareBreakups :: Maybe [DFareBreakup],
+    driverTrackingUrl :: Maybe BaseUrl,
+    isSafetyPlus :: Bool
+  }
+
+data OnlinePaymentParameters = OnlinePaymentParameters
+  { paymentMethodId :: Payment.PaymentMethodId,
+    customerPaymentId :: Payment.CustomerId,
+    driverAccountId :: Payment.AccountId,
+    merchantOperatingCityId :: Id DMOC.MerchantOperatingCity,
+    email :: Maybe Text
+  }
+
+data ValidatedRideAssignedReq = ValidatedRideAssignedReq
+  { bookingDetails :: BookingDetails,
+    isDriverBirthDay :: Bool,
+    isFreeRide :: Bool,
+    vehicleAge :: Maybe Months,
+    onlinePaymentParameters :: Maybe OnlinePaymentParameters,
+    driverAccountId :: Maybe Payment.AccountId,
+    previousRideEndPos :: Maybe LatLong,
+    booking :: DRB.Booking,
+    bppUri :: Maybe BaseUrl,
+    fareBreakups :: Maybe [DFareBreakup],
+    driverTrackingUrl :: Maybe BaseUrl,
+    isAlreadyFav :: Bool,
+    favCount :: Maybe Int,
+    isSafetyPlus :: Bool,
+    isSynchronousOnUpdateProcessing :: Bool,
+    bppInvoiceProviderFields :: QRBE.BPPInvoiceProviderFields
+  }
+
+data RideStartedReq = RideStartedReq
+  { bookingDetails :: BookingDetails,
+    transactionId :: Text,
+    tripStartLocation :: Maybe LatLong,
+    endOtp_ :: Maybe Text,
+    startOdometerReading :: Maybe Centesimal,
+    rideStartTime :: Maybe UTCTime,
+    driverArrivalTime :: Maybe UTCTime,
+    estimatedEndTimeRangeStart :: Maybe UTCTime,
+    estimatedEndTimeRangeEnd :: Maybe UTCTime
+  }
+
+data ValidatedRideStartedReq = ValidatedRideStartedReq
+  { bookingDetails :: BookingDetails,
+    tripStartLocation :: Maybe LatLong,
+    endOtp_ :: Maybe Text,
+    startOdometerReading :: Maybe Centesimal,
+    rideStartTime :: Maybe UTCTime,
+    driverArrivalTime :: Maybe UTCTime,
+    ride :: DRide.Ride,
+    booking :: DRB.Booking,
+    estimatedEndTimeRange :: Maybe DRide.EstimatedEndTimeRange
+  }
+
+data RideCompletedReq = RideCompletedReq
+  { bookingDetails :: BookingDetails,
+    transactionId :: Text,
+    fare :: Price,
+    totalFare :: Price,
+    fareBreakups :: [DFareBreakup],
+    chargeableDistance :: Maybe HighPrecMeters,
+    traveledDistance :: Maybe HighPrecMeters,
+    tollConfidence :: Maybe Confidence,
+    paymentUrl :: Maybe Text,
+    tripEndLocation :: Maybe LatLong,
+    endOdometerReading :: Maybe Centesimal,
+    rideEndTime :: Maybe UTCTime,
+    paymentStatus :: Maybe DRB.PaymentStatus,
+    isValidRide :: Maybe Bool,
+    commission :: Maybe HighPrecMoney
+  }
+
+data ValidatedRideCompletedReq = ValidatedRideCompletedReq
+  { bookingDetails :: BookingDetails,
+    fare :: Price,
+    totalFare :: Price,
+    fareBreakups :: [DFareBreakup],
+    chargeableDistance :: Maybe HighPrecMeters,
+    traveledDistance :: Maybe HighPrecMeters,
+    tollConfidence :: Maybe Confidence,
+    paymentUrl :: Maybe Text,
+    tripEndLocation :: Maybe LatLong,
+    endOdometerReading :: Maybe Centesimal,
+    rideEndTime :: Maybe UTCTime,
+    booking :: DRB.Booking,
+    ride :: DRide.Ride,
+    person :: DPerson.Person,
+    paymentStatus :: Maybe DRB.PaymentStatus,
+    isValidRide :: Maybe Bool,
+    commission :: Maybe HighPrecMoney
+  }
+
+data ValidatedFarePaidReq = ValidatedFarePaidReq
+  { booking :: DRB.Booking,
+    paymentStatus :: DRB.PaymentStatus
+  }
+
+data BookingCancelledReq = BookingCancelledReq
+  { bookingDetails :: Maybe BookingDetails,
+    bppBookingId :: Id DRB.BPPBooking,
+    cancellationSource :: DBCR.CancellationSource,
+    transactionId :: Text
+  }
+
+data ValidatedBookingCancelledReq = ValidatedBookingCancelledReq
+  { bookingDetails :: Maybe BookingDetails,
+    bppBookingId :: Id DRB.BPPBooking,
+    cancellationSource :: DBCR.CancellationSource,
+    transactionId :: Text,
+    booking :: DRB.Booking,
+    mbRide :: Maybe DRide.Ride
+  }
+
+data BookingReallocationReq = BookingReallocationReq ----need to use in future
+  { bookingDetails :: BookingDetails,
+    reallocationSource :: DBCR.CancellationSource,
+    transactionId :: Text
+  }
+
+data ValidatedBookingReallocationReq = ValidatedBookingReallocationReq ----need to use in future
+  { bookingDetails :: BookingDetails,
+    reallocationSource :: DBCR.CancellationSource,
+    booking :: DRB.Booking,
+    ride :: DRide.Ride
+  }
+
+data DriverArrivedReq = DriverArrivedReq
+  { bookingDetails :: BookingDetails,
+    arrivalTime :: Maybe UTCTime,
+    transactionId :: Text
+  }
+
+data ValidatedDriverArrivedReq = ValidatedDriverArrivedReq
+  { bookingDetails :: BookingDetails,
+    arrivalTime :: Maybe UTCTime,
+    ride :: DRide.Ride,
+    booking :: DRB.Booking
+  }
+
+buildRide :: (MonadFlow m, EncFlow m r, CacheFlow m r, EsqDBFlow m r, HasFlowEnv m r '["version" ::: DeploymentVersion], HasFlowEnv m r '["isMetroTestTransaction" ::: Bool], HasFlowEnv m r '["cloudType" ::: Maybe CloudType]) => ValidatedRideAssignedReq -> Maybe DMerchant.Merchant -> UTCTime -> DRide.RideStatus -> m DRide.Ride
+buildRide req@ValidatedRideAssignedReq {..} mbMerchant now status = do
+  let BookingDetails {..} = bookingDetails
+  guid <- generateGUID
+  shortId <- generateShortId
+  deploymentVersion <- asks (.version)
+  driverPhoneNumber <- mapM encrypt (Just bookingDetails.driverMobileNumber)
+  driverAlternateNumber <- mapM encrypt bookingDetails.driverAlternatePhoneNumber
+  let fromLocation = booking.fromLocation
+      (toLocation, stops) = case booking.bookingDetails of
+        DRB.OneWayDetails details -> (Just details.toLocation, details.stops)
+        DRB.RentalDetails _ -> (Nothing, [])
+        -- EasyBooking is destination-less like Rental: no toLocation, no stops.
+        DRB.EasyBookingDetails _ -> (Nothing, [])
+        DRB.DriverOfferDetails details -> (Just details.toLocation, details.stops)
+        DRB.OneWaySpecialZoneDetails details -> (Just details.toLocation, details.stops)
+        DRB.InterCityDetails details -> (Just details.toLocation, [])
+        DRB.AmbulanceDetails details -> (Just details.toLocation, [])
+        DRB.DeliveryDetails details -> (Just details.toLocation, [])
+        DRB.MeterRideDetails details -> (details.toLocation, [])
+      allowedEditLocationAttempts = Just $ maybe 0 (.numOfAllowedEditPickupLocationAttemptsThreshold) mbMerchant
+      allowedEditPickupLocationAttempts = Just $ maybe 0 (.numOfAllowedEditPickupLocationAttemptsThreshold) mbMerchant
+      onlinePayment = SPayment.isOnlinePayment mbMerchant booking
+  mfuPattern <- fromMaybeM (MerchantDoesNotExist ("BuildRide merchant:" <> booking.merchantId.getId)) (fmap DMerchant.mediaFileUrlPattern mbMerchant)
+  let fileUrl =
+        ( mfuPattern
+            & Text.replace "<DOMAIN>" "driver/photo"
+            & flip (Text.replace "<FILE_PATH>")
+        )
+          <$> bookingDetails.driverImage
+  isMetroTestTransaction <- asks (.isMetroTestTransaction)
+  cloudType <- asks (.cloudType)
+  mbSafetySettings <- QSafetySettings.findByPersonId (cast booking.riderId)
+  let isMeterRide = case booking.bookingDetails of
+        DRB.MeterRideDetails _ -> True
+        _ -> False
+      enableOtpLessRide = Just $ isMeterRide || fromMaybe False (mbSafetySettings >>= (.enableOtpLessRide))
+  return
+    DRide.Ride
+      { id = guid,
+        bookingId = booking.id,
+        shortId = ShortId $ DPayment.updateShortId Nothing isMetroTestTransaction shortId.getShortId,
+        merchantId = Just booking.merchantId,
+        merchantOperatingCityId = Just booking.merchantOperatingCityId,
+        clientId = booking.clientId,
+        trackingUrl = req.driverTrackingUrl,
+        fare = Nothing,
+        totalFare = Nothing,
+        pickupSpeedInMPS = Nothing,
+        chargeableDistance = Nothing,
+        traveledDistance = Nothing,
+        driverArrivalTime = Nothing,
+        driverArrivalStatus = Nothing,
+        vehicleVariant = DV.castServiceTierToVariant booking.vehicleServiceTierType, -- fix later
+        vehicleServiceTierType = Just booking.vehicleServiceTierType,
+        createdAt = now,
+        updatedAt = now,
+        rideStartTime = Nothing,
+        rideEndTime = Nothing,
+        rideRating = Nothing,
+        safetyCheckStatus = Nothing,
+        isFreeRide = Just isFreeRide,
+        endOtp = Nothing,
+        isPetRide = booking.isPetRide,
+        startOdometerReading = Nothing,
+        endOdometerReading = Nothing,
+        clientBundleVersion = booking.clientBundleVersion,
+        clientSdkVersion = booking.clientSdkVersion,
+        clientDevice = booking.clientDevice,
+        clientConfigVersion = booking.clientConfigVersion,
+        backendConfigVersion = booking.backendConfigVersion,
+        backendAppVersion = Just deploymentVersion.getDeploymentVersion,
+        driversPreviousRideDropLoc = previousRideEndPos,
+        showDriversPreviousRideDropLoc = isJust previousRideEndPos,
+        feedbackSkipped = False,
+        tollConfidence = Nothing,
+        distanceUnit = booking.distanceUnit,
+        driverAccountId = req.driverAccountId,
+        paymentStatus = DRide.NotInitiated,
+        refundRequestStatus = Nothing,
+        vehicleAge = req.vehicleAge,
+        cancellationFeeIfCancelled = Nothing,
+        cancellationFeeStatus = Nothing,
+        isAlreadyFav = Just isAlreadyFav,
+        safetyJourneyStatus = Nothing,
+        driverImage = fileUrl,
+        destinationReachedAt = Nothing,
+        estimatedEndTimeRange = Nothing,
+        tipAmount = Nothing,
+        hasStops = booking.hasStops,
+        billingCategory = booking.billingCategory,
+        wasRideSafe = Nothing,
+        pickupRouteCallCount = Just 0,
+        talkedWithDriver = Nothing,
+        isSafetyPlus = isSafetyPlus,
+        offersFraudCheckFailureReason = Nothing,
+        isInsured = booking.isInsured,
+        insuredAmount = booking.insuredAmount,
+        cancellationChargesOnCancel = Nothing,
+        pickupEtaLogicVersion = Nothing,
+        -- Commission is provider-side data, calculated on BPP. On BAP side, it remains Nothing.
+        -- If commission is needed on BAP, it should be calculated here or received from BPP.
+        commission = booking.commission,
+        cloudType = cloudType,
+        sosId = Nothing,
+        isTierUpgrade = Just isTierUpgrade,
+        assignedServiceTierName = assignedServiceTierName,
+        rideTags = Nothing,
+        ..
+      }
+
+rideAssignedReqHandler ::
+  ( HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl, "nwAddress" ::: BaseUrl, "smsCfg" ::: SmsConfig, "version" ::: DeploymentVersion, "cloudType" ::: Maybe CloudType],
+    HasField "storeRidesTimeLimit" r Int,
+    CacheFlow m r,
+    EsqDBFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    EsqDBReplicaFlow m r,
+    HasLongDurationRetryCfg r c,
+    HasShortDurationRetryCfg r c,
+    HasFlowEnv m r '["ondcTokenHashMap" ::: HM.HashMap KeyConfig TokenConfig],
+    SchedulerFlow r,
+    HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl],
+    HasBAPMetrics m r,
+    EventStreamFlow m r,
+    HasFlowEnv m r '["urlShortnerConfig" ::: UrlShortner.UrlShortnerConfig],
+    HasKafkaProducer r,
+    HasFlowEnv m r '["isMetroTestTransaction" ::: Bool],
+    HasField "blackListedJobs" r [Text],
+    FinanceBeamFlow.BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  ValidatedRideAssignedReq ->
+  m ()
+rideAssignedReqHandler req = do
+  let BookingDetails {..} = req.bookingDetails
+  void $ QRBE.updateBPPBookingIdAndProviderUrl req.booking.id bppBookingId req.bppUri req.bppInvoiceProviderFields
+  let bppInfo = req.bppInvoiceProviderFields
+      booking =
+        req.booking
+          { DRB.bppBookingId = Just bppBookingId,
+            DRB.providerUrl = fromMaybe req.booking.providerUrl req.bppUri,
+            DRB.issuedById = bppInfo.issuedById <|> req.booking.issuedById,
+            DRB.issuedByName = bppInfo.issuedByName <|> req.booking.issuedByName,
+            DRB.issuedByAddress = bppInfo.issuedByAddress <|> req.booking.issuedByAddress,
+            DRB.supplierName = bppInfo.supplierName <|> req.booking.supplierName,
+            DRB.supplierAddress = bppInfo.supplierAddress <|> req.booking.supplierAddress,
+            DRB.supplierGSTIN = bppInfo.supplierGSTIN <|> req.booking.supplierGSTIN,
+            DRB.supplierTaxNo = bppInfo.supplierTaxNo <|> req.booking.supplierTaxNo,
+            DRB.supplierId = bppInfo.supplierId <|> req.booking.supplierId
+          }
+  mbMerchant <- CQM.findById booking.merchantId
+  now <- getCurrentTime
+  let rideStatus = case mbMerchant of
+        Just merchant | (maybe True not booking.isMultimodalSearch) && diffUTCTime booking.startTime now > merchant.scheduleRideBufferTime -> DRide.UPCOMING
+        _ -> DRide.NEW
+  mbRide <- QRide.findByBPPRideId bppRideId
+  case mbRide of
+    Just ride -> do
+      QERIDE.updateStatus ride.id rideStatus
+      QERIDE.updateIsSafetyPlus ride.id req.isSafetyPlus
+      unless isInitiatedByCronJob $ do
+        Notify.notifyOnRideAssigned booking ride
+        when req.isDriverBirthDay $
+          Notify.notifyDriverBirthDay booking.riderId booking.tripCategory driverName
+      withLongRetry $ CallBPP.callTrack booking ride
+    Nothing -> assignRideUpdate req {booking = booking} mbMerchant rideStatus now
+  where
+    notifyRideRelatedNotificationOnEvent booking ride now timeDiffEvent = do
+      rideRelatedNotificationConfigList <- getConfig (RideRelatedNotificationConfigDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId, timeDiffEvent = Just timeDiffEvent}) (Just (CQRRNC.findAllByMerchantOperatingCityIdAndTimeDiffEvent booking.merchantOperatingCityId timeDiffEvent (Just [])))
+      forM_ rideRelatedNotificationConfigList (SN.pushReminderUpdatesInScheduler booking ride now)
+    assignRideUpdate ::
+      ( HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl, "nwAddress" ::: BaseUrl, "smsCfg" ::: SmsConfig, "version" ::: DeploymentVersion, "cloudType" ::: Maybe CloudType],
+        HasField "storeRidesTimeLimit" r Int,
+        CacheFlow m r,
+        EsqDBFlow m r,
+        Finance.HasActorInfo m r,
+        EncFlow m r,
+        EsqDBReplicaFlow m r,
+        HasLongDurationRetryCfg r c,
+        HasShortDurationRetryCfg r c,
+        HasFlowEnv m r '["ondcTokenHashMap" ::: HM.HashMap KeyConfig TokenConfig],
+        SchedulerFlow r,
+        HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl],
+        HasBAPMetrics m r,
+        EventStreamFlow m r,
+        HasFlowEnv m r '["urlShortnerConfig" ::: UrlShortner.UrlShortnerConfig],
+        HasKafkaProducer r,
+        HasFlowEnv m r '["isMetroTestTransaction" ::: Bool],
+        HasField "blackListedJobs" r [Text],
+        FinanceBeamFlow.BeamFlow m r
+      ) =>
+      ValidatedRideAssignedReq ->
+      Maybe DMerchant.Merchant ->
+      DRide.RideStatus ->
+      UTCTime ->
+      m ()
+    assignRideUpdate req'@ValidatedRideAssignedReq {..} mbMerchant rideStatus now = do
+      let BookingDetails {..} = req'.bookingDetails
+      ride <- buildRide req' mbMerchant now rideStatus
+      let applicationFeeAmount = fromMaybe 0 booking.commission
+      mbBookingOfferEntity <- QOfferEntity.findByEntityIdAndEntityType booking.id.getId DOfferEntity.BOOKING
+      let bookingDiscountAmount = maybe 0 (.discountAmount) mbBookingOfferEntity
+          bookingPayoutAmount = maybe 0 (.payoutAmount) mbBookingOfferEntity
+      when (bookingDiscountAmount > 0) $ do
+        guid <- generateGUID
+        let offerDiscountFareBreakup =
+              DFareBreakup.FareBreakup
+                { id = guid,
+                  entityId = booking.id.getId,
+                  entityType = DFareBreakup.BOOKING,
+                  amount = mkPrice (Just booking.estimatedFare.currency) (- bookingDiscountAmount),
+                  description = "OFFER_DISCOUNT"
+                }
+        SFareBreakupInfo.addFareBreakupInfoItems booking.id.getId DFareBreakup.BOOKING [SFareBreakupInfo.fareBreakupToItem offerDiscountFareBreakup] (Just booking.merchantId) (Just booking.merchantOperatingCityId)
+      -- Create payment intent for online payments, capture orderId for invoice creation
+      _mbPaymentIntentResp <- case req'.onlinePaymentParameters of
+        Just OnlinePaymentParameters {driverAccountId = onlineDriverAccountId, ..} -> do
+          let createPaymentIntentServiceReq =
+                DPayment.CreatePaymentIntentServiceReq
+                  { amount = booking.estimatedFare.amount,
+                    discountAmount = bookingDiscountAmount,
+                    offerId = Id <$> booking.selectedOfferId,
+                    applicationFeeAmount,
+                    currency = booking.estimatedFare.currency,
+                    customer = customerPaymentId,
+                    paymentMethod = paymentMethodId,
+                    receiptEmail = email,
+                    driverAccountId = onlineDriverAccountId
+                  }
+          -- Lookup existing order for retry handling via Redis-stored ledger entry IDs
+          mbExistingOrderId <- SPayment.getOrderIdForRide ride.id
+          estimatedBreakups <- traverse (buildFareBreakupV2 booking.id.getId DFareBreakup.BOOKING) (fromMaybe [] req'.fareBreakups)
+          -- Online Ride Assigned branch (inside Just OnlinePaymentParameters case) → isOnline=True.
+          let ledgerCtx = RidePaymentFinance.buildRiderFinanceCtx booking.merchantId.getId merchantOperatingCityId.getId booking.estimatedFare.currency True booking.riderId.getId ride.id.getId Nothing Nothing (listToMaybe $ catMaybes [booking.fromLocation.address.area, booking.fromLocation.address.street, booking.fromLocation.address.city])
+          mbLedgerInfo <- SPayment.buildLedgerInfoFromBreakups estimatedBreakups bookingDiscountAmount bookingPayoutAmount applicationFeeAmount 0 ledgerCtx
+          let ledgerInfo =
+                fromMaybe
+                  SPayment.RidePaymentLedgerInfo
+                    { rideFare = booking.estimatedFare.amount - applicationFeeAmount - bookingDiscountAmount,
+                      gstAmount = 0,
+                      tollFare = 0,
+                      tollVatAmount = 0,
+                      parkingCharge = 0,
+                      parkingChargeVat = 0,
+                      offerDiscountAmount = bookingDiscountAmount,
+                      cashbackPayoutAmount = bookingPayoutAmount,
+                      platformFee = applicationFeeAmount,
+                      rideVatAbsorbedOnDiscount = 0,
+                      cancellationCharge = 0,
+                      cancellationTax = 0,
+                      financeCtx = ledgerCtx
+                    }
+                  mbLedgerInfo
+          logDebug $ "makePaymentIntent (ride-assigned): breakups=" <> show estimatedBreakups <> " discount=" <> show bookingDiscountAmount <> " payout=" <> show bookingPayoutAmount <> " platformFee=" <> show applicationFeeAmount <> " -> ledgerInfo=" <> show ledgerInfo
+          -- Wrap makePaymentIntent in retry, capture result for orderId
+          mbPaymentResp <-
+            handle (\e -> SPayment.paymentErrorHandler booking e >> throwError (InvalidRequest "Payment failed, booking cancelled")) $
+              withShortRetry $
+                SPayment.makePaymentIntent booking.merchantId merchantOperatingCityId booking.paymentMode booking.riderId (Just ride.id) mbExistingOrderId DOrder.RideHailing createPaymentIntentServiceReq (Just ledgerInfo)
+          -- Check if PI is in a capturable state — only STARTED (requires_capture) and CHARGED (already captured) are valid
+          whenJust mbPaymentResp $ \paymentResp -> do
+            mbOrder <- QPaymentOrder.findById paymentResp.orderId
+            whenJust mbOrder $ \order ->
+              when (order.status `notElem` [Payment.STARTED, Payment.CHARGED]) $ do
+                let reason = case order.status of
+                      Payment.PENDING_VBV -> "Your card requires additional authentication. Please use a different payment method."
+                      Payment.CANCELLED -> "Payment was cancelled. Please try again."
+                      Payment.AUTHENTICATION_FAILED -> "Card authentication failed. Please use a different payment method."
+                      Payment.AUTHORIZATION_FAILED -> "Card authorization failed. Please use a different payment method."
+                      Payment.JUSPAY_DECLINED -> "Payment was declined. Please use a different payment method."
+                      _ -> "Payment could not be processed. Please try again with a different payment method."
+                logError $ "Payment intent in non-capturable status " <> show order.status <> ", cancelling ride. PI: " <> paymentResp.paymentIntentId
+                handle (\(_ :: SomeException) -> pure ()) $
+                  SPayment.cancelPaymentIntent booking.merchantId merchantOperatingCityId booking.paymentMode ride.id
+                let paymentError = toException (Payment.CardError (Payment.StripeErrorInfo {errorCode = Just (show order.status), errorMessage = Just reason}))
+                SPayment.paymentErrorHandler booking paymentError
+                throwError $ InvalidRequest "Payment non-capturable, booking cancelled"
+          pure mbPaymentResp
+        Nothing -> do
+          let pickupAddress = listToMaybe $ catMaybes [booking.fromLocation.address.area, booking.fromLocation.address.street, booking.fromLocation.address.city]
+              ledgerCtx = RidePaymentFinance.buildRiderFinanceCtx booking.merchantId.getId booking.merchantOperatingCityId.getId booking.estimatedFare.currency False booking.riderId.getId ride.id.getId Nothing Nothing pickupAddress
+          estimatedBreakups <- traverse (buildFareBreakupV2 booking.id.getId DFareBreakup.BOOKING) (fromMaybe [] req'.fareBreakups)
+          mbLedgerInfo <- SPayment.buildLedgerInfoFromBreakups estimatedBreakups bookingDiscountAmount bookingPayoutAmount applicationFeeAmount 0 ledgerCtx
+          let ledgerInfo =
+                fromMaybe
+                  SPayment.RidePaymentLedgerInfo
+                    { rideFare = booking.estimatedFare.amount - applicationFeeAmount - bookingDiscountAmount,
+                      gstAmount = 0,
+                      tollFare = 0,
+                      tollVatAmount = 0,
+                      parkingCharge = 0,
+                      parkingChargeVat = 0,
+                      offerDiscountAmount = bookingDiscountAmount,
+                      cashbackPayoutAmount = bookingPayoutAmount,
+                      platformFee = applicationFeeAmount,
+                      rideVatAbsorbedOnDiscount = 0,
+                      cancellationCharge = 0,
+                      cancellationTax = 0,
+                      financeCtx = ledgerCtx
+                    }
+                  mbLedgerInfo
+          result <- RidePaymentFinance.createRidePaymentLedger ledgerCtx ledgerInfo.rideFare ledgerInfo.gstAmount ledgerInfo.tollFare ledgerInfo.tollVatAmount ledgerInfo.parkingCharge ledgerInfo.parkingChargeVat ledgerInfo.platformFee ledgerInfo.offerDiscountAmount ledgerInfo.cashbackPayoutAmount ledgerInfo.rideVatAbsorbedOnDiscount
+          case result of
+            Right _ -> logInfo $ "Cash ride assigned: created PENDING BAP ledger + invoice for ride: " <> ride.id.getId
+            Left err -> logError $ "Cash ride ledger create failed at assign: " <> show err
+          pure Nothing
+      triggerRideCreatedEvent RideEventData {ride = ride, personId = booking.riderId, merchantId = booking.merchantId}
+      fork "event_tracking: driver_assigned" $
+        ET.trackEvent booking.merchantId booking.merchantOperatingCityId (ET.DriverAssigned (getId booking.riderId))
+      let category = case booking.specialLocationTag of
+            Just _ -> "specialLocation"
+            Nothing -> "normal"
+      incrementRideCreatedRequestCount booking.merchantId.getId booking.merchantOperatingCityId.getId category
+      QRB.updateStatus booking.riderId booking.id DRB.TRIP_ASSIGNED
+      QRide.createRide ride
+      QPFS.clearCache booking.riderId
+      fork "Increment assigned count for customer cancellation rate" $ do
+        windowSize <- CCR.getWindowSize booking.merchantOperatingCityId
+        void $ CCR.incrementAssignedCount booking.riderId windowSize
+      unless isInitiatedByCronJob $ do
+        if rideStatus == DRide.UPCOMING then Notify.notifyOnScheduledRideAccepted booking ride else Notify.notifyOnRideAssigned booking ride
+        when req'.isDriverBirthDay $ do
+          Notify.notifyDriverBirthDay booking.riderId booking.tripCategory driverName
+      withLongRetry $ CallBPP.callTrack booking ride
+
+      notifyRideRelatedNotificationOnEvent booking ride now DRN.RIDE_ASSIGNED
+      notifyRideRelatedNotificationOnEvent booking ride now DRN.PICKUP_TIME
+
+      riderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId}) (Just (CQRC.findByMerchantOperatingCityId booking.merchantOperatingCityId)) >>= fromMaybeM (RiderConfigDoesNotExist booking.merchantOperatingCityId.getId)
+      when (booking.isDashboardRequest == Just True && riderConfig.autoSendBookingDetailsViaWhatsapp == Just True) $ do
+        fork "Sending Dashboard Ride Flow Booking Details" $ do
+          sendRideBookingDetailsViaWhatsapp booking.riderId ride booking riderConfig
+
+      -- Notify sender of delivery booking
+      when (booking.tripCategory == Just (Trip.Delivery Trip.OneWayOnDemandDynamicOffer)) $ do
+        fork "Sending Delivery Details SMS to Sender And Receiver" $ do
+          mbExoPhone <- getOneConfig (ExophoneDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId, phoneNumber = Just booking.primaryExophone, callService = Nothing}) (Just (maybeToList <$> CQExophone.findByPrimaryPhone booking.primaryExophone))
+          senderParty <- QBPL.findOneActiveByBookingIdAndTripParty booking.id (Trip.DeliveryParty Trip.Sender) >>= fromMaybeM (InternalError $ "Sender booking party not found for " <> booking.id.getId)
+          receiverParty <- QBPL.findOneActiveByBookingIdAndTripParty booking.id (Trip.DeliveryParty Trip.Receiver) >>= fromMaybeM (InternalError $ "Receiver booking party not found for " <> booking.id.getId)
+          senderPerson <- QP.findById senderParty.partyId >>= fromMaybeM (PersonDoesNotExist senderParty.partyId.getId)
+          receiverPerson <- QP.findById receiverParty.partyId >>= fromMaybeM (PersonDoesNotExist receiverParty.partyId.getId)
+          encSenderMobileNumber <- senderPerson.mobileNumber & fromMaybeM (PersonFieldNotPresent "mobileNumber")
+          encReceiverMobileNumber <- receiverPerson.mobileNumber & fromMaybeM (PersonFieldNotPresent "mobileNumber")
+          let exophoneNumber =
+                maybe booking.primaryExophone (\exophone -> if not exophone.isPrimaryDown then exophone.primaryPhone else exophone.backupPhone) mbExoPhone
+          let trackLink = Notify.buildTrackingUrl ride.id [("vp", "delivery")] riderConfig.trackingShortUrlPattern
+          let senderSmsReq =
+                MessageBuilder.BuildDeliveryMessageReq
+                  { MessageBuilder.driverName = ride.driverName,
+                    MessageBuilder.driverNumber = exophoneNumber,
+                    MessageBuilder.appUrl = riderConfig.appUrl,
+                    MessageBuilder.senderName = senderParty.partyName,
+                    MessageBuilder.receiverName = receiverParty.partyName,
+                    MessageBuilder.trackingUrl = Just trackLink,
+                    MessageBuilder.otp = ride.otp,
+                    MessageBuilder.hasEnded = False,
+                    MessageBuilder.pickedUp = False,
+                    MessageBuilder.deliveryMessageType = MessageBuilder.SenderReq
+                  }
+              receiverSmsReq = senderSmsReq {MessageBuilder.deliveryMessageType = MessageBuilder.ReceiverReq}
+          sbuildSmsReq <- MessageBuilder.buildDeliveryDetailsMessage booking.merchantOperatingCityId senderSmsReq
+          rbuildSmsReq <- MessageBuilder.buildDeliveryDetailsMessage booking.merchantOperatingCityId receiverSmsReq
+          senderMobileNumber <- decrypt encSenderMobileNumber
+          receiverMobileNumber <- decrypt encReceiverMobileNumber
+          let sphoneNumber = (fromMaybe "+91" senderPerson.mobileCountryCode) <> senderMobileNumber
+              rphoneNumber = (fromMaybe "+91" receiverPerson.mobileCountryCode) <> receiverMobileNumber
+          Sms.sendSMS booking.merchantId booking.merchantOperatingCityId (sbuildSmsReq sphoneNumber) >>= Sms.checkSmsResult
+          Sms.sendSMS booking.merchantId booking.merchantOperatingCityId (rbuildSmsReq rphoneNumber) >>= Sms.checkSmsResult
+
+rideStartedReqHandler ::
+  ( HasFlowEnv m r '["nwAddress" ::: BaseUrl, "smsCfg" ::: SmsConfig],
+    CacheFlow m r,
+    EsqDBFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    EsqDBReplicaFlow m r,
+    SchedulerFlow r,
+    HasHttpClientOptions r c,
+    HasLongDurationRetryCfg r c,
+    HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl],
+    HasBAPMetrics m r,
+    EventStreamFlow m r,
+    HasField "hotSpotExpiry" r Seconds,
+    HasFlowEnv m r '["urlShortnerConfig" ::: UrlShortner.UrlShortnerConfig],
+    HasField "blackListedJobs" r [Text]
+  ) =>
+  ValidatedRideStartedReq ->
+  m ()
+rideStartedReqHandler ValidatedRideStartedReq {..} = do
+  let BookingDetails {..} = bookingDetails
+  fork "ride start geohash frequencyUpdater" $ do
+    case tripStartLocation of
+      Just location -> frequencyUpdator booking.merchantId location Nothing TripStart Nothing
+      Nothing -> return ()
+  let updRideForStartReq =
+        ride{status = DRide.INPROGRESS,
+             rideStartTime,
+             rideEndTime = Nothing,
+             endOtp = endOtp_,
+             driverArrivalTime,
+             startOdometerReading,
+             estimatedEndTimeRange
+            }
+  triggerRideStartedEvent RideEventData {ride = updRideForStartReq, personId = booking.riderId, merchantId = booking.merchantId}
+  _ <- QRide.updateMultiple updRideForStartReq.id updRideForStartReq
+  QPFS.clearCache booking.riderId
+  when (updRideForStartReq.isInsured) $ fork "create insurance" $ SI.createInsurance updRideForStartReq
+  now <- getCurrentTime
+  rideRelatedNotificationConfigList <- getConfig (RideRelatedNotificationConfigDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId, timeDiffEvent = Just DRN.START_TIME}) (Just (CQRRNC.findAllByMerchantOperatingCityIdAndTimeDiffEvent booking.merchantOperatingCityId DRN.START_TIME (Just [])))
+  forM_ rideRelatedNotificationConfigList (SN.pushReminderUpdatesInScheduler booking updRideForStartReq (fromMaybe now rideStartTime))
+  person <- QP.findById booking.riderId >>= fromMaybeM (PersonDoesNotExist booking.riderId.getId)
+  riderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId}) (Just (CQRC.findByMerchantOperatingCityId booking.merchantOperatingCityId)) >>= fromMaybeM (RiderConfigDoesNotExist booking.merchantOperatingCityId.getId)
+  fork "convert pending non-ride sos to ride sos on ride start" $ convertNonRideSosToRide person riderConfig
+  unless isInitiatedByCronJob $ do
+    fork "notify emergency contacts" $ Notify.notifyRideStartToEmergencyContacts booking ride
+    Notify.notifyOnRideStarted booking ride
+  case booking.bookingDetails of
+    DRB.RentalDetails _ -> when (booking.isDashboardRequest == Just True) $ sendRideEndOTPMessage person
+    DRB.InterCityDetails _ -> when (booking.isDashboardRequest == Just True) $ sendRideEndOTPMessage person
+    DRB.DeliveryDetails _ -> do
+      deliveryInitiatedAs <- fromMaybeM (InternalError "DeliveryInitiatedBy not found") booking.initiatedBy
+      when (deliveryInitiatedAs /= Trip.DeliveryParty Trip.Receiver) $ sendDeliveryDetailsToReceiver riderConfig
+    _ -> pure ()
+  where
+    sendDeliveryDetailsToReceiver riderConfig = fork "Sending Delivery Details SMS to Receiver" $ do
+      mbExoPhone <- getOneConfig (ExophoneDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId, phoneNumber = Just booking.primaryExophone, callService = Nothing}) (Just (maybeToList <$> CQExophone.findByPrimaryPhone booking.primaryExophone))
+      senderParty <- QBPL.findOneActiveByBookingIdAndTripParty booking.id (Trip.DeliveryParty Trip.Sender) >>= fromMaybeM (InternalError $ "Sender booking party not found for " <> booking.id.getId)
+      receiverParty <- QBPL.findOneActiveByBookingIdAndTripParty booking.id (Trip.DeliveryParty Trip.Receiver) >>= fromMaybeM (InternalError $ "Receiver booking party not found for " <> booking.id.getId)
+      receiverPerson <- QP.findById receiverParty.partyId >>= fromMaybeM (PersonDoesNotExist receiverParty.partyId.getId)
+      receiverMobileNumber <- mapM decrypt receiverPerson.mobileNumber >>= fromMaybeM (PersonFieldNotPresent "mobileNumber")
+      let countryCode = fromMaybe "+91" receiverPerson.mobileCountryCode
+      let phoneNumber = countryCode <> receiverMobileNumber
+      endOtp <- fromMaybeM (InternalError "EndOtp not found to be send in sms for delivery receiver") endOtp_
+      let trackLink = Notify.buildTrackingUrl ride.id [("vp", "delivery")] riderConfig.trackingShortUrlPattern
+      let exophoneNumber =
+            maybe booking.primaryExophone (\exophone -> if not exophone.isPrimaryDown then exophone.primaryPhone else exophone.backupPhone) mbExoPhone
+      let receiverSmsReq =
+            MessageBuilder.BuildDeliveryMessageReq
+              { MessageBuilder.driverName = ride.driverName,
+                MessageBuilder.driverNumber = exophoneNumber,
+                MessageBuilder.trackingUrl = Just trackLink,
+                MessageBuilder.appUrl = riderConfig.appUrl,
+                MessageBuilder.senderName = senderParty.partyName,
+                MessageBuilder.receiverName = receiverParty.partyName,
+                MessageBuilder.otp = endOtp,
+                MessageBuilder.hasEnded = False,
+                MessageBuilder.pickedUp = True,
+                MessageBuilder.deliveryMessageType = MessageBuilder.ReceiverReq
+              }
+      buildSmsReq <- MessageBuilder.buildDeliveryDetailsMessage booking.merchantOperatingCityId receiverSmsReq
+      Sms.sendSMS booking.merchantId booking.merchantOperatingCityId (buildSmsReq phoneNumber) >>= Sms.checkSmsResult
+
+    sendRideEndOTPMessage person = fork "sending ride end otp sms" $ do
+      let merchantOperatingCityId = booking.merchantOperatingCityId
+      merchantConfig <- getConfig (MerchantServiceUsageConfigDimensions {merchantOperatingCityId = merchantOperatingCityId.getId}) (Just (CQMSUC.findByMerchantOperatingCityId merchantOperatingCityId)) >>= fromMaybeM (MerchantServiceUsageConfigNotFound merchantOperatingCityId.getId)
+      if merchantConfig.enableDashboardSms
+        then do
+          case endOtp_ of
+            Just endOtp' -> do
+              mobileNumber <- mapM decrypt person.mobileNumber >>= fromMaybeM (PersonFieldNotPresent "mobileNumber")
+              let countryCode = fromMaybe "+91" person.mobileCountryCode
+              let phoneNumber = countryCode <> mobileNumber
+              buildSmsReq <-
+                MessageBuilder.buildSendRideEndOTPMessage merchantOperatingCityId $
+                  MessageBuilder.BuildSendRideEndOTPMessageReq
+                    { otp = show endOtp'
+                    }
+              Sms.sendSMS booking.merchantId merchantOperatingCityId (buildSmsReq phoneNumber) >>= Sms.checkSmsResult
+            _ -> pure ()
+        else do
+          logInfo "Merchant not configured to send dashboard sms"
+          pure ()
+
+    convertNonRideSosToRide person riderConfig = do
+      mbNonRideSos <- SafetyQSos.findPendingNonRideSosByPersonId (cast booking.riderId) SafetyDSos.Pending (Just SafetyDSos.NonRide)
+      whenJust mbNonRideSos $ \sos ->
+        case sos.sosState of
+          Just SafetyDSos.SosActive -> do
+            SafetySos.updateSosFromNonRideToRide sos (cast ride.id)
+            QRide.updateSosId (Just $ cast sos.id) ride.id
+            when riderConfig.enableSupportForSafety $ do
+              phoneNumber <- mapM decrypt person.mobileNumber
+              let rideInfo = SIVR.buildRideInfo ride person phoneNumber
+              case sos.ticketId of
+                Just existingTicketId ->
+                  void $
+                    withTryCatch "updateTicket:autoConvertSos" $
+                      Ticket.updateSosTicket person.merchantId person.merchantOperatingCityId TIT.UpdateTicketReq {comment = "SOS converted from non-ride to ride", ticketId = existingTicketId, status = TIT.Pending, rideDescription = Just rideInfo, issueDetails = Nothing, requesterId = sos.requesterId, ticketContext = Just TIT.SOSAlert, name = Nothing, phoneNo = Nothing, xyneChannelId = Nothing}
+                Nothing -> do
+                  let trackLink = case riderConfig.sosTrackingLink of
+                        Just sosLink -> Text.replace "{#vp#}" "sosTracking" sosLink <> sos.id.getId
+                        Nothing -> Text.replace "{#vp#}" "shareRide" riderConfig.trackingShortUrlPattern <> ride.id.getId
+                      kaptureQueue = fromMaybe riderConfig.kaptureConfig.queue riderConfig.kaptureConfig.sosQueue
+                  ticketResponse <-
+                    withTryCatch "createTicket:autoConvertSos" $
+                      Ticket.createTicket person.merchantId person.merchantOperatingCityId $
+                        SIVR.mkTicket person phoneNumber [trackLink] (Just rideInfo) SafetyDSos.SafetyFlow riderConfig.kaptureConfig.disposition kaptureQueue
+                  whenJust (either (const Nothing) (Just . (.ticketId) . fst) ticketResponse) $ \newTicketId ->
+                    void $ SafetySos.updateSosTicketId sos (Just newTicketId)
+          Just SafetyDSos.LiveTracking -> do
+            SafetyQSos.updateStatus SafetyDSos.Resolved sos.id
+            SafetyCQSos.clearAllCacheKeys sos
+          Nothing -> pure ()
+
+data RideEndOffersKafkaData = RideEndOffersKafkaData
+  { rideId :: Id DRide.Ride,
+    personId :: Id DPerson.Person,
+    tags :: [LYT.TagNameValueExpiry],
+    createdAt :: UTCTime
+  }
+  deriving (Generic, Show, ToJSON)
+
+rideCompletedReqHandler ::
+  ( HasFlowEnv m r '["nwAddress" ::: BaseUrl, "smsCfg" ::: SmsConfig],
+    CacheFlow m r,
+    EsqDBFlow m r,
+    Finance.HasActorInfo m r,
+    EncFlow m r,
+    EsqDBReplicaFlow m r,
+    ClickhouseFlow m r,
+    SchedulerFlow r,
+    HasHttpClientOptions r c,
+    HasLongDurationRetryCfg r c,
+    HasFlowEnv m r '["ondcTokenHashMap" ::: HM.HashMap KeyConfig TokenConfig],
+    HasField "minTripDistanceForReferralCfg" r (Maybe Distance),
+    HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl],
+    HasFlowEnv m r '["urlShortnerConfig" ::: UrlShortner.UrlShortnerConfig],
+    HasBAPMetrics m r,
+    EventStreamFlow m r,
+    HasField "hotSpotExpiry" r Seconds,
+    HasShortDurationRetryCfg r c,
+    HasFlowEnv m r '["selfBaseUrl" ::: BaseUrl],
+    HasKafkaProducer r,
+    HasField "blackListedJobs" r [Text],
+    FinanceBeamFlow.BeamFlow m r
+  ) =>
+  ValidatedRideCompletedReq ->
+  m ()
+rideCompletedReqHandler ValidatedRideCompletedReq {..} = do
+  let BookingDetails {..} = bookingDetails
+  fork "ride end geohash frequencyUpdater" $ do
+    case tripEndLocation of
+      Just location -> frequencyUpdator booking.merchantId location Nothing TripEnd Nothing
+      Nothing -> return ()
+  fork "updating total rides count" $ SMC.updateTotalRidesCounters person
+  merchantConfigs <- getConfig (MerchantConfigDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId}) (Just (CQMerchantCfg.findAllByMerchantOperatingCityId booking.merchantOperatingCityId (Just [])))
+  SMC.updateTotalRidesInWindowCounters booking.riderId merchantConfigs
+  mbDriverPhoneNumber <- mapM decrypt ride.driverPhoneNumber
+  let driverPhoneNumber = fromMaybe driverMobileNumber mbDriverPhoneNumber
+  mbAdvRide <- QRide.findLatestByDriverPhoneNumber driverPhoneNumber
+  mbMerchant <- CQM.findById booking.merchantId
+  whenJust mbAdvRide $ do \advRide -> when (advRide.id /= ride.id) $ QRide.updateshowDriversPreviousRideDropLoc False advRide.id
+  let distanceUnit = ride.distanceUnit
+  breakups <- traverse (buildFareBreakup ride.id) fareBreakups
+  -- Offer is applied against the discount-applicable ride fare inclusive of
+  -- its VAT (same basis as /getOfferDiscount and the quote-list offer
+  -- basket). Fall back to the aggregate totalFare when the BPP didn't emit
+  -- the ten-tag summary.
+  let fareCtx = RD.parseProjectFareParamsBreakup $ (\fb -> (fb.description, fb.amount.amount)) <$> breakups
+      discountApplicableFareAmountTaxIncl = case fareCtx of
+        Just b -> b.discountApplicableRideFareTaxExclusive + b.discountApplicableRideFareTax
+        Nothing -> totalFare.amount
+      offerBasePrice = mkPrice (Just totalFare.currency) discountApplicableFareAmountTaxIncl
+  -- A tip added while the ride was running is not part of the fare (it never enters the BPP's
+  -- fare params, so it carries no commission or tax) but it is part of what the rider owes.
+  -- `fare` stays the fare the policy computed; `totalFare` is what is actually collected.
+  let totalFareWithTip = mkPrice (Just totalFare.currency) (totalFare.amount + maybe 0 (.amount) ride.tipAmount)
+  let rideCommission = maybe booking.commission Just commission
+      updRide =
+        ride{status = DRide.COMPLETED,
+             fare = Just fare,
+             totalFare = Just totalFareWithTip,
+             chargeableDistance = convertHighPrecMetersToDistance distanceUnit <$> chargeableDistance,
+             traveledDistance = convertHighPrecMetersToDistance distanceUnit <$> traveledDistance,
+             tollConfidence,
+             rideEndTime,
+             paymentStatus = if SPayment.isOnlinePayment mbMerchant booking then DRide.NotInitiated else DRide.Completed,
+             endOdometerReading,
+             rideTags = ride.rideTags <> ((\valid -> ["ValidRide#" <> if valid then "Yes" else "No"] :: [Text]) <$> isValidRide),
+             commission = rideCommission
+            }
+  -- Persist offer details in Ride OfferEntity table for fast lookup in rideList,
+  -- apply the offer for cash rides, and schedule the cashback-payout job when
+  -- the offer carries a payout.
+  let onlinePayment = SPayment.isOnlinePayment mbMerchant booking
+  mbOfferStatsInput <- if onlinePayment then pure Nothing else Just <$> SPayment.buildOfferStatsInput person
+  mbRideOfferEntity <- SOffer.processRideOffer mbOfferStatsInput booking person updRide offerBasePrice fareCtx
+  let rideDiscountAmount = maybe 0 (.discountAmount) mbRideOfferEntity
+      ridePayoutAmount = maybe 0 (.payoutAmount) mbRideOfferEntity
+  minTripDistanceForReferralCfg <- asks (.minTripDistanceForReferralCfg)
+  let shouldUpdateRideComplete =
+        case minTripDistanceForReferralCfg of
+          Just distance -> updRide.chargeableDistance >= Just distance && not person.hasTakenValidRide
+          Nothing -> True
+  riderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId}) (Just (CQRC.findByMerchantOperatingCityId booking.merchantOperatingCityId)) >>= fromMaybeM (RiderConfigNotFound booking.merchantOperatingCityId.getId)
+  let vehicleCat = Utils.mapServiceTierToCategory booking.vehicleServiceTierType
+  fork "update first ride info" $ do
+    mbPersonFirstRideInfo <- QCP.findByPersonIdAndVehicleCategory booking.riderId $ Just vehicleCat
+    -- Per-category count incl. this ride; reuses the cached count (O(N) query only on cache miss).
+    catRideCount <- case mbPersonFirstRideInfo of
+      Just personFirstRideInfo -> do
+        let newCount = personFirstRideInfo.rideCount + 1
+        QCP.updateHasTakenValidRideCount newCount booking.riderId $ Just vehicleCat
+        pure newCount
+      Nothing -> do
+        totalCount <- B.runInReplica $ QRB.findCountByRideIdStatusAndVehicleServiceTierType booking.riderId BT.COMPLETED (Utils.getListOfServiceTireTypes vehicleCat)
+        personClientInfo <- buildPersonClientInfo booking.riderId booking.clientId booking.merchantOperatingCityId booking.merchantId vehicleCat (totalCount + 1)
+        QCP.create personClientInfo
+        when (totalCount == 0) $ do
+          Notify.notifyFirstRideEvent booking.riderId vehicleCat booking.tripCategory
+          fork ("processing referral payouts for ride: " <> ride.id.getId) $ do
+            customerReferralPayout ride totalFare.currency isValidRide riderConfig person booking.merchantId booking.merchantOperatingCityId
+        pure (totalCount + 1)
+    ET.trackVehicleRideCompletedEvents booking.merchantId booking.merchantOperatingCityId booking.riderId vehicleCat catRideCount totalFare.amount
+
+  when (not person.hasTakenValidRide && fromMaybe 0 person.totalRidesCount == 0) $
+    fork "event_tracking: first_ride_completed" $
+      ET.trackEvent booking.merchantId booking.merchantOperatingCityId (ET.FirstRideCompleted (getId booking.riderId))
+
+  when (riderConfig.enableRideEndOffers) $ do
+    fork "computing offers namma tag" $
+      addOffersNammaTags updRide person
+
+  -- we should create job for collecting money from customer
+  let applicationFeeAmount' = fromMaybe 0 rideCommission
+
+  if not onlinePayment
+    then do
+      let riderName = listToMaybe $ catMaybes [person.firstName, person.middleName, person.lastName]
+          mbInvCfg = riderConfig.invoiceConfig
+          cashLedgerCtx =
+            RidePaymentFinance.applyBookingProviderFieldsToCtx booking $
+              (RidePaymentFinance.buildRiderFinanceCtx person.merchantId.getId person.merchantOperatingCityId.getId totalFare.currency False person.id.getId ride.id.getId Nothing Nothing (listToMaybe $ catMaybes [booking.fromLocation.address.area, booking.fromLocation.address.street, booking.fromLocation.address.city]))
+                { issuedToName = riderName,
+                  supplierName = mbInvCfg >>= (.supplierName),
+                  supplierAddress = mbInvCfg >>= (.supplierAddress),
+                  supplierVatNumber = mbInvCfg >>= (.supplierVatNumber)
+                }
+      mbCashLedgerInfo <- SPayment.buildLedgerInfoFromBreakups breakups rideDiscountAmount ridePayoutAmount applicationFeeAmount' 0 cashLedgerCtx
+      let cashLedgerInfo =
+            fromMaybe
+              SPayment.RidePaymentLedgerInfo
+                { rideFare = totalFare.amount - applicationFeeAmount' - rideDiscountAmount,
+                  gstAmount = 0,
+                  tollFare = 0,
+                  tollVatAmount = 0,
+                  parkingCharge = 0,
+                  parkingChargeVat = 0,
+                  platformFee = applicationFeeAmount',
+                  offerDiscountAmount = rideDiscountAmount,
+                  cashbackPayoutAmount = ridePayoutAmount,
+                  rideVatAbsorbedOnDiscount = 0,
+                  cancellationCharge = 0,
+                  cancellationTax = 0,
+                  financeCtx = cashLedgerCtx
+                }
+              mbCashLedgerInfo
+      upsertRes <-
+        RidePaymentFinance.upsertCoreRidePaymentLedger
+          cashLedgerCtx
+          cashLedgerInfo.rideFare
+          cashLedgerInfo.gstAmount
+          cashLedgerInfo.tollFare
+          cashLedgerInfo.tollVatAmount
+          cashLedgerInfo.parkingCharge
+          cashLedgerInfo.parkingChargeVat
+          cashLedgerInfo.platformFee
+          cashLedgerInfo.offerDiscountAmount
+          cashLedgerInfo.cashbackPayoutAmount
+          cashLedgerInfo.rideVatAbsorbedOnDiscount
+          cashLedgerInfo.cancellationCharge
+          cashLedgerInfo.cancellationTax
+      -- Cash settles the ids given to it, where the online capture re-queries every unsettled entry
+      -- on the ride. So the carried cancellation entries must be listed here or they stay PENDING.
+      let settleableIds = upsertRes.coreEntryIds <> upsertRes.cancellationEntryIds
+      unless (null settleableIds) $ do
+        settleResult <- RidePaymentFinance.settleRidePaymentLedger cashLedgerCtx settleableIds RidePaymentFinance.settledReasonRidePayment
+        case settleResult of
+          Right () -> do
+            RidePaymentFinance.markRideInvoicePaid ride.id.getId
+            logInfo $ "Cash ride BAP ledger settled for ride: " <> ride.id.getId <> " invoiceId=" <> show upsertRes.invoiceId
+          Left err -> logError $ "Cash ride settle failed: " <> show err
+    else do
+      -- Online Ride End branch → isOnline=True.
+      let riderNameOnline = listToMaybe $ catMaybes [person.firstName, person.middleName, person.lastName]
+          mbInvCfgOnline = riderConfig.invoiceConfig
+          ledgerCtx =
+            RidePaymentFinance.applyBookingProviderFieldsToCtx booking $
+              (RidePaymentFinance.buildRiderFinanceCtx person.merchantId.getId person.merchantOperatingCityId.getId totalFare.currency True person.id.getId ride.id.getId Nothing Nothing (listToMaybe $ catMaybes [booking.fromLocation.address.area, booking.fromLocation.address.street, booking.fromLocation.address.city]))
+                { issuedToName = riderNameOnline,
+                  supplierName = mbInvCfgOnline >>= (.supplierName),
+                  supplierAddress = mbInvCfgOnline >>= (.supplierAddress),
+                  supplierVatNumber = mbInvCfgOnline >>= (.supplierVatNumber)
+                }
+      mbLedgerInfo <- SPayment.buildLedgerInfoFromBreakups breakups rideDiscountAmount ridePayoutAmount applicationFeeAmount' 0 ledgerCtx
+      let ledgerInfo =
+            fromMaybe
+              SPayment.RidePaymentLedgerInfo
+                { rideFare = totalFare.amount - applicationFeeAmount' - rideDiscountAmount,
+                  gstAmount = 0,
+                  tollFare = 0,
+                  tollVatAmount = 0,
+                  parkingCharge = 0,
+                  parkingChargeVat = 0,
+                  platformFee = applicationFeeAmount',
+                  offerDiscountAmount = rideDiscountAmount,
+                  cashbackPayoutAmount = ridePayoutAmount,
+                  rideVatAbsorbedOnDiscount = 0,
+                  cancellationCharge = 0,
+                  cancellationTax = 0,
+                  financeCtx = ledgerCtx
+                }
+              mbLedgerInfo
+      logDebug $ "makePaymentIntent (ride-completed): breakups=" <> show breakups <> " discount=" <> show rideDiscountAmount <> " payout=" <> show ridePayoutAmount <> " platformFee=" <> show applicationFeeAmount' <> " -> ledgerInfo=" <> show ledgerInfo
+      let scheduleAfter = riderConfig.executePaymentDelay
+          executePaymentIntentJobData = ExecutePaymentIntentJobData {personId = person.id, rideId = ride.id, fare = totalFare, applicationFeeAmount = applicationFeeAmount'}
+      logDebug $ "Update payment intent for order: " <> ride.id.getId
+      (customerPaymentId, paymentMethodId) <- SPayment.getCustomerAndPaymentMethod booking person
+      driverAccountId <- ride.driverAccountId & fromMaybeM (RideFieldNotPresent "driverAccountId")
+      email <- mapM decrypt person.email
+      let createPaymentIntentServiceReq =
+            DPayment.CreatePaymentIntentServiceReq
+              { amount = totalFare.amount + maybe 0.0 (.amount) ride.tipAmount,
+                discountAmount = rideDiscountAmount,
+                offerId = Id <$> booking.selectedOfferId,
+                applicationFeeAmount = applicationFeeAmount',
+                currency = totalFare.currency,
+                customer = customerPaymentId,
+                paymentMethod = paymentMethodId,
+                receiptEmail = email,
+                driverAccountId
+              }
+      -- Lookup existing order for retry handling via Redis ledger entry IDs
+      mbExistingOrderId <- SPayment.getOrderIdForRide ride.id
+      eitherResp <- withTryCatch "makePaymentIntent:rideCompleted" $ withShortRetry (SPayment.makePaymentIntent person.merchantId person.merchantOperatingCityId booking.paymentMode person.id (Just ride.id) mbExistingOrderId DOrder.RideHailing createPaymentIntentServiceReq (Just ledgerInfo))
+      case eitherResp of
+        Left err -> do
+          logError $ "makePaymentIntent failed, scheduling job so that it can mark this as Dues: " <> show err
+          createJobIn @_ @'ExecutePaymentIntent (Just booking.merchantId) (Just booking.merchantOperatingCityId) scheduleAfter (executePaymentIntentJobData :: ExecutePaymentIntentJobData)
+        Right Nothing -> SPayment.zeroEffectivePaymentDueToOffer booking.merchantId booking.merchantOperatingCityId ride.id person booking.selectedOfferId totalFare.currency discountApplicableFareAmountTaxIncl rideDiscountAmount ledgerInfo booking
+        Right (Just _paymentIntentResp) -> do
+          logDebug $ "Scheduling execute payment intent job for order: " <> show scheduleAfter
+          createJobIn @_ @'ExecutePaymentIntent (Just booking.merchantId) (Just booking.merchantOperatingCityId) scheduleAfter (executePaymentIntentJobData :: ExecutePaymentIntentJobData)
+
+  -- Schedule the cashback-payout job after the ledger leg has been created above.
+  SOffer.scheduleCashbackPayoutJob booking updRide person.id ridePayoutAmount
+
+  triggerRideEndEvent RideEventData {ride = updRide, personId = booking.riderId, merchantId = booking.merchantId}
+  triggerBookingCompletedEvent BookingEventData {booking = booking{status = DRB.COMPLETED}}
+  whenJust person.totalRidesCount $ \rideCount ->
+    fork "event_tracking: ride_completed" $
+      ET.trackEvent booking.merchantId booking.merchantOperatingCityId (ET.RideCompleted (getId booking.riderId) (rideCount + 1) totalFare.amount)
+  when shouldUpdateRideComplete $ void $ QP.updateHasTakenValidRide booking.riderId
+  otherParties <- Notify.getAllOtherRelatedPartyPersons booking
+  unless (booking.status == DRB.COMPLETED) $
+    void $ do
+      sendRideEndMessage booking
+      QRB.updateStatus booking.riderId booking.id DRB.COMPLETED
+      QBPL.makeAllInactiveByBookingId booking.id
+  now <- getCurrentTime
+  rideRelatedNotificationConfigList <- getConfig (RideRelatedNotificationConfigDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId, timeDiffEvent = Just DRN.END_TIME}) (Just (CQRRNC.findAllByMerchantOperatingCityIdAndTimeDiffEvent booking.merchantOperatingCityId DRN.END_TIME (Just [])))
+  forM_ rideRelatedNotificationConfigList (SN.pushReminderUpdatesInScheduler booking updRide (fromMaybe now rideEndTime))
+  when (isJust paymentStatus && booking.paymentStatus /= Just DRB.PAID) $ QRB.updatePaymentStatus booking.id (fromJust paymentStatus)
+  whenJust paymentUrl $ QRB.updatePaymentUrl booking.id
+  QRide.updateMultiple updRide.id updRide
+  fork "Increment completed count + evaluate rewards" $ do
+    void $ CCR.incrementCompletedCount booking.riderId 1
+    RewardsConsumer.evaluateRewardsIfEnabled
+      booking.riderId
+      booking.merchantOperatingCityId
+      (fromMaybe now rideEndTime)
+      isValidRide
+  offerDiscountBreakup <-
+    if rideDiscountAmount > 0
+      then do
+        guid <- generateGUID
+        pure
+          [ DFareBreakup.FareBreakup
+              { id = guid,
+                entityId = ride.id.getId,
+                entityType = DFareBreakup.RIDE,
+                amount = mkPrice (Just totalFare.currency) (- rideDiscountAmount),
+                description = "OFFER_DISCOUNT"
+              }
+          ]
+      else pure []
+  -- The tip rides in on the Beckn quote breakup as BUYER_ADDITIONAL_AMOUNT — the BPP emits that line
+  -- whenever ride.tipAmount > 0. We store it as-is, so the fare breakup the rider app shows is exactly
+  -- the one the driver sent: single source on the wire, no local reconstruction. (Tips added after the
+  -- ride has already completed don't arrive on a fresh quote; those are written directly in
+  -- Domain.Action.UI.RidePayment under the same title.)
+  SFareBreakupInfo.setFareBreakupInfoFromFareBreakups (Just booking.merchantId) (Just booking.merchantOperatingCityId) (breakups <> offerDiscountBreakup)
+  QPFS.clearCache booking.riderId
+  createRecentLocationForTaxi booking
+  checkAndUpdateJourneyTerminalStatusForNormalRide booking DJourney.COMPLETED
+
+  -- uncomment for update api test; booking.paymentMethodId should be present
+  -- whenJust booking.paymentMethodId $ \paymentMethodId -> do
+  --   merchant <- CQM.findById booking.merchantId >>= fromMaybeM (MerchantNotFound booking.merchantId.getId)
+  --   paymentMethod <-
+  --     CQMPM.findByIdAndMerchantId paymentMethodId booking.merchantId
+  --       >>= fromMaybeM (MerchantPaymentMethodDoesNotExist paymentMethodId.getId)
+  --   let dUpdateReq = ACL.PaymentCompletedBuildReq
+  --         { bppBookingId,
+  --           bppRideId = ride.bppRideId,
+  --           paymentMethodInfo = DMPM.mkPaymentMethodInfo paymentMethod,
+  --           bppId = booking.providerId,
+  --           bppUrl = booking.providerUrl,
+  --           transactionId = booking.transactionId,
+  --           merchant
+  --         }
+  --   becknUpdateReq <- ACL.buildUpdateReq dUpdateReq
+  --   void . withShortRetry $ CallBPP.update booking.providerUrl becknUpdateReq
+  fork "mark pending sos as not resolved on ride end" $ do
+    SafetyCQSos.updateStatusToNotResolvedIfPendingByRideId (cast ride.id)
+  unless isInitiatedByCronJob $
+    Notify.notifyOnRideCompleted booking updRide otherParties rideDiscountAmount
+  EditLocationThrottle.clearBookingEditAttempts booking.id
+  where
+    buildFareBreakup :: MonadFlow m => Id DRide.Ride -> DFareBreakup -> m DFareBreakup.FareBreakup
+    buildFareBreakup rideId DFareBreakup {..} = do
+      guid <- generateGUID
+      pure
+        DFareBreakup.FareBreakup
+          { id = guid,
+            entityId = rideId.getId,
+            entityType = DFareBreakup.RIDE,
+            ..
+          }
+
+addOffersNammaTags ::
+  ( MonadFlow m,
+    CoreMetrics m,
+    EsqDBFlow m r,
+    CacheFlow m r,
+    EncFlow m r,
+    HasKafkaProducer r,
+    ClickhouseFlow m r
+  ) =>
+  DRide.Ride ->
+  DPerson.Person ->
+  m ()
+addOffersNammaTags ride person = do
+  decryptedMobileNumber <- mapM decrypt person.mobileNumber >>= fromMaybeM (InternalError "Customer has no mobile number")
+  now <- getCurrentTime
+  mbBooking <- QRB.findById ride.bookingId
+  let mbTransactionId = (.transactionId) <$> mbBooking
+  let rideData = mkRideData ride
+      customerData = Y.CustomerData {mobileNumber = decryptedMobileNumber, gender = person.gender}
+  tags <- LYDL.computeNammaTagsWithExpiryAndDebugLog LYDL.Rider (cast person.merchantOperatingCityId) Yudhishthira.RideEndOffers mbTransactionId (Y.EndRideOffersTagData customerData rideData)
+  newTags <- modifiedNewNammaTags tags (fromMaybe [] person.customerNammaTags) now
+  when (not $ null newTags) $ do
+    CQPerson.updateCustomerTags (Just $ (fromMaybe [] person.customerNammaTags) <> newTags) person.id
+    pushToKafka (RideEndOffersKafkaData ride.id person.id newTags now) "customer-ride-end-offers" person.id.getId
+    Notify.notifyOnRideEndOffer person
+  where
+    modifiedNewNammaTags newTags currTags now = do
+      let currValidParsedTags =
+            foldr
+              ( \tag acc ->
+                  case Yudhishthira.parseTag tag now of
+                    Just (tagName, tagValue, validity) ->
+                      case validity of
+                        Just (Hours val) ->
+                          if val > 0
+                            then (tagName, tagValue, validity) : acc
+                            else acc
+                        Nothing -> (tagName, tagValue, validity) : acc
+                    Nothing -> acc
+              )
+              []
+              currTags
+          newParsedTags = mapMaybe (\tag -> Yudhishthira.parseTag tag now) newTags
+          newParsedTagsNotInCurrTags = filter (\(tagName, _, _) -> tagName `notElem` (currValidParsedTags <&> (\(tagName', _, _) -> tagName'))) newParsedTags
+      modifiedParsedTags <-
+        mapMaybeM
+          ( \(LYT.TagName tagName, tagValue, validity) -> do
+              case tagValue of
+                LYT.TextValue tagValueText -> getOfferCodeModifiedTag tagName validity [tagValueText]
+                LYT.ArrayValue tagValueTextArray -> getOfferCodeModifiedTag tagName validity tagValueTextArray
+                _ -> pure Nothing
+          )
+          newParsedTagsNotInCurrTags
+      return $
+        map
+          (\(tagName, tagValue, tagValidity) -> Yudhishthira.mkTagNameValueExpiry tagName tagValue tagValidity now)
+          modifiedParsedTags
+
+    getOfferCodeModifiedTag _ _ [] = pure Nothing
+    getOfferCodeModifiedTag tagName validity tags@(tagValue : _) = do
+      if tagValue == "Valid"
+        then do
+          mbOfferCode :: Maybe Text <- Redis.withCrossAppRedis $ Redis.rPop ("offerCodesPool-" <> tagName)
+          case mbOfferCode of
+            Just offerCode -> pure $ Just (LYT.TagName tagName, LYT.ArrayValue (tags <> [offerCode]), validity)
+            Nothing -> pure Nothing
+        else pure Nothing
+
+    mkRideData DRide.Ride {updatedAt = updatedAt', ..} = Y.RideData {updatedAt = updatedAt', ..}
+
+buildFareBreakupV2 :: MonadFlow m => Text -> DFareBreakup.FareBreakupEntityType -> DFareBreakup -> m DFareBreakup.FareBreakup
+buildFareBreakupV2 entityId entityType DFareBreakup {..} = do
+  guid <- generateGUID
+  pure
+    DFareBreakup.FareBreakup
+      { id = guid,
+        entityId,
+        entityType,
+        ..
+      }
+
+farePaidReqHandler :: (CacheFlow m r, EsqDBFlow m r, MonadFlow m) => ValidatedFarePaidReq -> m ()
+farePaidReqHandler req = void $ QRB.updatePaymentStatus req.booking.id req.paymentStatus
+
+driverArrivedReqHandler ::
+  ( HasFlowEnv m r '["nwAddress" ::: BaseUrl, "smsCfg" ::: SmsConfig],
+    CacheFlow m r,
+    EsqDBFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    EsqDBReplicaFlow m r,
+    HasHttpClientOptions r c,
+    HasLongDurationRetryCfg r c,
+    HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl],
+    HasBAPMetrics m r,
+    EventStreamFlow m r,
+    ServiceFlow m r
+  ) =>
+  ValidatedDriverArrivedReq ->
+  m ()
+driverArrivedReqHandler ValidatedDriverArrivedReq {..} = do
+  unless (isJust ride.driverArrivalTime) $ do
+    void $ QRide.updateDriverArrival ride.id arrivalTime
+    QPFS.clearCache booking.riderId
+    updateAndNotifyDriverArrivalStatus booking ride DRide.DRIVER_REACHED
+
+bookingCancelledReqHandler ::
+  ( HasFlowEnv m r '["nwAddress" ::: BaseUrl, "smsCfg" ::: SmsConfig],
+    CacheFlow m r,
+    EsqDBFlow m r,
+    ClickhouseFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    EsqDBReplicaFlow m r,
+    HasHttpClientOptions r c,
+    HasLongDurationRetryCfg r c,
+    HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl],
+    HasBAPMetrics m r,
+    EventStreamFlow m r,
+    SchedulerFlow r,
+    HasShortDurationRetryCfg r c,
+    HasKafkaProducer r,
+    m ~ Kernel.Types.Flow.FlowR AppEnv
+  ) =>
+  ValidatedBookingCancelledReq ->
+  m ()
+bookingCancelledReqHandler (ValidatedBookingCancelledReq {..}) = do
+  logTagInfo ("BookingId-" <> getId booking.id) ("Cancellation reason:-" <> show cancellationSource)
+  cancellationTransaction booking mbRide cancellationSource Nothing Nothing False
+
+cancellationTransaction ::
+  ( HasFlowEnv m r '["nwAddress" ::: BaseUrl, "smsCfg" ::: SmsConfig],
+    CacheFlow m r,
+    EsqDBFlow m r,
+    ClickhouseFlow m r,
+    Finance.HasActorInfo m r,
+    EncFlow m r,
+    EsqDBReplicaFlow m r,
+    HasHttpClientOptions r c,
+    HasLongDurationRetryCfg r c,
+    HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl],
+    HasBAPMetrics m r,
+    EventStreamFlow m r,
+    SchedulerFlow r,
+    HasShortDurationRetryCfg r c,
+    HasKafkaProducer r,
+    HasField "blackListedJobs" r [Text]
+  ) =>
+  DRB.Booking ->
+  Maybe DRide.Ride ->
+  DBCR.CancellationSource ->
+  Maybe PriceAPIEntity ->
+  Maybe PriceAPIEntity ->
+  Bool ->
+  m ()
+cancellationTransaction booking mbRide cancellationSource cancellationFee cancellationFeeTax immediateCharge = do
+  bookingCancellationReason <- mkBookingCancellationReason booking (mbRide <&> (.id)) cancellationSource
+  merchantConfigs <- getConfig (MerchantConfigDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId}) (Just (CQMerchantCfg.findAllByMerchantOperatingCityId booking.merchantOperatingCityId (Just [])))
+  fork "incrementing fraud counters" $ do
+    case mbRide of
+      Just ride -> do
+        case cancellationSource of
+          DBCR.ByUser -> do
+            handleUpgradedToCabRideCancellation
+            SMC.updateCustomerFraudCounters booking.riderId merchantConfigs
+          DBCR.ByDriver -> SMC.updateCancelledByDriverFraudCounters booking.riderId merchantConfigs
+          _ -> pure ()
+        triggerRideCancelledEvent RideEventData {ride = ride{status = DRide.CANCELLED}, personId = booking.riderId, merchantId = booking.merchantId}
+      Nothing -> do
+        logDebug "No ride found for the booking."
+    let merchantOperatingCityId = booking.merchantOperatingCityId
+    mFraudDetected <- SMC.anyFraudDetected booking.riderId merchantOperatingCityId merchantConfigs Nothing
+    whenJust mFraudDetected $ \mc -> SMC.blockCustomer booking.riderId (Just mc.id)
+  triggerBookingCancelledEvent BookingEventData {booking = booking{status = DRB.CANCELLED}}
+  QPFS.updateStatus booking.riderId DPFS.IDLE
+  otherParties <- Notify.getAllOtherRelatedPartyPersons booking
+  unless (booking.status == DRB.CANCELLED) $
+    void $ do
+      QRB.updateStatus booking.riderId booking.id DRB.CANCELLED
+      QBPL.makeAllInactiveByBookingId booking.id
+      checkAndUpdateJourneyTerminalStatusForNormalRide booking DJourney.CANCELLED
+  whenJust mbRide $ \ride -> void $ do
+    whenJust cancellationFee $ \fee -> do
+      QRide.updateCancellationChargesOnCancel (Just (fee.amount + maybe 0 (.amount) cancellationFeeTax)) ride.id
+      QRide.updateCancellationFeeStatus (Just DRide.PENDING) ride.id
+    unless (ride.status == DRide.CANCELLED) $ void $ QRide.updateStatus ride.id DRide.CANCELLED
+    fork "mark pending sos as not resolved on ride cancel" $
+      SafetyCQSos.updateStatusToNotResolvedIfPendingByRideId (cast ride.id)
+  riderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = booking.merchantOperatingCityId.getId}) (Just (CQRC.findByMerchantOperatingCityId booking.merchantOperatingCityId)) >>= fromMaybeM (InternalError "RiderConfig not found")
+  fork "Cancellation Settlement" $ do
+    whenJust cancellationFee $ \fee -> do
+      logDebug $ "[CancellationSettlement] cancellationFee present: " <> show fee.amount <> " immediateCharge=" <> show immediateCharge <> " settleCancellationFeeBeforeNextRide=" <> show riderConfig.settleCancellationFeeBeforeNextRide <> " mbRide=" <> show (fmap (.id) mbRide)
+      personD <- QP.findById booking.riderId >>= fromMaybeM (PersonNotFound booking.riderId.getId)
+      merchantD <- CQM.findById booking.merchantId >>= fromMaybeM (MerchantNotFound booking.merchantId.getId)
+      merchantOpCity <- CQMOC.findById booking.merchantOperatingCityId >>= fromMaybeM (MerchantOperatingCityNotFound booking.merchantOperatingCityId.getId)
+      case (riderConfig.settleCancellationFeeBeforeNextRide, mbRide) of
+        (Just True, Just ride) -> do
+          -- creating cancellation execution payment intent which charges cancellation fee from users stripe account
+          let currentPaymentInstrument = fromMaybe DMPM.Cash booking.paymentInstrument
+              pickupAddress = listToMaybe $ catMaybes [booking.fromLocation.address.area, booking.fromLocation.address.street, booking.fromLocation.address.city]
+              ledgerCtx = RidePaymentFinance.applyBookingProviderFieldsToCtx booking $ RidePaymentFinance.buildRiderFinanceCtx booking.merchantId.getId booking.merchantOperatingCityId.getId fee.currency True booking.riderId.getId ride.id.getId Nothing Nothing pickupAddress
+          logDebug $ "[CancellationSettlement] immediateCharge=" <> show immediateCharge <> " paymentInstrument=" <> show currentPaymentInstrument
+          mobileNumber <- mapM decrypt personD.mobileNumber >>= fromMaybeM (PersonFieldNotPresent "mobileNumber")
+          let countryCode = fromMaybe "+91" personD.mobileCountryCode
+              syncCancellationLedger action =
+                void $
+                  withTryCatch "syncCancellationLedger" $
+                    CallBPPInternal.customerCancellationDuesSync
+                      merchantD.driverOfferApiKey
+                      merchantD.driverOfferBaseUrl
+                      merchantD.driverOfferMerchantId
+                      mobileNumber
+                      countryCode
+                      merchantOpCity.city
+                      action
+                      ride.bppRideId.getId
+          let cancellationTax = maybe 0 (.amount) cancellationFeeTax
+              cancellationBase = fee.amount
+          if immediateCharge
+            then case currentPaymentInstrument of
+              DMPM.Card _ ->
+                CancellationFee.settleCancellationFeeViaStripe booking ride personD cancellationBase cancellationTax fee.currency syncCancellationLedger
+              _ -> do
+                -- Cash/UPI: void any unsettled ride-fare entries before creating cancellation entries
+                void $ RidePaymentFinance.voidRidePaymentEntriesAndInvoice ride.id.getId
+                -- Create pending cancellation entries then mark as DUE for later collection
+                cashLedgerResp <- RidePaymentFinance.createPendingCancellationFeeLedger ledgerCtx cancellationBase cancellationTax
+                case cashLedgerResp of
+                  Right (_mbInvoiceId, pendingEntryIds) ->
+                    RidePaymentFinance.markEntriesAsDue pendingEntryIds
+                  _ -> return ()
+                syncCancellationLedger CallBPPInternal.OverdueCancellationLedger
+            else do
+              -- Manual due: do NOT capture. Cancel/void the ride payment, create a pending
+              -- cancellation due and sync it to the BPP; the rider clears it before the next ride.
+              logDebug $ "[CancellationSettlement] immediateCharge=false, creating manual cancellation due for rideId=" <> ride.id.getId
+              if ride.onlinePayment
+                then void $ SPayment.cancelPaymentIntent booking.merchantId booking.merchantOperatingCityId booking.paymentMode ride.id
+                else void $ RidePaymentFinance.voidRidePaymentEntriesAndInvoice ride.id.getId
+              dueLedgerResp <- RidePaymentFinance.createPendingCancellationFeeLedger ledgerCtx cancellationBase cancellationTax
+              case dueLedgerResp of
+                Right (_mbInvoiceId, pendingEntryIds) ->
+                  RidePaymentFinance.markEntriesAsDue pendingEntryIds
+                _ -> return ()
+              syncCancellationLedger CallBPPInternal.OverdueCancellationLedger
+        (_, Just ride) -> do
+          when ride.onlinePayment $ do
+            logInfo $ "Cancel payment intent due to rider configs: rideId: " <> ride.id.getId
+            void $ SPayment.cancelPaymentIntent booking.merchantId booking.merchantOperatingCityId booking.paymentMode ride.id
+        -- Ledger entries are voided inside cancelPaymentIntent
+        _ -> pure ()
+    when (isNothing cancellationFee) $
+      whenJust mbRide $ \ride -> do
+        if ride.onlinePayment
+          then do
+            logInfo $ "Cancel payment intent as no cancellation fees found: rideId: " <> ride.id.getId
+            void $ SPayment.cancelPaymentIntent booking.merchantId booking.merchantOperatingCityId booking.paymentMode ride.id
+          else void $ RidePaymentFinance.voidRidePaymentEntriesAndInvoice ride.id.getId
+  -- Ledger entries are voided inside cancelPaymentIntent (online) or voidRidePaymentEntriesAndInvoice (cash)
+
+  unless (cancellationSource == DBCR.ByUser) $
+    QBCR.upsert bookingCancellationReason
+  fork "Update namma tags and cancellation rate for customer cancellation" $ do
+    when (cancellationSource == DBCR.ByUser) $ do
+      case mbRide of
+        Just ride -> do
+          now <- getCurrentTime
+          mbCallStatus <- QCallStatus.findOneByRideId (Just $ ride.id.getId)
+          let callAtemptByDriver = isJust mbCallStatus
+              currentTime = floor $ utcTimeToPOSIXSeconds now
+              rideCreatedTime = floor $ utcTimeToPOSIXSeconds ride.createdAt
+              bookingCreatedTime = floor $ utcTimeToPOSIXSeconds booking.createdAt
+              driverArrivalTime = floor . utcTimeToPOSIXSeconds <$> ride.driverArrivalTime
+              tagData =
+                Y.CancelRideTagData
+                  { ride = ride{status = DRide.CANCELLED},
+                    booking = booking{status = DRB.CANCELLED},
+                    cancellationReason = bookingCancellationReason,
+                    callAtemptByDriver,
+                    currentTime,
+                    rideCreatedTime,
+                    bookingCreatedTime,
+                    merchantOperatingCityId = booking.merchantOperatingCityId,
+                    driverArrivalTime
+                  }
+          nammaTags <- withTryCatch "computeNammaTags:RideCancel" (LYDL.computeNammaTagsWithDebugLog LYDL.Rider (cast booking.merchantOperatingCityId) Yudhishthira.RideCancel (Just booking.transactionId) tagData)
+          logDebug $ "Tags for cancelled ride, rideId: " <> ride.id.getId <> " tagresults:" <> show (eitherToMaybe nammaTags)
+          let mbNammaTags = eitherToMaybe nammaTags
+          tagsWithExpiry <- forM (fromMaybe [] mbNammaTags) $ \tag -> Yudhishthira.fetchNammaTagExpiry (cast booking.merchantOperatingCityId) tag
+          person <- QP.findById booking.riderId >>= fromMaybeM (PersonNotFound booking.riderId.getId)
+          let existingTags = fromMaybe [] person.customerNammaTags
+          let updatedTags = existingTags <> tagsWithExpiry
+          CQPerson.updateCustomerTags (Just updatedTags) booking.riderId
+          let tags = fromMaybe [] mbNammaTags
+          when (validCustomerCancellation `elem` tags) $ do
+            windowSize <- CCR.getWindowSize booking.merchantOperatingCityId
+            void $ CCR.incrementCancelledCount booking.riderId windowSize
+            logDebug $ "Incremented cancellation count for customer: " <> booking.riderId.getId
+        Nothing -> logError "No ride found for customer cancellation, skipping namma tags and cancellation rate update"
+  fork "Checking lifetime blocking condition for customer based on cancellation rate" $ do
+    val :: Maybe Bool <- Redis.safeGet $ makeCustomerBlockingKey booking.id.getId
+    when (val == Just True) $ do
+      Redis.del $ makeCustomerBlockingKey booking.id.getId
+      personStats <- QPersonStats.findByPersonId booking.riderId
+      case (personStats, riderConfig.minRidesToBlock, riderConfig.thresholdCancellationPercentageToBlock) of
+        (Just stats, Just minRides, Just threshold) -> do
+          let totalRides = stats.completedRides + stats.driverCancelledRides + stats.userCancelledRides
+          let rate = (stats.userCancelledRides * 100) `div` max 1 totalRides
+          when (totalRides > minRides && rate > threshold) $ do
+            SMC.blockCustomer booking.riderId Nothing
+        _ -> logDebug "Configs or person stats doesnt not exist for checking blocking condition"
+  -- notify customer
+  bppDetails <- CQBPP.findBySubscriberIdAndDomain booking.providerId Context.MOBILITY >>= fromMaybeM (InternalError $ "BPP details not found for providerId:-" <> booking.providerId <> "and domain:-" <> show Context.MOBILITY)
+  Notify.notifyOnBookingCancelled booking cancellationSource bppDetails mbRide otherParties
+  when (booking.isDashboardRequest == Just True && riderConfig.autoSendBookingDetailsViaWhatsapp == Just True) $ do
+    fork "Sending Dashboard Cancelled Ride Message" $ do
+      sendBookingCancelledMessageViaWhatsapp booking.riderId riderConfig
+  where
+    handleUpgradedToCabRideCancellation =
+      case booking.bookingDetails of
+        DRB.OneWayDetails details ->
+          when (details.isUpgradedToCab == Just True) $ do
+            person <- QP.findById booking.riderId >>= fromMaybeM (PersonNotFound booking.riderId.getId)
+            let personTags = fromMaybe [] person.customerNammaTags
+            unless (rejectUpgradeTag `Yudhishthira.elemTagNameValue` personTags) $ do
+              rejectUpgradeTagWithExpiry <- Yudhishthira.fetchNammaTagExpiry (cast booking.merchantOperatingCityId) rejectUpgradeTag
+              CQPerson.updateCustomerTags (Just $ personTags <> [rejectUpgradeTagWithExpiry]) person.id
+        _ -> pure ()
+
+checkAndUpdateJourneyTerminalStatusForNormalRide :: (CacheFlow m r, EsqDBFlow m r, MonadFlow m) => DRB.Booking -> DJourney.JourneyStatus -> m ()
+checkAndUpdateJourneyTerminalStatusForNormalRide booking journeyStatus = do
+  mbJourneyId <- getJourneyIdFromBooking booking
+  whenJust mbJourneyId $ \journeyId -> do
+    journeyLegs <- QJL.getJourneyLegs journeyId
+    case journeyLegs of
+      [_] -> QJourney.updateStatus journeyStatus journeyId -- only one element here means just taxi leg i.e. normal ride flow, so updating journeyStatus
+      _ -> pure ()
+
+mkBookingCancellationReason ::
+  (MonadFlow m) =>
+  DRB.Booking ->
+  Maybe (Id DRide.Ride) ->
+  DBCR.CancellationSource ->
+  m DBCR.BookingCancellationReason
+mkBookingCancellationReason booking mbRideId cancellationSource = do
+  now <- getCurrentTime
+  return $
+    DBCR.BookingCancellationReason
+      { bookingId = booking.id,
+        merchantId = Just booking.merchantId,
+        distanceUnit = booking.distanceUnit,
+        rideId = mbRideId,
+        source = cancellationSource,
+        reasonCode = Nothing,
+        reasonStage = Nothing,
+        additionalInfo = Nothing,
+        driverCancellationLocation = Nothing,
+        driverDistToPickup = Nothing,
+        riderId = Just booking.riderId,
+        createdAt = now,
+        updatedAt = now
+      }
+
+validateRideAssignedReq ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    EncFlow m r,
+    EsqDBReplicaFlow m r,
+    HasHttpClientOptions r c,
+    HasLongDurationRetryCfg r c,
+    HasField "minTripDistanceForReferralCfg" r (Maybe Distance)
+  ) =>
+  RideAssignedReq ->
+  m ValidatedRideAssignedReq
+validateRideAssignedReq RideAssignedReq {..} = do
+  booking <- QRB.findByTransactionId transactionId >>= fromMaybeM (BookingDoesNotExist $ "transactionId:-" <> transactionId)
+  mbMerchant <- CQM.findById booking.merchantId
+  isValueAddNP <- CQVAN.isValueAddNP booking.providerId
+  let isSynchronousOnUpdateProcessing =
+        isValueAddNP
+          && case booking.tripCategory of
+            Just (Trip.OneWay Trip.OneWayRideOtp) -> True
+            Just (Trip.InterCity Trip.OneWayRideOtp _) -> True
+            Just (Trip.CrossCity Trip.OneWayRideOtp _) -> True
+            Just (Trip.Ambulance Trip.OneWayRideOtp) -> True
+            Just (Trip.Delivery Trip.OneWayRideOtp) -> True
+            _ -> False
+  let onlinePayment = SPayment.isOnlinePayment mbMerchant booking
+  -- TODO: Should we put 'TRIP_ASSIGNED' status check in the 'isAssignable' function for normal booking Or Handle for crone Job in Different Way?
+  unless (isAssignable booking) $ throwError (BookingInvalidStatus $ show booking.status)
+  onlinePaymentParameters <-
+    if onlinePayment
+      then do
+        person <- runInReplica $ QP.findById booking.riderId >>= fromMaybeM (PersonNotFound booking.riderId.getId)
+        (customerPaymentId, paymentMethodId) <- SPayment.getCustomerAndPaymentMethod booking person
+        driverAccountId_ <- driverAccountId & fromMaybeM (DriverAccountIdNotFound booking.id.getId)
+        let merchantOperatingCityId = person.merchantOperatingCityId
+        email <- mapM decrypt person.email
+        return $ Just OnlinePaymentParameters {driverAccountId = driverAccountId_, ..}
+      else return Nothing
+  let bppInvoiceProviderFields = QRBE.BPPInvoiceProviderFields Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  return $ ValidatedRideAssignedReq {..}
+  where
+    isAssignable booking = booking.status `elem` (if booking.isScheduled then [DRB.CONFIRMED, DRB.AWAITING_REASSIGNMENT, DRB.NEW, DRB.TRIP_ASSIGNED] else [DRB.CONFIRMED, DRB.AWAITING_REASSIGNMENT, DRB.NEW])
+
+validateRideStartedReq ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    EsqDBReplicaFlow m r,
+    HasHttpClientOptions r c,
+    HasLongDurationRetryCfg r c,
+    HasField "minTripDistanceForReferralCfg" r (Maybe Distance)
+  ) =>
+  RideStartedReq ->
+  m ValidatedRideStartedReq
+validateRideStartedReq RideStartedReq {..} = do
+  let BookingDetails {..} = bookingDetails
+  (ride, booking) <- getRideAndBooking bppBookingId transactionId
+  unless (booking.status == DRB.TRIP_ASSIGNED) $ throwError (BookingInvalidStatus $ show booking.status)
+  unless (ride.status == DRide.NEW || ride.status == DRide.UPCOMING) $ throwError (RideInvalidStatus $ show ride.status)
+  let estimatedEndTimeRange = mkEstimatedEndTimeRange <$> estimatedEndTimeRangeStart <*> estimatedEndTimeRangeEnd
+  return $ ValidatedRideStartedReq {..}
+  where
+    mkEstimatedEndTimeRange start end = DRide.EstimatedEndTimeRange {start, end}
+
+validateDriverArrivedReq ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    EsqDBReplicaFlow m r,
+    HasHttpClientOptions r c,
+    HasLongDurationRetryCfg r c,
+    HasField "minTripDistanceForReferralCfg" r (Maybe Distance)
+  ) =>
+  DriverArrivedReq ->
+  m ValidatedDriverArrivedReq
+validateDriverArrivedReq DriverArrivedReq {..} = do
+  let BookingDetails {..} = bookingDetails
+  (ride, booking) <- getRideAndBooking bppBookingId transactionId
+  unless (isValidRideStatus ride.status) $ throwError $ RideInvalidStatus ("The ride has already started." <> Text.pack (show ride.status))
+  return $ ValidatedDriverArrivedReq {..}
+  where
+    isValidRideStatus status = status == DRide.NEW
+
+validateRideCompletedReq ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    EsqDBReplicaFlow m r,
+    HasHttpClientOptions r c,
+    HasLongDurationRetryCfg r c,
+    HasField "minTripDistanceForReferralCfg" r (Maybe Distance)
+  ) =>
+  RideCompletedReq ->
+  m (Either ValidatedRideCompletedReq ValidatedFarePaidReq)
+validateRideCompletedReq RideCompletedReq {..} = do
+  let BookingDetails {..} = bookingDetails
+  (ride, booking) <- getRideAndBooking bppBookingId transactionId
+  let bookingCanBeCompleted = booking.status == DRB.TRIP_ASSIGNED
+      rideIsNew = ride.status == DRide.NEW
+      rideCanBeCompleted = ride.status == DRide.INPROGRESS
+      bookingAlreadyCompleted = booking.status == DRB.COMPLETED
+      rideAlreadyCompleted = ride.status == DRide.COMPLETED
+  if bookingAlreadyCompleted && rideAlreadyCompleted
+    then validateFarePaidReq booking
+    else do
+      unless (isInitiatedByCronJob || bookingCanBeCompleted || (bookingAlreadyCompleted && rideCanBeCompleted)) $
+        throwError (BookingInvalidStatus $ show booking.status)
+      unless (isInitiatedByCronJob || rideCanBeCompleted || ((rideAlreadyCompleted || rideIsNew) && bookingCanBeCompleted)) $
+        throwError (RideInvalidStatus $ show ride.status)
+      person <- QP.findById booking.riderId >>= fromMaybeM (PersonNotFound booking.riderId.getId)
+      return . Left $ ValidatedRideCompletedReq {..}
+  where
+    validateFarePaidReq booking = do
+      when (booking.paymentStatus == Just DRB.PAID) $ do
+        throwError . InvalidRequest $ "payment_status is already PAID for bookingId:-" <> show booking.id.getId
+      when (paymentStatus /= Just DRB.PAID) $ do
+        throwError . InvalidRequest $ "Invalid payment status change:-" <> show paymentStatus <> " for bookingId:-" <> show booking.id.getId <> ", which is already completed."
+      return . Right $ ValidatedFarePaidReq {booking, paymentStatus = fromJust paymentStatus} -- fromJust is safe here because of above check.
+
+validateBookingCancelledReq ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    EsqDBReplicaFlow m r,
+    HasHttpClientOptions r c,
+    HasLongDurationRetryCfg r c,
+    HasField "minTripDistanceForReferralCfg" r (Maybe Distance)
+  ) =>
+  BookingCancelledReq ->
+  m ValidatedBookingCancelledReq
+validateBookingCancelledReq BookingCancelledReq {..} = do
+  let isInitiatedByCronJob = maybe False (.isInitiatedByCronJob) bookingDetails
+  mBooking <- QRB.findByBPPBookingId bppBookingId
+  booking <- case mBooking of
+    Nothing -> do
+      logInfo $ "Booking not found for bppBookingId: " <> bppBookingId.getId
+      QRB.findByTransactionId transactionId >>= fromMaybeM (BookingDoesNotExist $ "TransactionId: " <> transactionId)
+    Just booking -> return booking
+  mbRide <- QRide.findActiveByRBId booking.id
+  let isRideCancellable = maybe False (\ride -> ride.status `notElem` [DRide.INPROGRESS, DRide.CANCELLED]) mbRide
+      bookingAlreadyCancelled = booking.status == DRB.CANCELLED
+  unless (isInitiatedByCronJob || isBookingCancellable booking || (isRideCancellable && bookingAlreadyCancelled)) $
+    throwError (BookingInvalidStatus (show booking.status))
+  return $ ValidatedBookingCancelledReq {..}
+  where
+    isBookingCancellable booking =
+      booking.status `elem` [DRB.NEW, DRB.CONFIRMED, DRB.AWAITING_REASSIGNMENT, DRB.TRIP_ASSIGNED]
+
+buildPersonClientInfo :: MonadFlow m => Id DPerson.Person -> Maybe (Id DC.Client) -> Id DMOC.MerchantOperatingCity -> Id DMerchant.Merchant -> BecknEnums.VehicleCategory -> Int -> m DPCI.ClientPersonInfo
+buildPersonClientInfo personId clientId cityId merchantId vehicleCategory rideCount = do
+  now <- getCurrentTime
+  id <- generateGUID
+  return
+    DPCI.ClientPersonInfo
+      { id = id,
+        personId = personId,
+        clientId = clientId,
+        merchantOperatingCityId = cityId,
+        merchantId = merchantId,
+        vehicleCategory = Just vehicleCategory,
+        rideCount = rideCount,
+        createdAt = now,
+        updatedAt = now
+      }
+
+sendRideEndMessage ::
+  ( HasFlowEnv m r '["smsCfg" ::: SmsConfig],
+    HasFlowEnv m r '["urlShortnerConfig" ::: UrlShortner.UrlShortnerConfig],
+    CacheFlow m r,
+    EsqDBFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    HasKafkaProducer r
+  ) =>
+  DRB.Booking ->
+  m ()
+sendRideEndMessage bk = case bk.tripCategory of
+  Just (Trip.Delivery _) -> do
+    senderParty <- QBPL.findOneActiveByBookingIdAndTripParty bk.id (Trip.DeliveryParty Trip.Sender) >>= fromMaybeM (InternalError $ "Sender booking party not found for " <> bk.id.getId)
+    receiverParty <- QBPL.findOneActiveByBookingIdAndTripParty bk.id (Trip.DeliveryParty Trip.Receiver) >>= fromMaybeM (InternalError $ "Receiver booking party not found for " <> bk.id.getId)
+    senderPerson <- QP.findById senderParty.partyId >>= fromMaybeM (PersonDoesNotExist senderParty.partyId.getId)
+    senderMobileNumber <- mapM decrypt senderPerson.mobileNumber >>= fromMaybeM (PersonFieldNotPresent "mobileNumber")
+    fork "Sending end delivery message to sender" $ do
+      let countryCode = fromMaybe "+91" senderPerson.mobileCountryCode
+          phoneNumber = countryCode <> senderMobileNumber
+          senderSmsReq =
+            MessageBuilder.BuildDeliveryMessageReq
+              { MessageBuilder.driverName = "",
+                MessageBuilder.driverNumber = "",
+                MessageBuilder.trackingUrl = Nothing,
+                MessageBuilder.appUrl = "",
+                MessageBuilder.senderName = senderParty.partyName,
+                MessageBuilder.receiverName = receiverParty.partyName,
+                MessageBuilder.otp = "",
+                MessageBuilder.hasEnded = True,
+                MessageBuilder.pickedUp = True,
+                MessageBuilder.deliveryMessageType = MessageBuilder.SenderReq
+              }
+      buildSmsReq <- MessageBuilder.buildDeliveryDetailsMessage bk.merchantOperatingCityId senderSmsReq
+      Sms.sendSMS bk.merchantId bk.merchantOperatingCityId (buildSmsReq phoneNumber) >>= Sms.checkSmsResult
+  _ -> pure ()
+
+customerReferralPayout ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    Finance.HasActorInfo m r,
+    EncFlow m r,
+    HasFlowEnv m r '["selfBaseUrl" ::: BaseUrl],
+    HasKafkaProducer r
+  ) =>
+  DRide.Ride ->
+  Currency ->
+  Maybe Bool ->
+  DRC.RiderConfig ->
+  DPerson.Person ->
+  Id DMerchant.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  m ()
+customerReferralPayout ride currency isValidRide riderConfig person_ merchantId merchantOperatingCityId = do
+  let vehicleCategory = DV.castVehicleVariantToVehicleCategory ride.vehicleVariant
+  logDebug $ "Ride End referral payout : vehicleCategory : " <> show vehicleCategory <> " isValidRide: " <> show isValidRide
+  mbPayoutConfig <- getOneConfig (PayoutConfigDimensions {merchantOperatingCityId = merchantOperatingCityId.getId, vehicleCategory = Just vehicleCategory, isPayoutEnabled = Nothing, payoutEntity = Nothing}) (Just (maybeToList <$> CQPayoutCfg.findByCityIdAndVehicleCategory merchantOperatingCityId vehicleCategory (Just [])))
+  case mbPayoutConfig of
+    Just payoutConfig -> do
+      whenJust person_.referredByCustomer $ \referredByCustomerId -> do
+        referredByPersonStats <- getPersonStats (Id referredByCustomerId)
+        personsWithSameDeviceId <- QP.findAllByDeviceId person_.deviceId
+        let dailyPayoutCountKey = getDailyPayoutCountKey referredByCustomerId
+            monthlyPayoutCountKey = getMonthlyPayoutKey referredByCustomerId
+        dailyPayoutCount_ <- Redis.get dailyPayoutCountKey
+        monthlyPayoutCount <- fromIntegral <$> SWC.getCurrentWindowCount monthlyPayoutCountKey SW.SlidingWindowOptions {period = 1, periodType = SW.Months}
+        let dailyPayoutCount = fromMaybe 0 dailyPayoutCount_ -- for referredBy customer
+            isDeviceIdValid = length personsWithSameDeviceId == 1 -- deviceId of new customer should be unique
+            deviceIdCheck = fromMaybe False riderConfig.isDeviceIdCheckDisabled || isDeviceIdValid
+            isConsideredForPayout = maybe False (\referredAt -> referredAt >= riderConfig.payoutReferralStartDate) person_.referredAt
+            payoutProgramThresholdChecks = (dailyPayoutCount < riderConfig.payoutReferralThresholdPerDay) && (monthlyPayoutCount < riderConfig.payoutReferralThresholdPerMonth) && deviceIdCheck
+        when (isConsideredForPayout && payoutProgramThresholdChecks && fromMaybe False isValidRide && riderConfig.payoutReferralProgram && payoutConfig.isPayoutEnabled) $ do
+          personStats <- getPersonStats person_.id
+          let shouldProcessRefereePayout = payoutConfig.referredByRewardAmount > 0.0
+              shouldProcessReferrerPayout = payoutConfig.referralRewardAmountPerRide > 0.0
+          when shouldProcessRefereePayout $ do
+            QPersonStats.updateReferredByEarning (personStats.referredByEarnings + payoutConfig.referredByRewardAmount) person_.id
+            sendPNToPerson person_ False
+            handlePayout person_ payoutConfig.referredByRewardAmount payoutConfig False referredByPersonStats DLP.REFERRED_BY_AWARD dailyPayoutCount
+          when shouldProcessReferrerPayout $ do
+            referredByPerson <- QP.findById (Id referredByCustomerId) >>= fromMaybeM (PersonNotFound referredByCustomerId)
+            sendPNToPerson referredByPerson True
+            handlePayout referredByPerson payoutConfig.referralRewardAmountPerRide payoutConfig True referredByPersonStats DLP.REFERRAL_AWARD_RIDE dailyPayoutCount
+    Nothing -> logTagError "Payout Config Error" $ "PayoutConfig Not Found for cityId: " <> merchantOperatingCityId.getId <> " and category: " <> show vehicleCategory
+  where
+    handlePayout person amount payoutConfig isReferredByPerson referredByPersonStats entity dailyPayoutCount = do
+      case person.payoutVpa of
+        Just vpa -> do
+          Redis.withWaitOnLockRedisWithExpiry (payoutProcessingLockKey person.id.getId) 5 5 $ do
+            case isReferredByPerson of
+              True -> do
+                QPersonStats.updateReferralEarningsAndValidActivations (referredByPersonStats.referralEarnings + payoutConfig.referralRewardAmountPerRide) (referredByPersonStats.validActivations + 1) person.id
+                setPayoutCountForReferree person.id.getId dailyPayoutCount
+              False -> QPersonStats.updateReferredByEarningsPayoutStatus (Just DPS.Processing) person.id
+            phoneNo <- mapM decrypt person.mobileNumber
+            emailId <- mapM decrypt person.email
+            merchantOperatingCity <- CQMOC.findById merchantOperatingCityId >>= fromMaybeM (MerchantOperatingCityNotFound merchantOperatingCityId.getId)
+            uid <- generateGUID
+            let entityName = entity
+                payoutServiceFlow = Payout.JuspayFlow -- Stripe payouts are not supported
+                createPayoutOrderReq = Payout.mkCreatePayoutServiceReq uid amount currency phoneNo emailId person.id.getId payoutConfig.remark person.firstName (Just vpa) payoutConfig.orderType payoutServiceFlow Nothing
+            logDebug $ "create payoutOrder with riderId: " <> person.id.getId <> " | amount: " <> show amount <> " | orderId: " <> show uid
+            let createPayoutOrderCall = TP.createPayoutOrder person.clientSdkVersion merchantId merchantOperatingCityId (Just person.id.getId)
+
+            mbPayoutOrderResp <- withTryCatch "createPayoutService:handlePayout" $ Payout.createPayoutService (cast merchantId) (Just $ cast merchantOperatingCityId) (cast person.id) (Just [ride.id.getId]) (Just entityName) (show merchantOperatingCity.city) createPayoutOrderReq createPayoutOrderCall Nothing
+            case mbPayoutOrderResp of
+              Left err -> logError $ "Error in calling create payout rideId: " <> show ride.id.getId <> " and orderId: " <> show uid <> "with error " <> show err
+              _ -> pure ()
+        Nothing -> do
+          when isReferredByPerson $ do
+            setPayoutCountForReferree person.id.getId dailyPayoutCount
+            QPersonStats.updateEarningsAndActivations (referredByPersonStats.referralEarnings + amount) (referredByPersonStats.backlogPayoutAmount + amount) (referredByPersonStats.validActivations + 1) person.id
+
+    getPersonStats personId = do
+      mbPersonStats <- QPersonStats.findByPersonId personId
+      case mbPersonStats of
+        Just personStats -> pure personStats
+        Nothing -> do
+          pStats <- mkPersonStats personId
+          QPersonStats.create pStats
+          pure pStats
+
+    mkPersonStats personId = do
+      now <- getCurrentTime
+      return
+        DPS.PersonStats
+          { personId = personId,
+            userCancelledRides = 0,
+            driverCancelledRides = 0,
+            completedRides = 0,
+            weekendRides = 0,
+            weekdayRides = 0,
+            offPeakRides = 0,
+            eveningPeakRides = 0,
+            morningPeakRides = 0,
+            weekendPeakRides = 0,
+            referralCount = 0,
+            createdAt = now,
+            updatedAt = now,
+            ticketsBookedInEvent = Just 0,
+            referralAmountPaid = 0,
+            referralEarnings = 0,
+            referredByEarnings = 0,
+            validActivations = 0,
+            referredByEarningsPayoutStatus = Nothing,
+            backlogPayoutStatus = Nothing,
+            backlogPayoutAmount = 0,
+            isBackfilled = Just False
+          }
+
+    getExpirationSeconds timeDiffFromUtc = do
+      currentUtcTime <- getCurrentTime
+      let localTime = addUTCTime (KUT.secondsToNominalDiffTime timeDiffFromUtc) currentUtcTime
+          nextLocalMidnight = UTCTime (addDays 1 (utctDay localTime)) 0
+          secondsUntilExpiration = round $ diffUTCTime nextLocalMidnight localTime
+      pure secondsUntilExpiration
+
+    setPayoutCountForReferree personId dailyPayoutCount = do
+      expirationPeriodForDay <- getExpirationSeconds riderConfig.timeDiffFromUtc
+      let dailyPayoutCountKey = getDailyPayoutCountKey personId
+          monthlyPayoutCountKey = getMonthlyPayoutKey personId
+      Redis.setExp dailyPayoutCountKey (dailyPayoutCount + 1) expirationPeriodForDay
+      SWC.incrementByValue 1 monthlyPayoutCountKey SW.SlidingWindowOptions {period = 1, periodType = SW.Months}
+
+    sendPNToPerson person oldCustomer =
+      when (isNothing person.payoutVpa) $ do
+        let pnKey =
+              if oldCustomer
+                then "REFERRAL_REWARD_ADD_VPA"
+                else "REFERRED_BY_REWARD_ADD_VPA"
+        mbMerchantPN <- CPN.findMatchingMerchantPNInRideFlow merchantOperatingCityId pnKey Nothing Nothing person.language []
+        whenJust mbMerchantPN $ \merchantPN -> do
+          let entityData = Notify.NotifReq {title = merchantPN.title, message = merchantPN.body}
+          Notify.notifyPersonOnEvents person entityData merchantPN.fcmNotificationType
+
+payoutProcessingLockKey :: Text -> Text
+payoutProcessingLockKey personId = "Payout:Processing:PersonId" <> personId
+
+getDailyPayoutCountKey :: Text -> Text
+getDailyPayoutCountKey personId = "Payout:Daily:PId" <> personId
+
+getMonthlyPayoutKey :: Text -> Text
+getMonthlyPayoutKey personId = "Payout:Monthly:PId-" <> personId
+
+sendRideBookingDetailsViaWhatsapp ::
+  ( CacheFlow m r,
+    HasFlowEnv m r '["urlShortnerConfig" ::: UrlShortner.UrlShortnerConfig],
+    EsqDBFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    HasKafkaProducer r
+  ) =>
+  Id DPerson.Person ->
+  DRide.Ride ->
+  DRB.Booking ->
+  DRC.RiderConfig ->
+  m ()
+sendRideBookingDetailsViaWhatsapp personId ride booking riderConfig = do
+  person <- QP.findById personId >>= fromMaybeM (PersonNotFound personId.getId)
+  mobileNumber <- mapM decrypt person.mobileNumber >>= fromMaybeM (PersonFieldNotPresent "mobileNumber")
+  countryCode <- person.mobileCountryCode & fromMaybeM (PersonFieldNotPresent "mobileCountryCode")
+  bookings <- QRB.findAllByTransactionId booking.transactionId
+  let phoneNumber = countryCode <> mobileNumber
+      trackLink = Notify.buildTrackingUrl ride.id [("vp", "shareRide")] riderConfig.trackingShortUrlPattern
+      messageKey = bool DMM.WHATSAPP_CALL_BOOKING_FLOW_DETAILS_MESSAGE DMM.WHATSAPP_CALL_BOOKING_REALLOCATED_RIDE_DETAILS_MESSAGE (length bookings > 1)
+  trackingUrl <- MessageBuilder.shortenTrackingUrl trackLink
+  merchantMessage <- CMM.findByMerchantOperatingCityIdAndMessageKeyInRideFlow person.merchantOperatingCityId messageKey booking.configInExperimentVersions >>= fromMaybeM (MerchantMessageNotFound person.merchantOperatingCityId.getId (show messageKey))
+  let driverNumber = (fromMaybe "+91" ride.driverMobileCountryCode) <> ride.driverMobileNumber
+      fare = show booking.estimatedTotalFare.amount
+  result <- Whatsapp.whatsAppSendMessageWithTemplateIdAPI person.merchantId person.merchantOperatingCityId (Whatsapp.SendWhatsAppMessageWithTemplateIdApIReq phoneNumber merchantMessage.templateId [Just driverNumber, Just ride.vehicleNumber, Just fare, Just ride.otp, Just trackingUrl, Just riderConfig.appUrl] Nothing Nothing) -- Accepts at most 7 variables using GupShup
+  when (result._response.status /= "success") $ throwError (InternalError "Unable to send Dashboard Ride Booking Details Whatsapp message")
+
+sendBookingCancelledMessageViaWhatsapp ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    HasKafkaProducer r
+  ) =>
+  Id DPerson.Person ->
+  DRC.RiderConfig ->
+  m ()
+sendBookingCancelledMessageViaWhatsapp personId riderConfig = do
+  person <- QP.findById personId >>= fromMaybeM (PersonNotFound personId.getId)
+  mobileNumber <- mapM decrypt person.mobileNumber >>= fromMaybeM (PersonFieldNotPresent "mobileNumber")
+  countryCode <- person.mobileCountryCode & fromMaybeM (PersonFieldNotPresent "mobileCountryCode")
+  let phoneNumber = countryCode <> mobileNumber
+      messageKey = DMM.WHATSAPP_CALL_BOOKING_CANCELLED_RIDE_MESSAGE
+  merchantMessage <- CMM.findByMerchantOperatingCityIdAndMessageKey person.merchantOperatingCityId messageKey Nothing >>= fromMaybeM (MerchantMessageNotFound person.merchantOperatingCityId.getId (show messageKey))
+  result <- Whatsapp.whatsAppSendMessageWithTemplateIdAPI person.merchantId person.merchantOperatingCityId (Whatsapp.SendWhatsAppMessageWithTemplateIdApIReq phoneNumber merchantMessage.templateId [Just riderConfig.appUrl] Nothing Nothing) -- Accepts at most 7 variables using GupShup
+  when (result._response.status /= "success") $ throwError (InternalError "Unable to send Dashboard Cancelled Booking Whatsapp message")
+
+updateAndNotifyDriverArrivalStatus :: (CacheFlow m r, EsqDBFlow m r, EncFlow m r, MonadFlow m, ServiceFlow m r) => DRB.Booking -> DRide.Ride -> DRide.DriverArrivalStatus -> m ()
+updateAndNotifyDriverArrivalStatus booking ride newStatus =
+  Redis.withWaitOnLockRedisWithExpiry (driverArrivalStatusLockKey ride.id.getId) 5 30 $ do
+    freshRide <- QRideLite.findByIdLite ride.id >>= fromMaybeM (RideDoesNotExist ride.id.getId)
+    let isHigherStatus = maybe True (newStatus >) freshRide.driverArrivalStatus
+    when (freshRide.status /= DRide.INPROGRESS && isHigherStatus) $ do
+      void $ QRide.updateDriverArrivalStatus (Just newStatus) ride.id
+      case newStatus of
+        DRide.DRIVER_ON_THE_WAY -> Notify.notifyDriverOnTheWay booking.riderId booking.tripCategory ride
+        DRide.DRIVER_REACHING -> Notify.notifyDriverReaching booking.riderId booking.tripCategory ride.otp ride.vehicleNumber ride
+        DRide.DRIVER_REACHED -> Notify.notifyDriverHasReached booking.riderId booking.tripCategory ride.otp ride.vehicleNumber ride.vehicleColor ride.vehicleModel ride.vehicleVariant
+
+driverArrivalStatusLockKey :: Text -> Text
+driverArrivalStatusLockKey rideId = "Ride:DriverArrivalStatus:Lock:" <> rideId
+
+createRecentLocationForTaxi :: (MonadFlow m, EsqDBFlow m r, CacheFlow m r) => DRB.Booking -> m ()
+createRecentLocationForTaxi booking = do
+  now <- getCurrentTime
+  let mbToLocation = case booking.bookingDetails of
+        DRB.OneWayDetails details -> Just details.toLocation
+        DRB.RentalDetails _ -> Nothing
+        -- No recent-location entry for EasyBooking either — no destination to record.
+        DRB.EasyBookingDetails _ -> Nothing
+        DRB.DriverOfferDetails details -> Just details.toLocation
+        DRB.OneWaySpecialZoneDetails details -> Just details.toLocation
+        DRB.InterCityDetails details -> Just details.toLocation
+        DRB.AmbulanceDetails details -> Just details.toLocation
+        DRB.DeliveryDetails details -> Just details.toLocation
+        DRB.MeterRideDetails details -> details.toLocation
+
+  whenJust mbToLocation $ \toLocation -> do
+    let address' =
+          Text.intercalate ", " $
+            catMaybes
+              [ toLocation.address.title,
+                toLocation.address.building,
+                toLocation.address.street,
+                toLocation.address.city,
+                toLocation.address.state,
+                toLocation.address.country
+              ]
+        -- Generate geohash with precision of ~100 meters (precision level 6)
+        toGeohash = Text.pack <$> Geohash.encode 6 (toLocation.lat, toLocation.lon)
+        fromGeohash = Text.pack <$> Geohash.encode 6 (booking.fromLocation.lat, booking.fromLocation.lon)
+
+    -- Search for existing recent location with same geohash and entity type
+    mbExistingLocation <- SQRL.findByRiderIdAndGeohashAndEntityType booking.riderId toGeohash fromGeohash DTRL.TAXI
+    case mbExistingLocation of
+      Just existingLocation -> do
+        -- If found, increase frequency
+        SQRL.increaceFrequencyById existingLocation.id
+      Nothing -> do
+        -- If not found, create new recent location
+        uuid <- generateGUID
+        let recentLocation =
+              DTRL.RecentLocation
+                { DTRL.address = Just address',
+                  DTRL.entityType = DTRL.TAXI,
+                  DTRL.frequency = 1,
+                  DTRL.fromStopCode = Nothing,
+                  DTRL.id = uuid,
+                  DTRL.toLatLong = LatLong toLocation.lat toLocation.lon,
+                  DTRL.merchantOperatingCityId = booking.merchantOperatingCityId,
+                  DTRL.riderId = booking.riderId,
+                  DTRL.routeCode = Nothing,
+                  DTRL.toStopCode = Nothing,
+                  DTRL.fromLatLong = Just $ LatLong booking.fromLocation.lat booking.fromLocation.lon,
+                  DTRL.createdAt = now,
+                  DTRL.updatedAt = now,
+                  DTRL.fare = Just booking.estimatedTotalFare.amount,
+                  DTRL.toGeohash = toGeohash,
+                  DTRL.fromGeohash = fromGeohash
+                }
+        SQRL.create recentLocation
+
+getRideAndBooking :: (MonadFlow m, EsqDBFlow m r, CacheFlow m r, CoreMetrics m) => Id DRB.BPPBooking -> Text -> m (DRide.Ride, DRB.Booking)
+getRideAndBooking bppBookingId transactionId = do
+  mBooking <- QRB.findByBPPBookingId bppBookingId
+  booking <- case mBooking of
+    Nothing -> do
+      logInfo $ "Booking not found for bppBookingId: " <> bppBookingId.getId
+      QRB.findByTransactionId transactionId >>= fromMaybeM (BookingDoesNotExist $ "TransactionId: " <> transactionId)
+    Just booking -> return booking
+  ride <- QRide.findByRBId booking.id >>= fromMaybeM (RideDoesNotExist $ "bookingId: " <> bppBookingId.getId)
+  return (ride, booking)

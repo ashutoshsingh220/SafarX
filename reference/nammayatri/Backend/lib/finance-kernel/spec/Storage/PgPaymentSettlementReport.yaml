@@ -1,0 +1,184 @@
+# Finance Kernel - PG Payment Settlement Report Table
+# Namma-DSL YAML specification
+#
+# Purpose:
+#   One row per line in the Payment Gateway's payment settlement file.
+#   Covers incoming payment transactions (ORDER rows) and their associated
+#   REFUND rows, disputes, and split-settlement legs.
+#   Reconciliation jobs match each row against internal finance_ledger_entry
+#   records (subscription purchases, ride debits, etc.).
+
+imports:
+  UTCTime: Kernel.Prelude
+  Currency: Kernel.Types.Common
+  HighPrecMoney: Kernel.Types.Common
+  Value: Data.Aeson
+  ActorType: Lib.Finance.Core.Types
+
+PgPaymentSettlementReport:
+  tableName: pg_payment_settlement_report
+  derives: "Generic"
+
+  # ---------------------------------------------------------------------------
+  # Enums
+  # ---------------------------------------------------------------------------
+  types:
+
+    TxnType:
+      enum: "ORDER,REFUND,CHARGEBACK"
+      derive: "ToParamSchema"
+
+    TxnStatus:
+      enum: "SUCCESS,FAILED"
+      derive: "HttpInstance"
+
+    SettlementType:
+      enum: "CREDIT,DEBIT"
+      derive: "HttpInstance"
+
+    SettlementMode:
+      enum: "GROSS,NET,NETTING"
+      derive: "HttpInstance"
+
+    PaymentMethod:
+      enum: "UPI,CREDIT_CARD,DEBIT_CARD,NETBANKING,WALLET,CASH_CARD,BHARAT_QR,EMI,NEFT,UPI_CREDIT,ENACH,CBDC,UPI_PREPAID_WALLET,UPI_CREDIT_LINE,BANK_TRANSFER,COMMERCIAL_CARD,PAY_LATER,INTERNATIONAL_CARD"
+      derive: "HttpInstance"
+
+
+    DisputeType:
+      enum: "FRAUD,CONSUMER,PROCESSING_ERROR,OTHER"
+      derive: "HttpInstance"
+
+    OrderType:
+      enum: "SUBSCRIPTION,PAYOUT_REGISTRATION"
+      derive: "HttpInstance"
+
+  # ---------------------------------------------------------------------------
+  # Fields
+  # NOTE: Mask sensitive values in pgPaymentSettlementReportToAuditValue (Settlement.Ingestion)
+  # ---------------------------------------------------------------------------
+  fields:
+    id: Id PgPaymentSettlementReport
+
+    # --- Transaction identity ---
+    orderId: Text                                  # PG order ID (Juspay orderId / shortId)
+    txnId: Maybe Text                              # PG transaction ID
+    rrn: Maybe Text                                # Bank Reference Number
+    utr: Maybe Text                                # Unique Transaction Reference from bank
+    bankId : Maybe Text                            # Bank ID
+
+    # --- Transaction classification ---
+    txnType: TxnType                               # ORDER | REFUND
+    txnStatus: TxnStatus                           # SUCCESS | FAILED | PENDING
+    txnDate: Maybe UTCTime                         # When the transaction occurred at PG
+
+    # --- Amounts ---
+    txnAmount: HighPrecMoney                       # Gross amount in PG report
+    pgBaseFee: HighPrecMoney                       # PG processing fee (MDR)
+    pgTax: HighPrecMoney                           # GST on PG fee
+    settlementAmount: HighPrecMoney                # txnAmount - pgBaseFee - pgTax
+    currency: Currency
+
+    # --- Vendor / merchant split ---
+    vendorId: Maybe Text                           # Sub-merchant / vendor ID (split settlement)
+    uniqueSplitId: Maybe Text                      # Split leg identifier within an order
+
+    # --- Payment method details ---
+    paymentGateway: Maybe Text                     # e.g. JUSPAY, RAZORPAY
+    pgApprovalCode : Maybe Text                    # PG approval code
+    paymentMethod: Maybe PaymentMethod             # UPI | CREDIT_CARD | ...
+    paymentMethodSubType: Maybe Text               # e.g. "UPI-Bank Account", "VISA Debit"
+    bankCode: Maybe Text                           # Bank code from PG report
+    cardType: Maybe Text                           # e.g. "VISA", "MASTERCARD"
+    cardNumber: Maybe Text                         # Masked card number SENSITIVE
+
+    # --- Settlement details ---
+    settlementType: Maybe SettlementType           # CREDIT | DEBIT
+    settlementMode: Maybe SettlementMode           # GROSS | NET | NETTING
+    settlementId: Maybe Text                       # PG settlement batch ID
+    settlementDate: Maybe UTCTime
+
+    # --- Internal reference ---
+    referenceId: Maybe Text                        # Internal entity ID (subscriptionPurchaseId, driverFeeId, etc.)
+    referenceType: Maybe Text                      # SUBSCRIPTION_PURCHASE | RIDE_DEBIT | CANCELLATION_FEE | etc.
+
+    # --- Refund fields (populated when txnType = REFUND) ---
+    refundId: Maybe Text                           # PG refund ID
+    refundArn: Maybe Text                          # Acquirer Reference Number for refund
+    refundDate: Maybe UTCTime
+    refundAmount: Maybe HighPrecMoney
+    refundBaseFee: Maybe HighPrecMoney             # PG fee on refund
+    refundTax: Maybe HighPrecMoney                 # GST on refund fee
+    refundReasonCode: Maybe Text                       # Reason for refund
+    refundMethod : Maybe PaymentMethod
+
+    # ----- Chargeback fields (populated when disputeType = FRAUD) -----
+    chargebackId: Maybe Text                       # PG chargeback ID
+    chargebackReasonCode: Maybe Text               # Reason for chargeback
+    chargebackStatus: Maybe Text                   # Chargeback status
+    chargebackAmount: Maybe HighPrecMoney
+
+
+    # --- Dispute fields ---
+    disputeId: Maybe Text                          # PG dispute / chargeback ID
+    disputeType: Maybe DisputeType                 # FRAUD | CONSUMER | PROCESSING_ERROR | OTHER
+
+    # --- Order classification ---
+    orderType: Maybe OrderType                     # SUBSCRIPTION | PAYOUT_REGISTRATION
+    isValidSubscriptionPurchase: Maybe Bool
+    subscriptionPurchaseId: Maybe Text
+
+    # --- Raw PG report row ---
+    rawData: Maybe Value                           # Full PG row stored as JSON for audit/debugging SENSITIVE
+
+    # --- Audit ---
+    createdBy: Maybe ActorType                     # Who created this record
+    createdById: Maybe Text                        # requestId for UNKNOWN/SYSTEM, jobId for JOB, personId for PERSON/DASHBOARD_PERSON
+    updatedBy: Maybe ActorType                     # Who updated this record
+    updatedById: Maybe Text                        # requestId for UNKNOWN/SYSTEM, jobId for JOB, personId for PERSON/DASHBOARD_PERSON
+
+    # --- Multi-tenancy ---
+    merchantId: Text
+    merchantOperatingCityId: Text
+    createdAt: UTCTime
+    updatedAt: UTCTime
+
+  # ---------------------------------------------------------------------------
+  # DB-level type overrides
+  # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # Default values
+  # ---------------------------------------------------------------------------
+  default:
+    reconStatus: "'PENDING'"
+    pgBaseFee: "0"
+    pgTax: "0"
+
+  # ---------------------------------------------------------------------------
+  # Constraints / indexes
+  # ---------------------------------------------------------------------------
+  constraints:
+    id: PrimaryKey
+    orderId: "!SecondaryKey"
+    rrn: "!SecondaryKey"
+    referenceId: "!SecondaryKey"
+    settlementId: "!SecondaryKey"
+    utr: "!SecondaryKey"
+
+  # ---------------------------------------------------------------------------
+  # Generated queries
+  # ---------------------------------------------------------------------------
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
+
+  extraOperations:
+    - EXTRA_QUERY_FILE
+
+  # ---------------------------------------------------------------------------
+  # Finance kernel boilerplate
+  # ---------------------------------------------------------------------------
+  defaultQueryTypeConstraint: "(Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r)"
+  beamInstance: MakeTableInstancesGenericSchema

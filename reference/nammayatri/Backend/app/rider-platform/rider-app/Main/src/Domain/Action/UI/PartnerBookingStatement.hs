@@ -1,0 +1,435 @@
+{-
+ Copyright 2022-23, Juspay India Pvt Ltd
+
+ This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License
+
+ as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program
+
+ is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+
+ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details. You should have received a copy of
+
+ the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+-}
+{-# OPTIONS_GHC -Wwarn=unused-imports #-}
+
+module Domain.Action.UI.PartnerBookingStatement
+  ( postCorporateBookingStatement,
+    postCorporateInvoiceData,
+    buildInvoiceData,
+    formatAddress,
+  )
+where
+
+import qualified API.Types.UI.PartnerBookingStatement
+import qualified API.Types.UI.PartnerBookingStatement as PBSAPI
+import API.Types.UI.PartnerBookingStatementExtra ()
+-- import Data.Time.Format (defaultTimeLocale, formatTime)
+
+-- import qualified Domain.Types.ServiceTierType as DSTT
+
+import qualified BecknV2.OnDemand.Utils.Common as BecknUtils
+import Control.Monad.Extra (mapMaybeM)
+import Data.OpenApi (ToSchema)
+import qualified Data.Text as T
+import Data.Time.Calendar (Day, addDays)
+import Data.Time.Clock (UTCTime (..), secondsToDiffTime, utctDay)
+import qualified Domain.Action.UI.Location as SLoc
+import Domain.Types.Booking as DBooking
+import qualified Domain.Types.Booking as DRB
+import Domain.Types.Location (Location (..), LocationAPIEntity (..))
+import Domain.Types.LocationAddress (LocationAddress (..))
+import qualified Domain.Types.Merchant as DM
+import qualified Domain.Types.PartnerInvoiceDataLog as DPIL
+import qualified Domain.Types.Person as DP
+import qualified Domain.Types.Ride as DRide
+import qualified Domain.Types.RideStatus as DRide
+import qualified Environment
+import EulerHS.Prelude hiding (id)
+import Kernel.Beam.Functions as B
+import Kernel.External.Encryption (decrypt, getDbHash)
+import qualified Kernel.Prelude
+import Kernel.Types.Error
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import Servant hiding (MissingHeader, throwError)
+import SharedLogic.Merchant (findMerchantByShortId)
+import qualified Storage.CachedQueries.Merchant as CQM
+import qualified Storage.Queries.Booking as QBooking
+import qualified Storage.Queries.PartnerInvoiceDataLog as QPartnerInvoiceDataLog
+import qualified Storage.Queries.Person as QPerson
+import qualified Storage.Queries.Ride as QRide
+import Tools.Auth
+
+-- | Corporate Invoice Data API
+postCorporateInvoiceData :: (Kernel.Prelude.Maybe Kernel.Prelude.Text -> API.Types.UI.PartnerBookingStatement.InvoiceDataReq -> Environment.Flow API.Types.UI.PartnerBookingStatement.InvoiceDataRes)
+postCorporateInvoiceData mbApiKey req = do
+  apiKey <- mbApiKey & fromMaybeM (MissingHeader "X-Partner-API-Key")
+  corporatePartnerApiToken <- asks (.corporatePartnerApiToken)
+  unless (apiKey == corporatePartnerApiToken) $
+    throwError (InvalidToken "Invalid corporate partner API token")
+
+  -- Resolve person
+  mbPerson <-
+    case req.partnerCustomerId of
+      Just partnerCustomerId -> B.runInReplica $ QPerson.findById (Id partnerCustomerId)
+      Nothing -> do
+        merchant <- findMerchantByShortId (ShortId "NAMMA_YATRI")
+        case req.mobileNumber of
+          Just mobileNum -> do
+            let (countryCode, phoneNumber) = parseMobileNumber mobileNum
+            mobileNumberHash <- getDbHash phoneNumber
+            B.runInReplica $ QPerson.findByMobileNumberAndMerchantId countryCode mobileNumberHash merchant.id
+          Nothing -> pure Nothing
+
+  person <- mbPerson & fromMaybeM (InvalidRequest "Person not found")
+
+  booking <- QBooking.findById req.bookingId >>= fromMaybeM (InvalidRequest "Booking not found")
+  mbRide <- QRide.findByRBId booking.id
+
+  email <- mapM decrypt person.email
+
+  -- Log this API call for SFTP export
+  logId <- Id <$> generateGUID
+  now <- getCurrentTime
+  let logEntry =
+        DPIL.PartnerInvoiceDataLog
+          { id = logId,
+            bookingId = req.bookingId,
+            personId = person.id,
+            merchantId = booking.merchantId,
+            merchantOperatingCityId = booking.merchantOperatingCityId,
+            requestedAt = now,
+            exportedAt = Nothing,
+            createdAt = now,
+            updatedAt = now
+          }
+  void $ QPartnerInvoiceDataLog.create logEntry
+
+  res <- buildInvoiceData person booking mbRide (req.emailId <|> email) req.mobileNumber
+  pure (res :: PBSAPI.InvoiceDataRes) {PBSAPI.responseCode = "200", PBSAPI.outcomeCode = "200", PBSAPI.responseMessage = "Success"}
+
+buildInvoiceData ::
+  ( CacheFlow m r,
+    EncFlow m r,
+    EsqDBFlow m r
+  ) =>
+  DP.Person ->
+  DBooking.Booking ->
+  Maybe DRide.Ride ->
+  Maybe Text ->
+  Maybe Text ->
+  m PBSAPI.InvoiceDataRes
+buildInvoiceData person booking mbRide mbEmail mbMobile = do
+  mbMerchant <- CQM.findById booking.merchantId
+  let employerName = maybe "Namma Yatri" (.name) mbMerchant
+      mbCompletedRide = mbRide >>= (\ride -> if ride.status == DRide.COMPLETED then Just ride else Nothing)
+      paymentCurrency = show booking.estimatedTotalFare.currency
+  case mbCompletedRide of
+    Nothing ->
+      pure
+        PBSAPI.InvoiceDataRes
+          { responseCode = "400",
+            outcomeCode = "400",
+            responseMessage = "No completed ride found for the booking",
+            partnerCustomerId = person.id.getId,
+            emailId = fromMaybe "" mbEmail,
+            mobileNumber = fromMaybe "" mbMobile,
+            bookingId = booking.id,
+            bookingDatetime = booking.createdAt,
+            bookingStatus = booking.status,
+            item = [],
+            person = [],
+            employerGst = "",
+            employerName = employerName,
+            unitPricing = [],
+            gst = [],
+            paymentMode = [],
+            billing =
+              PBSAPI.InvoiceBilling
+                { itemAmount = 0.0,
+                  addonAmount = 0.0,
+                  discountAmount = 0.0,
+                  couponAmount = 0.0,
+                  couponCode = "",
+                  paidByPoint = 0.0,
+                  taxableAmount = 0.0,
+                  paymentAmount = 0.0,
+                  paymentAmountCurrencyName = Just paymentCurrency
+                },
+            invoice =
+              PBSAPI.InvoiceInvoice
+                { invoiceDatetime = Just booking.createdAt,
+                  invoiceAmount = 0,
+                  invoiceAmountCurrencyName = Just paymentCurrency,
+                  invoiceLink = ""
+                }
+          }
+    Just ride -> do
+      let provider = "Namma Yatri"
+          paymentAmount = fromMaybe (toHighPrecMoney booking.estimatedTotalFare.amountInt) (toHighPrecMoney . (.amountInt) <$> ride.totalFare)
+          fromLocation = SLoc.makeLocationAPIEntity booking.fromLocation
+          toLocation = getToLocation' booking
+          bookingDatetime = booking.createdAt
+          serviceStartDatetime = ride.rideStartTime <|> Just bookingDatetime
+          serviceEndDatetime = ride.rideEndTime <|> serviceStartDatetime
+
+          itemEntry =
+            PBSAPI.InvoiceItem
+              { itemId = ride.shortId.getShortId,
+                itemName = "Ride",
+                bookingType = booking.vehicleCategory <|> Just (BecknUtils.mapServiceTierToCategory booking.vehicleServiceTierType),
+                bookingClass = booking.vehicleServiceTierType,
+                provider = provider,
+                providerCode = ride.vehicleNumber,
+                providerPriceCategory = show ride.vehicleVariant,
+                serviceStartAddress = formatAddress fromLocation,
+                serviceStartPincode = fromLocation.areaCode,
+                serviceStartDatetime = serviceStartDatetime,
+                serviceEndAddress = fromMaybe "" (formatAddress <$> toLocation),
+                serviceEndPincode = toLocation >>= (.areaCode),
+                serviceEndDatetime = serviceEndDatetime,
+                itemQuantity = "1",
+                personCount = "1",
+                bookingQuota = ""
+              }
+
+          personEntry =
+            PBSAPI.InvoicePerson
+              { personId = person.id.getId,
+                gender = show person.gender,
+                firstName = fromMaybe "" person.firstName,
+                middleName = fromMaybe "" person.middleName,
+                lastName = fromMaybe "" person.lastName,
+                dob = maybe "" (T.pack . show . utctDay) person.dateOfBirth,
+                prefix = case person.gender of
+                  DP.MALE -> "Mister"
+                  DP.FEMALE -> "Miss"
+                  _ -> ""
+              }
+
+          unitPricingEntry =
+            PBSAPI.InvoiceUnitPricing
+              { itemId = "ride",
+                personId = person.id.getId,
+                itemAmount = paymentAmount,
+                platformFee = 0.0,
+                discountAmount = 0.0,
+                loyaltyNumber = "",
+                loyaltyProvider = "",
+                shippingFee = 0.0,
+                taxAmount = 0.0,
+                taxableAmount = 0.0,
+                priceMultipler = 1.0
+              }
+
+          paymentModeEntry =
+            PBSAPI.InvoicePaymentMode
+              { paymentMode = "CASH/UPI",
+                amount = paymentAmount,
+                cardEnd = "",
+                cardStart = "",
+                issuerName = ""
+              }
+
+          billingEntry =
+            PBSAPI.InvoiceBilling
+              { itemAmount = paymentAmount,
+                addonAmount = 0.0,
+                discountAmount = 0.0,
+                couponAmount = 0.0,
+                couponCode = "",
+                paidByPoint = 0.0,
+                taxableAmount = 0.0,
+                paymentAmount = paymentAmount,
+                paymentAmountCurrencyName = Just paymentCurrency
+              }
+
+          invoiceEntry =
+            PBSAPI.InvoiceInvoice
+              { invoiceDatetime = serviceEndDatetime,
+                invoiceAmount = paymentAmount,
+                invoiceLink = "",
+                invoiceAmountCurrencyName = Just paymentCurrency
+              }
+
+      pure
+        PBSAPI.InvoiceDataRes
+          { responseCode = "",
+            outcomeCode = "",
+            responseMessage = "",
+            partnerCustomerId = person.id.getId,
+            emailId = fromMaybe "" mbEmail,
+            mobileNumber = fromMaybe "" mbMobile,
+            bookingId = booking.id,
+            employerGst = "",
+            employerName = employerName,
+            bookingDatetime = bookingDatetime,
+            bookingStatus = booking.status,
+            item = [itemEntry],
+            person = [personEntry],
+            unitPricing = [unitPricingEntry],
+            gst = [],
+            paymentMode = [paymentModeEntry],
+            billing = billingEntry,
+            invoice = invoiceEntry
+          }
+
+postCorporateBookingStatement :: (Kernel.Prelude.Maybe Kernel.Prelude.Text -> API.Types.UI.PartnerBookingStatement.BookingStatementReq -> Environment.Flow API.Types.UI.PartnerBookingStatement.BookingStatementRes)
+postCorporateBookingStatement mbApiKey req = do
+  -- Validate partner API token
+  apiKey <- mbApiKey & fromMaybeM (MissingHeader "X-Partner-API-Key")
+  corporatePartnerApiToken <- asks (.corporatePartnerApiToken)
+  unless (apiKey == corporatePartnerApiToken) $
+    throwError (InvalidToken "Invalid corporate partner API token")
+
+  -- Process the request
+  let mobileNumber = req.mobileNumber
+      fromDate = req.fromDate
+      toDate = req.toDate
+      _pageSize = fromMaybe 10 req.count
+      _page = fromMaybe 1 req.page
+
+  -- Parse mobile number (expected format: 91XXXXXXXXXX)
+  let (countryCode, phoneNumber) = parseMobileNumber mobileNumber
+
+  -- Find person by mobile number
+  mbPerson <- case req.partnerCustomerId of
+    Just partnerCustomerId -> do
+      B.runInReplica $ QPerson.findById (Id partnerCustomerId)
+    Nothing -> do
+      merchant <- findMerchantByShortId (ShortId "NAMMA_YATRI")
+      mobileNumberHash <- getDbHash phoneNumber
+      B.runInReplica $ QPerson.findByMobileNumberAndMerchantId countryCode mobileNumberHash merchant.id
+
+  case mbPerson of
+    Nothing -> do
+      -- Return empty response if person not found
+      return $
+        PBSAPI.BookingStatementRes
+          { responseCode = "400",
+            outcomeCode = "400",
+            responseMessage = "Person not registered with the NammaYatri",
+            mobileNumber = mobileNumber,
+            emailId = fromMaybe "" req.emailId,
+            partnerCustomerId = req.partnerCustomerId,
+            item = []
+          }
+    Just person -> do
+      -- Convert Day to UTCTime for query
+      let startTime = dayToUTCTime fromDate
+          endTime = dayToEndOfDay toDate
+
+      -- Find completed bookings in date range
+      bookings <- B.runInReplica $ QBooking.findBookingsForInvoice person.id startTime endTime Nothing Nothing
+      -- For each booking, get the ride details and build the response
+      allBookingAPIEntities <- mapMaybeM (\booking -> (\mbRide -> pure $ (booking,) <$> mbRide) =<< QRide.findByRBId booking.id) bookings
+
+      let validBookingAPIEntities = filter (((==) DRide.COMPLETED) . (.status) . snd) allBookingAPIEntities
+
+      items <- mapM (\(booking, ride) -> buildBookingItem booking ride) validBookingAPIEntities
+      email <- mapM decrypt person.email
+
+      return $
+        PBSAPI.BookingStatementRes
+          { responseCode = "200",
+            outcomeCode = "200",
+            responseMessage = "Success",
+            mobileNumber = mobileNumber,
+            emailId = fromMaybe "" (req.emailId <|> email),
+            partnerCustomerId = Just person.id.getId,
+            item = items
+          }
+
+-- | Parse mobile number from format 91XXXXXXXXXX to ("+91", "XXXXXXXXXX")
+parseMobileNumber :: Text -> (Text, Text)
+parseMobileNumber number =
+  if T.length number > 2 && T.take 2 number == "91"
+    then ("+91", T.drop 2 number)
+    else ("+91", number)
+
+-- | Convert Day to UTCTime at start of day (00:00:00)
+dayToUTCTime :: Day -> UTCTime
+dayToUTCTime day = UTCTime day (secondsToDiffTime 0)
+
+-- | Convert Day to UTCTime at end of day (23:59:59)
+dayToEndOfDay :: Day -> UTCTime
+dayToEndOfDay day = UTCTime (addDays 1 day) (secondsToDiffTime 0)
+
+-- | Build a BookingStatementItem from a Booking and its associated Ride
+buildBookingItem ::
+  ( CacheFlow m r,
+    EsqDBFlow m r
+  ) =>
+  DBooking.Booking ->
+  DRide.Ride ->
+  m PBSAPI.BookingStatementItem
+buildBookingItem booking ride = do
+  let provider = "Namma Yatri"
+      providerCode = ride.vehicleNumber
+      -- Get payment amount
+      paymentAmount = fromMaybe (toHighPrecMoney booking.estimatedTotalFare.amountInt) (toHighPrecMoney . (.amountInt) <$> ride.totalFare)
+
+      -- Get addresses
+      fromLocation = SLoc.makeLocationAPIEntity booking.fromLocation
+      toLocation = getToLocation' booking
+
+      bookingDatetime = booking.createdAt
+      serviceStartDatetime = fromMaybe bookingDatetime ride.rideStartTime
+      serviceEndDatetime = fromMaybe serviceStartDatetime ride.rideEndTime
+  return $
+    PBSAPI.BookingStatementItem
+      { bookingId = booking.id,
+        bookingDatetime = bookingDatetime,
+        bookingType = booking.vehicleCategory <|> Just (BecknUtils.mapServiceTierToCategory booking.vehicleServiceTierType),
+        provider = provider,
+        providerCode = providerCode,
+        paymentAmount = paymentAmount,
+        paymentAmountCurrencyCode = show booking.estimatedTotalFare.currency,
+        serviceStartAddress = formatAddress fromLocation,
+        serviceStartPincode = fromLocation.areaCode,
+        serviceStartDatetime = serviceStartDatetime,
+        serviceEndAddress = fromMaybe "" (formatAddress <$> toLocation),
+        serviceEndPincode = toLocation >>= (.areaCode),
+        serviceEndDatetime = serviceEndDatetime
+      }
+
+-- | Get destination location from booking details
+getToLocation' :: DBooking.Booking -> Maybe LocationAPIEntity
+getToLocation' booking =
+  SLoc.makeLocationAPIEntity
+    <$> case booking.bookingDetails of
+      DRB.OneWayDetails details -> Just details.toLocation
+      DRB.DriverOfferDetails details -> Just details.toLocation
+      DRB.OneWaySpecialZoneDetails details -> Just details.toLocation
+      DRB.InterCityDetails details -> Just details.toLocation
+      DRB.AmbulanceDetails details -> Just details.toLocation
+      DRB.DeliveryDetails details -> Just details.toLocation
+      DRB.RentalDetails details -> details.stopLocation
+      DRB.MeterRideDetails details -> details.toLocation
+      -- Reuses RentalBookingDetails's stopLocation field like Rental does above.
+      DRB.EasyBookingDetails details -> details.stopLocation
+
+-- | Format address from LocationAddress
+formatAddress :: LocationAPIEntity -> Text
+formatAddress address =
+  T.intercalate ", " $
+    filter (not . T.null) $
+      catMaybes
+        [ address.door,
+          address.building,
+          address.street,
+          address.area,
+          address.city,
+          address.areaCode,
+          address.state,
+          address.country
+        ]
+
+-- -- | Format UTCTime to ISO 8601 format with timezone offset
+-- formatISO8601 :: UTCTime -> Text
+-- formatISO8601 time = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S+05:30" time
+
+-- -- | Show HighPrecMoney as text with 2 decimal places
+-- showHighPrecMoney :: HighPrecMoney -> Text
+-- showHighPrecMoney amount = T.pack $ show (realToFrac amount :: Double)

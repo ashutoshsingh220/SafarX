@@ -1,0 +1,235 @@
+name: dynamic-offer-driver-app
+version: 0.1.0.0
+github: "nammayatri/nammayatri"
+license: AllRightsReserved
+author: "nammayatri"
+maintainer: "nammayatri"
+copyright: "2023 Juspay Technologies Private Limited"
+
+flags:
+  Local:
+    description: Enable this flag for faster compile times
+    manual: true
+    default: false
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description: Please see the README on GitHub at <https://github.com/nammayatri/nammayatri#readme>
+
+default-extensions:
+  - ConstraintKinds
+  - DataKinds
+  - DefaultSignatures
+  - DerivingStrategies
+  - DeriveAnyClass
+  - DeriveFunctor
+  - DeriveGeneric
+  - DuplicateRecordFields
+  - ExplicitNamespaces
+  - FlexibleContexts
+  - FlexibleInstances
+  - FunctionalDependencies
+  - GADTs
+  - LambdaCase
+  - MultiParamTypeClasses
+  - MultiWayIf
+  - NamedFieldPuns
+  - NoImplicitPrelude
+  - OverloadedStrings
+  - PatternSynonyms
+  - PolyKinds
+  - RankNTypes
+  - RecordWildCards
+  - ScopedTypeVariables
+  - TupleSections
+  - TypeApplications
+  - TypeFamilies
+  - TypeOperators
+  - ViewPatterns
+  - BlockArguments
+  - TypeSynonymInstances
+  - UndecidableInstances
+  - StandaloneDeriving
+  - PackageImports
+  - TemplateHaskell
+
+dependencies:
+  - aeson
+  - base >= 4.7 && < 5
+  - generic-lens
+  - bytestring
+  - cryptonite
+  - cryptostore >= 0.2.3.0
+  - x509
+  - containers
+  - data-default-class
+  - euler-hs
+  - passetto-client
+  - passetto-lib
+  - exceptions
+  - jwt >= 0.11
+  - xml-conduit
+  - servant-xml
+  - xmlbf
+  - hspec
+  - http-client
+  - lens
+  - servant
+  - servant-client
+  - servant-client-core
+  - servant-server
+  - servant-multipart
+  - text
+  - wai
+  - wai-extra
+  - http-types
+  - warp
+  - time
+  - stm
+  - resource-pool
+  - uuid
+  - prometheus-client
+  - record-hasfield
+  - record-dot-preprocessor
+  - servant-openapi3
+  - openapi3
+  - finance-kernel
+  - string-conversions
+  - either
+  - persistent
+  - text-conversions
+  - esqueleto
+  - beckn-services
+  - unordered-containers
+  - dashboard-helper-api
+  - shared-services
+  - extra
+  - scheduler
+  - singletons
+  - singletons-th
+  - cassava
+  - vector
+  - geohash == 1.0.1
+  - cereal
+  - hedis
+  - beam-core
+  - beam-mysql
+  - beam-postgres
+  - template-haskell
+  - sequelize
+  - casing
+  - postgresql-simple
+  - random
+  - regex-posix
+  - JuicyPixels
+  - JuicyPixels-extra
+  - base64-bytestring
+  - pureMD5
+  - lens-aeson
+  - http-client-tls
+  - http-conduit
+  - split
+  - hashable
+  - json-logic-hs
+  - yudhishthira
+  - config-pilot
+  - behavior-tracker
+  - behavior-engine
+  - consequence-engine
+  - communication-engine
+  - network-uri
+  - memory
+  - text-format
+  - scientific
+  - hex-text
+  - directory
+  - temporary
+
+ghc-options:
+  - -fwrite-ide-info
+  - -hiedir=.hie
+  - -fplugin=RecordDotPreprocessor
+
+library:
+  source-dirs:
+    - src
+    - src-read-only
+  ghc-options:
+    - -Wall
+    - -Wcompat
+    - -Widentities
+    - -fhide-source-paths
+    - -Werror
+    - -Wwarn=ambiguous-fields
+  when:
+    - condition: flag(Local)
+      then:
+        ghc-options:
+          - -Wno-ambiguous-fields
+          - -Wno-incomplete-uni-patterns
+          - -Wno-incomplete-record-updates
+          - -O0
+          - -funfolding-use-threshold20
+          - -fno-cse
+          - -fmax-simplifier-iterations1
+          - -fno-specialise-aggressively
+          - -j4
+      else:
+        ghc-options:
+          - -O2
+          - -j4
+  dependencies:
+    - mobility-core
+    - haskell-cac
+    - beckn-spec
+    - location-updates
+    - special-zone-a
+    - payment
+    - gtfs-data-server
+    - sessionizer-metrics
+    - webhook
+    - utils
+    - external
+    - dashcam
+  extra-libraries:
+    - cac_client
+
+executables:
+  dynamic-offer-driver-app-exe:
+    main: Main.hs
+    source-dirs: server
+    other-modules: []
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - '"-with-rtsopts=-N -T"'
+    when:
+      - condition: flag(Local)
+        then:
+          ghc-options:
+            - -Wno-ambiguous-fields
+            - -Wno-incomplete-uni-patterns
+            - -Wno-incomplete-record-updates
+            - -O0
+            - -funfolding-use-threshold20
+            - -fno-cse
+            - -fmax-simplifier-iterations1
+            - -fno-specialise-aggressively
+            - -j4
+        else:
+          ghc-options:
+            - -O2
+            - -j4
+    dependencies:
+      - dynamic-offer-driver-app
+      - mobility-core
+      - haskell-cac
+      - beckn-spec
+      - beckn-services
+    extra-libraries:
+      - cac_client

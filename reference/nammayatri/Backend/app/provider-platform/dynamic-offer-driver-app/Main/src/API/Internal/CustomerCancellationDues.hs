@@ -1,0 +1,42 @@
+module API.Internal.CustomerCancellationDues
+  ( API,
+    handler,
+  )
+where
+
+import qualified Domain.Action.Internal.CustomerCancellationDues as Domain
+import Domain.Types.Merchant (Merchant)
+import Environment
+import EulerHS.Prelude hiding (id)
+import Kernel.Types.APISuccess
+import Kernel.Types.Beckn.Context as Context
+import Kernel.Types.Id
+import Kernel.Utils.Common
+import Servant
+import Storage.Beam.SystemConfigs ()
+
+type API =
+  Capture "merchantId" (Id Merchant)
+    :> Capture "merchantCity" Context.City
+    :> "getCancellationDuesDetails"
+    :> Header "token" Text
+    :> QueryParam "includeBreakup" Bool
+    :> ReqBody '[JSON] Domain.CancellationDuesReq
+    :> Get '[JSON] Domain.CancellationDuesDetailsRes
+    :<|> Capture "merchantId" (Id Merchant)
+      :> Capture "merchantCity" Context.City
+      :> "customerCancellationDuesSync"
+      :> Header "token" Text
+      :> ReqBody '[JSON] Domain.CustomerCancellationDuesSyncReq
+      :> Post '[JSON] APISuccess
+
+handler :: FlowServer API
+handler =
+  getCancellationDuesDetails
+    :<|> customerCancellationDuesSync
+
+getCancellationDuesDetails :: Id Merchant -> Context.City -> Maybe Text -> Maybe Bool -> Domain.CancellationDuesReq -> FlowHandler Domain.CancellationDuesDetailsRes
+getCancellationDuesDetails merchantId merchantCity apiKey mbIncludeBreakup = withFlowHandlerAPI . Domain.getCancellationDuesDetails merchantId merchantCity apiKey mbIncludeBreakup
+
+customerCancellationDuesSync :: Id Merchant -> Context.City -> Maybe Text -> Domain.CustomerCancellationDuesSyncReq -> FlowHandler APISuccess
+customerCancellationDuesSync merchantId merchantCity apiKey = withFlowHandlerAPI . Domain.customerCancellationDuesSync merchantId merchantCity apiKey

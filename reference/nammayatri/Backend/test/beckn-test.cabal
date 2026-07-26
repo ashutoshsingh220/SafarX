@@ -1,0 +1,251 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.2.
+--
+-- see: https://github.com/sol/hpack
+
+name:           beckn-test
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/nammayatri/nammayatri#readme>
+homepage:       https://github.com/nammayatri/nammayatri#readme
+bug-reports:    https://github.com/nammayatri/nammayatri/issues
+author:         nammayatri
+maintainer:     nammayatri
+copyright:      2023 Juspay Technologies Private Limited
+license:        AllRightsReserved
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/nammayatri/nammayatri
+
+flag Local
+  description: Enable this flag for faster compile times
+  manual: True
+  default: False
+
+library
+  exposed-modules:
+      Common
+      FRFS.CMRLV2.EncryptionSpec
+      HSpec
+      Mobility.AppBackend.APICalls
+      Mobility.AppBackend.Fixtures
+      Mobility.AppBackend.Queries
+      Mobility.AppBackend.Utils
+      Mobility.ARDU.APICalls
+      Mobility.ARDU.CancelFlow
+      Mobility.ARDU.DriverAcceptsNonrelevantQuote
+      Mobility.ARDU.DriverOffersTwice
+      Mobility.ARDU.Fixtures
+      Mobility.ARDU.HealthCheck
+      Mobility.ARDU.MapsConfig
+      Mobility.ARDU.NearestDrivers
+      Mobility.ARDU.Queries
+      Mobility.ARDU.Spec
+      Mobility.ARDU.SuccessFlow
+      Mobility.ARDU.SyncRide
+      Mobility.ARDU.Utils
+      Mobility.Fixtures.Routes
+      PublicTransport.API
+      PublicTransport.Common
+      PublicTransport.HealthCheck
+      PublicTransport.Search
+      PublicTransport.Spec
+      Resources
+      Runner
+      TestMain
+      TestSilentIOLogger
+      Utils
+  other-modules:
+      Paths_beckn_test
+  hs-source-dirs:
+      src
+  default-extensions:
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      NoImplicitPrelude
+      NumDecimals
+      OverloadedStrings
+      PackageImports
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      BlockArguments
+      TypeSynonymInstances
+      UndecidableInstances
+  ghc-options: -fwrite-ide-info -hiedir=.hie -Wall -Wcompat -Widentities -fhide-source-paths -Werror -Wno-unrecognised-pragmas -fplugin=RecordDotPreprocessor -threaded -Wwarn=ambiguous-fields
+  build-depends:
+      HUnit
+    , aeson
+    , async
+    , base >=4.7 && <5
+    , base64-bytestring
+    , beckn-gateway
+    , beckn-spec
+    , bytestring
+    , cryptonite
+    , dashboard-helper-api
+    , data-default-class
+    , driver-offer-allocator
+    , dynamic-offer-driver-app
+    , euler-hs
+    , generic-lens
+    , hspec
+    , hspec-core
+    , hspec-expectations-lifted
+    , http-client
+    , http-client-tls
+    , http-types
+    , lens
+    , location-updates
+    , mobility-core
+    , mock-fcm
+    , mock-google
+    , mock-public-transport-provider-platform
+    , mock-registry
+    , mock-sms
+    , public-transport-rider-platform
+    , public-transport-search-consumer
+    , record-dot-preprocessor
+    , record-hasfield
+    , rider-app
+    , search-result-aggregator
+    , sequelize
+    , servant
+    , servant-client
+    , servant-server
+    , string-conversions
+    , tasty
+    , tasty-hspec
+    , text
+    , time
+    , unix
+    , utf8-string
+    , uuid
+    , wai
+    , warp
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4
+
+test-suite beckn-integ-test
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Paths_beckn_test
+  hs-source-dirs:
+      app
+  default-extensions:
+      ConstraintKinds
+      DataKinds
+      DefaultSignatures
+      DeriveAnyClass
+      DeriveFunctor
+      DeriveGeneric
+      DuplicateRecordFields
+      ExplicitNamespaces
+      FlexibleContexts
+      FlexibleInstances
+      FunctionalDependencies
+      GADTs
+      LambdaCase
+      MultiParamTypeClasses
+      MultiWayIf
+      NamedFieldPuns
+      NoImplicitPrelude
+      NumDecimals
+      OverloadedStrings
+      PackageImports
+      PatternSynonyms
+      PolyKinds
+      RankNTypes
+      RecordWildCards
+      ScopedTypeVariables
+      TupleSections
+      TypeApplications
+      TypeFamilies
+      TypeOperators
+      ViewPatterns
+      BlockArguments
+      TypeSynonymInstances
+      UndecidableInstances
+  ghc-options: -fwrite-ide-info -hiedir=.hie -Wall -Wcompat -Widentities -fhide-source-paths -Werror -Wno-unrecognised-pragmas -fplugin=RecordDotPreprocessor -threaded
+  build-depends:
+      HUnit
+    , aeson
+    , async
+    , base >=4.7 && <5
+    , base64-bytestring
+    , beckn-gateway
+    , beckn-spec
+    , beckn-test
+    , bytestring
+    , cryptonite
+    , dashboard-helper-api
+    , data-default-class
+    , driver-offer-allocator
+    , dynamic-offer-driver-app
+    , euler-hs
+    , generic-lens
+    , hspec
+    , hspec-core
+    , hspec-expectations-lifted
+    , http-client
+    , http-client-tls
+    , http-types
+    , location-updates
+    , mobility-core
+    , mock-fcm
+    , mock-google
+    , mock-public-transport-provider-platform
+    , mock-registry
+    , mock-sms
+    , public-transport-rider-platform
+    , public-transport-search-consumer
+    , record-dot-preprocessor
+    , record-hasfield
+    , rider-app
+    , search-result-aggregator
+    , sequelize
+    , servant
+    , servant-client
+    , servant-server
+    , string-conversions
+    , tasty
+    , tasty-hspec
+    , text
+    , time
+    , unix
+    , utf8-string
+    , uuid
+    , wai
+    , warp
+  default-language: Haskell2010
+  if flag(Local)
+    ghc-options: -Wno-ambiguous-fields -Wno-incomplete-uni-patterns -Wno-incomplete-record-updates -O0 -funfolding-use-threshold20 -fno-cse -fmax-simplifier-iterations1 -fno-specialise-aggressively -j4
+  else
+    ghc-options: -O2 -j4

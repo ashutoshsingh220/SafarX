@@ -1,0 +1,97 @@
+imports:
+  FileType: AWS.S3
+  File: Dashboard.Common
+
+module: MediaFileDocument
+
+apis:
+  - POST:
+      endpoint: /uploadLink
+      auth: ApiAuthV2
+      request:
+        type: UploadMediaFileDocumentReq
+      response:
+        type: MediaFileDocumentResp
+      helperApi:
+        - POST:
+            endpoint: /uploadLink
+            auth: ApiAuthV2
+            request:
+              type: UploadMediaFileDocumentReq
+            mandatoryQuery:
+              - requestorId: Text
+            response:
+              type: MediaFileDocumentResp
+  - POST:
+      endpoint: /confirm
+      auth: ApiAuthV2
+      request:
+        type: MediaFileDocumentReq
+      response:
+        type: APISuccess
+      helperApi:
+        - POST:
+            endpoint: /confirm
+            auth: ApiAuthV2
+            request:
+              type: MediaFileDocumentReq
+            mandatoryQuery:
+              - requestorId: Text
+            response:
+              type: APISuccess
+  # Delete a MediaFile (removes the S3 object and the row).
+  - POST:
+      endpoint: /delete
+      auth: ApiAuthV2
+      request:
+        type: MediaFileDocumentReq
+      response:
+        type: APISuccess
+      helperApi:
+        - POST:
+            endpoint: /delete
+            auth: ApiAuthV2
+            request:
+              type: MediaFileDocumentReq
+            mandatoryQuery:
+              - requestorId: Text
+            response:
+              type: APISuccess
+  # Resolve a MediaFile id to a presigned download URL.
+  - GET:
+      endpoint: /downloadLink
+      auth: ApiAuthV2
+      mandatoryQuery:
+        - fileId: Text
+      response:
+        type: MediaFileDocumentResp
+      helperApi:
+        - GET:
+            endpoint: /downloadLink
+            auth: ApiAuthV2
+            mandatoryQuery:
+              - fileId: Text
+              - requestorId: Text
+            response:
+              type: MediaFileDocumentResp
+
+types:
+  UploadMediaFileDocumentReq:
+    - fileType: FileType
+    - reqContentType: Text
+    - derive: "'HideSecrets"
+  MediaFileDocumentResp:
+    - mediaFileLink: Maybe Text
+    - mediaFileDocumentId: Id File
+    - mediaFileDocumentStatus: MediaFileDocumentStatus
+  MediaFileDocumentTResp:
+    - mediaFileDocumentId: Id File
+    - mediaFileDocumentStatus: MediaFileDocumentStatus
+  MediaFileDocumentReq:
+    - mediaFileDocumentId: Id File
+    - derive: "'HideSecrets"
+  MediaFileDocumentStatus:
+    - enum: "PENDING, DELETED, FAILED, CONFIRMED, COMPLETED"
+
+extraOperations:
+  - EXTRA_API_TYPES_FILE

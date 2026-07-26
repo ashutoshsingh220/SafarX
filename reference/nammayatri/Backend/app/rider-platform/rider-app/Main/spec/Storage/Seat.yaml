@@ -1,0 +1,147 @@
+imports:
+  Merchant: Domain.Types.Merchant
+  MerchantOperatingCity: Domain.Types.MerchantOperatingCity
+  Value: Data.Aeson
+
+Seat:
+  tableName: seat
+
+  derives: "Show, Generic, ToJSON, FromJSON, Eq, ToSchema"
+
+  fields:
+    id: Id Seat
+    seatLabel: Text
+    rowNo: Int
+    colNo: Int
+    seatType: Maybe SeatType
+    isBookable: Bool
+    isLadiesOnly: Maybe Bool
+    seatLayoutId: Id SeatLayout
+    merchantId: Id Merchant
+    merchantOperatingCityId: Id MerchantOperatingCity
+    directionDegrees: Maybe Int
+    minStopsRequired: Maybe Int
+
+  default:
+    directionDegrees: "0"
+
+  types:
+    SeatType:
+      enum: "WINDOW, AISLE, MIDDLE, SLEEPER_LOWER, SLEEPER_UPPER, MOUNT_AREA"
+
+  constraints:
+    id: PrimaryKey
+    seatLayoutId: SecondaryKey
+
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
+    findAllByLayoutId:
+      kvFunction: findAllWithKV
+      where: seatLayoutId
+    findAllByIds:
+      kvFunction: findAllWithKV
+      where:
+         in: [id]
+    deleteBySeatLayoutId:
+      kvFunction: deleteWithKV
+      where: seatLayoutId
+    deleteById:
+      kvFunction: deleteWithKV
+      where: id
+
+SeatLayout:
+  tableName: seat_layout
+
+  derives: "Show, Generic, ToJSON, FromJSON, Eq, ToSchema"
+
+  fields:
+    id: Id SeatLayout
+    name: Text
+    rows: Int
+    columns: Int
+    merchantId: Id Merchant
+    merchantOperatingCityId: Id MerchantOperatingCity
+
+  constraints:
+    id: PrimaryKey
+
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
+    findAllByMerchantIdAndMerchantOperatingCityId:
+      kvFunction: findAllWithOptionsKV
+      where:
+        and: [merchantId, merchantOperatingCityId]
+      limit: limit
+      offset: offset
+    deleteById:
+      kvFunction: deleteWithKV
+      where: id
+
+VehicleSeatLayoutMapping:
+  tableName: vehicle_seat_layout_mapping
+
+  derives: "Show, Generic, ToJSON, FromJSON, Eq, ToSchema"
+
+  types:
+    SeatSelectionType:
+      enum: "UNRESERVED, AUTO_ASSIGNED, USER_SELECTED"
+      derive: "HttpInstance"
+
+  fields:
+    id: Id VehicleSeatLayoutMapping
+    vehicleNo: Text
+    gtfsId: Text
+    seatLayoutId: Id SeatLayout
+    seatSelectionType: Maybe SeatSelectionType
+    merchantId: Id Merchant
+    merchantOperatingCityId: Id MerchantOperatingCity
+
+  constraints:
+    id: PrimaryKey
+
+  extraIndexes:
+    - columns: [vehicleNo, gtfsId]
+      unique: true
+
+  queries:
+
+    findByVehicleNoAndGtfsId:
+      kvFunction: findOneWithKV
+      where:
+        and: [vehicleNo, gtfsId]
+
+    updateSeatLayoutIdByVehicleNoAndGtfsId:
+      kvFunction: updateOneWithKV
+      params: [seatLayoutId, seatSelectionType]
+      where:
+        and: [vehicleNo, gtfsId]
+
+    deleteByVehicleNoAndGtfsId:
+      kvFunction: deleteWithKV
+      where:
+        and: [vehicleNo, gtfsId]
+
+    findAllByGtfsId:
+      kvFunction: findAllWithOptionsKV
+      where: gtfsId
+      limit: limit
+      offset: offset
+
+    findAllBySeatLayoutId:
+      kvFunction: findAllWithOptionsKV
+      where: seatLayoutId
+      limit: limit
+      offset: offset
+
+    findAllByGtfsIds:
+      kvFunction: findAllWithKV
+      where:
+        in: [gtfsId]
+
+  extraOperations:
+    - GENERATE_INDEXES
+    - EXTRA_CACHED_QUERY_FILE

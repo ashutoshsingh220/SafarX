@@ -1,0 +1,160 @@
+# Finance Kernel - Ledger Entry Table
+# Namma-DSL YAML specification
+
+imports:
+  UTCTime: Kernel.Prelude
+  Currency: Kernel.Types.Common
+  HighPrecMoney: Kernel.Types.Common
+  Value: Data.Aeson
+  Account: Lib.Finance.Domain.Types.Account
+  ActorType: Lib.Finance.Core.Types
+
+LedgerEntry:
+  tableName: finance_ledger_entry
+  derives: "Generic"
+
+  types:
+    EntryType:
+      enum: "Expense,Revenue,LiabilityCreated,LiabilitySettled,Reversal"
+      derive: "ToParamSchema"
+
+    EntryStatus:
+      enum: "PENDING,DUE,SETTLED,VOIDED"
+      derive: "HttpInstance"
+
+    SettlementStatus:
+      enum: "UNSETTLED,PROCESSING,PAID_OUT"
+      derive: "HttpInstance"
+
+    # Sub-domain entity an entry belongs to, when referenceId (the ride) is not selective
+    # enough on its own — e.g. the legs of one refund request among the ride's many.
+    EntityReferenceType:
+      enum: "RefundRequest"
+      derive: "HttpInstance"
+
+  # NOTE: Mask sensitive values in ledgerEntryToAuditValue (Ledger.Service)
+  fields:
+    id: Id LedgerEntry
+    timestamp: UTCTime
+    fromAccountId: Id Account
+    toAccountId: Id Account
+    concernedIndividualId: Maybe Text
+    amount: HighPrecMoney
+    currency: Currency
+    entryType: EntryType
+    status: EntryStatus
+    referenceType: Text
+    referenceId: Text
+    entityReferenceId: Maybe Text
+    entityReferenceType: Maybe EntityReferenceType
+    reversalOf: Maybe (Id LedgerEntry)
+    voidReason: Maybe Text
+    settledAt: Maybe UTCTime
+    # Replace the deprecated `metadata` column: it was created as `text` while the Haskell type
+    # is Value (json), so any non-NULL row broke every ledger read (BeamRowReadError), and prod's
+    # heavy table can't afford the full-rewrite ALTER to json. The old column stays for backward compatibility,
+    # but is never read or written again. sqlType json below is REQUIRED,as Value defaults to text otherwise.
+    metadataV2: Maybe Value # SENSITIVE
+    fromStartingBalance: Maybe HighPrecMoney
+    toStartingBalance: Maybe HighPrecMoney
+    fromEndingBalance: Maybe HighPrecMoney
+    toEndingBalance: Maybe HighPrecMoney
+    merchantId: Text
+    merchantOperatingCityId: Text
+    settlementStatus: Maybe SettlementStatus
+    settlementId: Maybe Text
+    settlementTimestamp: Maybe UTCTime
+    createdAt: UTCTime
+    reconciliationStatus: Maybe Value
+
+    # --- Audit ---
+    createdBy: Maybe ActorType                     # Who created this record
+    createdById: Maybe Text                        # requestId for UNKNOWN/SYSTEM, jobId for JOB, personId for PERSON/DASHBOARD_PERSON
+    updatedBy: Maybe ActorType                     # Who updated this record
+    updatedById: Maybe Text                        # requestId for UNKNOWN/SYSTEM, jobId for JOB, personId for PERSON/DASHBOARD_PERSON
+
+  sqlType:
+    metadataV2: "json"
+
+  constraints:
+    id: PrimaryKey
+    fromAccountId: SecondaryKey
+    toAccountId: SecondaryKey
+    concernedIndividualId: "!SecondaryKey"
+    referenceId: "!SecondaryKey"
+    entityReferenceId: SecondaryKey
+    ownerId: "!SecondaryKey"
+    settlementId: "!SecondaryKey"
+
+  queries:
+    findById:
+      kvFunction: findOneWithKV
+      where: id
+
+    findByReference:
+      kvFunction: findAllWithKV
+      where:
+        and: [referenceType, referenceId]
+
+    findByEntityReference:
+      kvFunction: findAllWithKV
+      where:
+        and: [entityReferenceType, entityReferenceId]
+
+    findByReferenceAndToAccount:
+      kvFunction: findAllWithKV
+      where:
+        and: [referenceType, referenceId, toAccountId]
+
+    findByReferenceAndFromAccount:
+      kvFunction: findAllWithKV
+      where:
+        and: [referenceType, referenceId, fromAccountId]
+
+    findByFromAccount:
+      kvFunction: findAllWithKV
+      where: fromAccountId
+
+    findByToAccount:
+      kvFunction: findAllWithKV
+      where: toAccountId
+
+    findReversalOf:
+      kvFunction: findOneWithKV
+      where: reversalOf
+
+    findByStatus:
+      kvFunction: findAllWithKV
+      where: status
+
+    updateStatus:
+      kvFunction: updateWithKV
+      params: [status, updatedBy, updatedById]
+      where: id
+
+    updateSettled:
+      kvFunction: updateWithKV
+      params: [status, settledAt, updatedBy, updatedById]
+      where: id
+
+    updateVoided:
+      kvFunction: updateWithKV
+      params: [status, voidReason, updatedBy, updatedById]
+      where: id
+
+    updateSettlementStatus:
+      kvFunction: updateWithKV
+      params: [settlementStatus, settlementId, settlementTimestamp, updatedBy, updatedById]
+      where: id
+
+  extraIndexes:
+    - columns: [timestamp, fromAccountId]
+    - columns: [timestamp, toAccountId]
+    - columns: [timestamp, concernedIndividualId]
+    - columns: [concernedIndividualId]
+
+  extraOperations:
+    - GENERATE_INDEXES
+
+  defaultQueryTypeConstraint: "(Lib.Finance.Storage.Beam.BeamFlow.BeamFlow m r)"
+  beamInstance: MakeTableInstancesGenericSchema

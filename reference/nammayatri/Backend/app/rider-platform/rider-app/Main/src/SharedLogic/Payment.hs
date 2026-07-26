@@ -1,0 +1,1476 @@
+module SharedLogic.Payment where
+
+import qualified API.Types.UI.RidePayment as APIRidePayment
+import qualified Beckn.ACL.Cancel as ACL
+import qualified BecknV2.FRFS.Enums as Spec
+import qualified BecknV2.FRFS.Utils as Utils
+import qualified Data.HashMap.Strict as HM
+import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
+import qualified Domain.Action.UI.Cancel as DCancel
+import qualified Domain.SharedLogic.RideDiscount as RD
+import qualified Domain.Types.Booking as Booking
+import qualified Domain.Types.BookingCancellationReason as SBCR
+import qualified Domain.Types.CancellationReason as SCR
+import qualified Domain.Types.Extra.MerchantPaymentMethod as DMPM
+import qualified Domain.Types.FRFSRecon as Recon
+import qualified Domain.Types.FRFSTicketBookingPayment as DFRFSTicketBookingPayment
+import qualified Domain.Types.FRFSTicketBookingStatus as DFRFSTicketBooking
+import qualified Domain.Types.FareBreakup as DFareBreakup
+import qualified Domain.Types.Merchant as Merchant
+import qualified Domain.Types.MerchantOperatingCity as DMOC
+import qualified Domain.Types.OfferEntity as DOfferEntity
+import qualified Domain.Types.ParkingTransaction as DPT
+import qualified Domain.Types.Person as Person
+import qualified Domain.Types.PurchasedPass as DPurchasedPass
+import qualified Domain.Types.Ride as Ride
+import Kernel.External.Encryption
+import qualified Kernel.External.Notification as Notification
+import qualified Kernel.External.Payment.Interface as Payment
+import qualified Kernel.External.Payment.Interface.Types as PInterface
+import Kernel.External.Types (SchedulerFlow, ServiceFlow)
+import Kernel.Prelude
+import Kernel.Sms.Config (SmsConfig)
+import qualified Kernel.Storage.Esqueleto as Esq
+import Kernel.Storage.Esqueleto.Config (EsqDBReplicaFlow)
+import qualified Kernel.Storage.Hedis as Redis
+import Kernel.Streaming.Kafka.Producer.Types (HasKafkaProducer, KafkaProducerTools)
+import Kernel.Tools.Metrics.CoreMetrics (CoreMetrics)
+import Kernel.Types.CacheFlow
+import Kernel.Types.Id
+import qualified Kernel.Types.SlidingWindowCounters as SWC
+import Kernel.Utils.Common
+import qualified Kernel.Utils.SlidingWindowCounters as SWC
+import Lib.ConfigPilot.Interface.Types (getConfig, getOneConfig)
+import qualified Lib.Finance.Core.Types as Finance
+import qualified Lib.Finance.Domain.Types.LedgerEntry as LE
+import Lib.Finance.FinanceM (FinanceCtx (..))
+import qualified Lib.Finance.Storage.Beam.BeamFlow as FinanceBeamFlow
+import qualified Lib.Payment.Domain.Action as DPayment
+import qualified Lib.Payment.Domain.Types.Common as DPayment
+import qualified Lib.Payment.Domain.Types.PaymentOrder as DOrder
+import qualified Lib.Payment.Domain.Types.Refunds as DRefunds
+import qualified Lib.Payment.Storage.HistoryQueries.Refunds as HQRefunds
+import qualified Lib.Payment.Storage.Queries.PaymentOrder as QPaymentOrder
+import qualified Lib.Payment.Wallet.Service as LoyaltyWalletSvc
+import qualified Lib.Payment.Wallet.Types as WalletSummary
+import Lib.Scheduler.JobStorageType.SchedulerType (createJobIn)
+import qualified SharedLogic.CallBPP as CallBPP
+import qualified SharedLogic.CallBPPInternal as CallBPPInternal
+import qualified SharedLogic.CallFRFSBPP as CallFRFSBPP
+import qualified SharedLogic.FRFSUtils as FRFSUtils
+import qualified SharedLogic.Finance.RidePayment as RidePaymentFinance
+import SharedLogic.JobScheduler
+import qualified SharedLogic.JobScheduler as JobScheduler
+import SharedLogic.Offer
+import qualified SharedLogic.Utils as SLUtils
+import Storage.Beam.Payment ()
+import qualified Storage.CachedQueries.BecknConfig as CQBC
+import qualified Storage.CachedQueries.Merchant as CQM
+import qualified Storage.CachedQueries.Merchant.RiderConfig as CQRC
+import Storage.ConfigPilot.Config.BecknConfig (BecknConfigDimensions (..))
+import Storage.ConfigPilot.Config.RiderConfig (RiderConfigDimensions (..))
+import qualified Storage.Queries.Booking as QBooking
+import qualified Storage.Queries.FRFSRecon as QRecon
+import qualified Storage.Queries.FRFSTicketBooking as QFRFSTicketBooking
+import qualified Storage.Queries.FRFSTicketBookingPayment as QFRFSTicketBookingPayment
+import qualified Storage.Queries.OfferEntity as QOfferEntity
+import qualified Storage.Queries.ParkingTransaction as QPT
+import qualified Storage.Queries.PaymentCustomer as QPaymentCustomer
+import qualified Storage.Queries.Person as QPerson
+import qualified Storage.Queries.PurchasedPass as QPurchasedPass
+import qualified Storage.Queries.PurchasedPassPayment as QPurchasedPassPayment
+import qualified Storage.Queries.Ride as QRide
+import qualified Storage.Queries.TicketBooking as QTB
+import Tools.Error
+import qualified Tools.LoyaltyWallet as LoyaltyWallet
+import Tools.Metrics.BAPMetrics
+import qualified Tools.Notifications as TNotifications
+import qualified Tools.Payment as TPayment
+import TransactionLogs.Types
+import qualified UrlShortner.Common as UrlShortner
+
+-------------------------------------------------------------------------------------------------------
+----------------------------------- Payment Order Status Handler --------------------------------------
+-------------------------------------------------------------------------------------------------------
+
+getLoyaltyInfo ::
+  ( MonadFlow m,
+    EncFlow m r,
+    CacheFlow m r,
+    EsqDBFlow m r,
+    CoreMetrics m
+  ) =>
+  Text ->
+  Id Merchant.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  m [WalletSummary.LoyaltyProgramSummary]
+getLoyaltyInfo customerId merchantId merchantOperatingCityId = do
+  resp <- LoyaltyWallet.loyaltyInfo customerId merchantId merchantOperatingCityId
+  mbProgramMap <- TPayment.loadLoyaltyProgramMap merchantId merchantOperatingCityId
+  let resolveProgramType pid = T.pack . show . fst <$> (Map.lookup pid =<< mbProgramMap)
+  pure $ map (WalletSummary.toLoyaltyProgramSummary resolveProgramType) (fromMaybe [] resp.programs)
+
+-- | Type alias for fulfillment status handler function
+-- This allows callers to pass the appropriate handler for their payment service type
+type FulfillmentStatusHandler m =
+  DPayment.PaymentStatusResp ->
+  m (DPayment.PaymentFulfillmentStatus, Maybe Text, Maybe Text)
+
+fallbackOrderStatusHandler ::
+  (MonadFlow m) =>
+  DPayment.PaymentStatusResp ->
+  m (DPayment.PaymentFulfillmentStatus, Maybe Text, Maybe Text)
+fallbackOrderStatusHandler paymentStatusResp = do
+  status <- DPayment.getTransactionStatus paymentStatusResp
+  let fulfillment = case status of
+        Payment.CHARGED -> DPayment.FulfillmentSucceeded
+        Payment.CANCELLED -> DPayment.FulfillmentFailed
+        Payment.CLIENT_AUTH_TOKEN_EXPIRED -> DPayment.FulfillmentFailed
+        Payment.AUTO_REFUNDED -> DPayment.FulfillmentRefunded
+        Payment.NEW -> DPayment.FulfillmentPending
+        Payment.PENDING_VBV -> DPayment.FulfillmentPending
+        Payment.AUTHORIZING -> DPayment.FulfillmentPending
+        Payment.COD_INITIATED -> DPayment.FulfillmentPending
+        Payment.STARTED -> DPayment.FulfillmentPending
+        Payment.JUSPAY_DECLINED -> DPayment.FulfillmentPending
+        Payment.AUTHORIZATION_FAILED -> DPayment.FulfillmentPending
+        Payment.AUTHENTICATION_FAILED -> DPayment.FulfillmentPending
+        Payment.PARTIAL_CHARGED -> DPayment.FulfillmentPending
+  pure (fulfillment, Nothing, Nothing)
+
+orderStatusHandler ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    ServiceFlow m r,
+    SchedulerFlow r,
+    EsqDBReplicaFlow m r,
+    HasLongDurationRetryCfg r c,
+    HasShortDurationRetryCfg r c,
+    CallFRFSBPP.BecknAPICallFlow m r,
+    HasFlowEnv m r '["googleSAPrivateKey" ::: String],
+    HasBAPMetrics m r,
+    HasFlowEnv m r '["smsCfg" ::: SmsConfig],
+    HasFlowEnv m r '["urlShortnerConfig" ::: UrlShortner.UrlShortnerConfig],
+    HasField "ltsHedisEnv" r Redis.HedisEnv,
+    HasField "isMetroTestTransaction" r Bool,
+    HasField "blackListedJobs" r [Text],
+    Finance.HasActorInfo m r
+  ) =>
+  Id DMOC.MerchantOperatingCity ->
+  FulfillmentStatusHandler m ->
+  DOrder.PaymentServiceType ->
+  DOrder.PaymentOrder ->
+  (Payment.OrderStatusReq -> m Payment.OrderStatusResp) ->
+  m DPayment.PaymentStatusResp
+orderStatusHandler merchantOpCityId fulfillmentHandler paymentService paymentOrder orderStatusCall = do
+  Redis.withWaitAndLockMasterCloudCrossAppRedis
+    makePaymentOrderStatusHandlerLockKey
+    60
+    100
+    ( do
+        let commonMerchantOperatingCityId = cast @DMOC.MerchantOperatingCity @DPayment.MerchantOperatingCity merchantOpCityId
+        orderStatusResponse <- DPayment.orderStatusService commonMerchantOperatingCityId paymentOrder.personId paymentOrder.id orderStatusCall
+        mbUpdatedPaymentOrder <- QPaymentOrder.findById paymentOrder.id
+        let updatedPaymentOrder = fromMaybe paymentOrder mbUpdatedPaymentOrder
+        orderStatusHandlerWithRefunds fulfillmentHandler paymentService paymentOrder updatedPaymentOrder orderStatusResponse
+    )
+  where
+    makePaymentOrderStatusHandlerLockKey :: Text
+    makePaymentOrderStatusHandlerLockKey = "orderStatusHandler:paymentOrder:" <> paymentOrder.id.getId
+
+orderStatusHandlerWithRefunds ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    ServiceFlow m r,
+    SchedulerFlow r,
+    EsqDBReplicaFlow m r,
+    HasLongDurationRetryCfg r c,
+    HasShortDurationRetryCfg r c,
+    CallFRFSBPP.BecknAPICallFlow m r,
+    HasFlowEnv m r '["googleSAPrivateKey" ::: String],
+    HasBAPMetrics m r,
+    HasFlowEnv m r '["smsCfg" ::: SmsConfig],
+    HasFlowEnv m r '["urlShortnerConfig" ::: UrlShortner.UrlShortnerConfig],
+    HasField "ltsHedisEnv" r Redis.HedisEnv,
+    HasField "isMetroTestTransaction" r Bool,
+    HasField "blackListedJobs" r [Text],
+    Finance.HasActorInfo m r
+  ) =>
+  FulfillmentStatusHandler m ->
+  DOrder.PaymentServiceType ->
+  DOrder.PaymentOrder ->
+  DOrder.PaymentOrder ->
+  DPayment.PaymentStatusResp ->
+  m DPayment.PaymentStatusResp
+orderStatusHandlerWithRefunds fulfillmentHandler paymentService paymentOrder updatedPaymentOrder paymentStatusResponse = do
+  refundStatusHandler paymentOrder paymentService
+  eitherPaymentFullfillmentStatusWithEntityIdAndTransactionId <-
+    withTryCatch "orderStatusHandler:orderStatusHandler" $
+      fulfillmentHandler paymentStatusResponse
+  finalPaymentStatusResponse <-
+    case paymentStatusResponse.status of
+      Payment.CHARGED -> do
+        case eitherPaymentFullfillmentStatusWithEntityIdAndTransactionId of
+          Right paymentFullfillmentStatusWithEntityIdAndTransactionId ->
+            case paymentFullfillmentStatusWithEntityIdAndTransactionId of
+              (DPayment.FulfillmentFailed, domainEntityId, _) -> do
+                paymentStatusRespWithRefund <- initiateRefundWithPaymentStatusRespSync (cast paymentOrder.personId) paymentOrder.id
+                return $ mkPaymentStatusResp paymentStatusRespWithRefund (Just DPayment.FulfillmentFailed) domainEntityId
+              (DPayment.FulfillmentRefundPending, domainEntityId, _) -> do
+                paymentStatusRespWithRefund <- initiateRefundWithPaymentStatusRespSync (cast paymentOrder.personId) paymentOrder.id
+                return $ mkPaymentStatusResp paymentStatusRespWithRefund (Just DPayment.FulfillmentRefundPending) domainEntityId
+              -- If Payment Charged after the Order Validity, then initiate the Refund for the Customer
+              (DPayment.FulfillmentPending, domainEntityId, _) -> do
+                now <- getCurrentTime
+                case paymentOrder.validTill of
+                  Just orderValidTill -> do
+                    if now > orderValidTill
+                      then do
+                        paymentStatusRespWithRefund <- initiateRefundWithPaymentStatusRespSync (cast paymentOrder.personId) paymentOrder.id
+                        return $ mkPaymentStatusResp paymentStatusRespWithRefund (Just DPayment.FulfillmentPending) domainEntityId
+                      else return $ mkPaymentStatusResp paymentStatusResponse (Just DPayment.FulfillmentPending) domainEntityId
+                  _ -> return $ mkPaymentStatusResp paymentStatusResponse (Just DPayment.FulfillmentPending) domainEntityId
+              (paymentFulfillmentStatus, domainEntityId, _) -> return $ mkPaymentStatusResp paymentStatusResponse (Just paymentFulfillmentStatus) domainEntityId
+          Left err -> do
+            logError $ "Error in payment fullfillment status handler: " <> show err
+            return $ mkPaymentStatusResp paymentStatusResponse paymentOrder.paymentFulfillmentStatus paymentOrder.domainEntityId
+      Payment.AUTO_REFUNDED -> do
+        return $ mkPaymentStatusResp paymentStatusResponse (Just DPayment.FulfillmentRefundInitiated) Nothing
+      _ -> return $ mkPaymentStatusResp paymentStatusResponse paymentOrder.paymentFulfillmentStatus paymentOrder.domainEntityId
+  -- Create the Recon Entry and Trigger the Refund Notifications
+  case eitherPaymentFullfillmentStatusWithEntityIdAndTransactionId of
+    Right (newPaymentFulfillmentStatus, _, mbDomainTransactionId) -> do
+      whenJust paymentOrder.paymentFulfillmentStatus $ \oldPaymentFulfillmentStatus -> do
+        let personId = cast @DPayment.Person @Person.Person paymentOrder.personId
+        when (newPaymentFulfillmentStatus /= oldPaymentFulfillmentStatus) $ do
+          -- Recon Entry
+          whenJust mbDomainTransactionId $ \domainTransactionId -> do
+            void $
+              withTryCatch "createReconEntry" $ do
+                when (newPaymentFulfillmentStatus == DPayment.FulfillmentSucceeded) $ do
+                  case paymentService of
+                    DOrder.FRFSPassPurchase -> createPassReconEntry domainTransactionId
+                    _ -> pure ()
+          -- Refund Notify
+          fork "Process Refunds Notifications" $ do
+            case newPaymentFulfillmentStatus of
+              DPayment.FulfillmentRefundInitiated -> TNotifications.notifyPaymentFulfillment Notification.REFUND_PENDING paymentOrder.id personId paymentService
+              DPayment.FulfillmentRefundFailed -> TNotifications.notifyPaymentFulfillment Notification.REFUND_FAILED paymentOrder.id personId paymentService
+              DPayment.FulfillmentRefunded -> TNotifications.notifyPaymentFulfillment Notification.REFUND_SUCCESS paymentOrder.id personId paymentService
+              DPayment.FulfillmentPending -> do
+                when (paymentOrder.status /= updatedPaymentOrder.status && updatedPaymentOrder.status == Payment.CHARGED) $ do
+                  TNotifications.notifyPaymentFulfillment Notification.FULFILLMENT_PENDING paymentOrder.id personId paymentService
+              DPayment.FulfillmentSucceeded -> do
+                -- FRFS shuttle bookings get a dedicated shuttle-only reassurance (push + opt-in WhatsApp),
+                -- gated on RiderConfig.busTrackingNotificationTiers. The status handler's domain entity id is
+                -- the journeyId (not a booking id), so resolve the booking(s) from the payment order and
+                -- notify per booking. handledByShuttle = True if any shuttle booking was notified, so the
+                -- generic FULFILLMENT_SUCCESS push still fires for everything else.
+                bookingPayments <- QFRFSTicketBookingPayment.findAllByOrderId paymentOrder.id
+                handledByShuttle <-
+                  fmap or $
+                    mapM (\bp -> TNotifications.notifyShuttleBookingConfirmed personId bp.frfsTicketBookingId) bookingPayments
+                unless handledByShuttle $
+                  TNotifications.notifyPaymentFulfillment Notification.FULFILLMENT_SUCCESS paymentOrder.id personId paymentService
+              _ -> pure ()
+        -- Invalidate the Offer List Cache
+        case newPaymentFulfillmentStatus of
+          DPayment.FulfillmentSucceeded -> do
+            fork "Invalidate Offer List Cache" $ do
+              person <- QPerson.findById personId >>= fromMaybeM (PersonNotFound personId.getId)
+              let merchantOperatingCityId = maybe person.merchantOperatingCityId (cast @DPayment.MerchantOperatingCity @DMOC.MerchantOperatingCity) paymentOrder.merchantOperatingCityId
+              invalidateOfferListCache person merchantOperatingCityId (mkPrice (Just paymentOrder.currency) paymentOrder.amount)
+            fork "increment rider spend" $
+              Redis.runInMasterCloudRedisCellWithCrossAppRedis $
+                SWC.incrementByValue
+                  (round paymentOrder.amount)
+                  (FRFSUtils.riderSpendKey personId)
+                  (SWC.SlidingWindowOptions 30 SWC.Days)
+          DPayment.FulfillmentRefunded ->
+            fork "decrement rider spend" $
+              Redis.runInMasterCloudRedisCellWithCrossAppRedis $
+                SWC.decrementByValueInTimeBucket
+                  paymentOrder.createdAt
+                  (round paymentOrder.amount)
+                  (FRFSUtils.riderSpendKey personId)
+                  (SWC.SlidingWindowOptions 30 SWC.Days)
+          _ -> pure ()
+    _ -> pure ()
+  -- Update the Payment Order with the new payment fulfillment status, domain entity id and domain transaction id
+  case eitherPaymentFullfillmentStatusWithEntityIdAndTransactionId of
+    Right (_, _, domainTransactionId) -> do
+      QPaymentOrder.updatePaymentFulfillmentStatus paymentOrder.id finalPaymentStatusResponse.paymentFulfillmentStatus finalPaymentStatusResponse.domainEntityId domainTransactionId
+    _ -> pure ()
+
+  case (finalPaymentStatusResponse, updatedPaymentOrder.merchantOperatingCityId) of
+    (DPayment.PaymentStatus {orderLoyaltyInfo = Just loyalty}, Just commonMerchantOperatingCityId) -> do
+      whenJust paymentOrder.paymentFulfillmentStatus $ \oldPaymentFulfillmentStatus -> do
+        when (finalPaymentStatusResponse.paymentFulfillmentStatus /= Just oldPaymentFulfillmentStatus) $ do
+          let personId = cast @DPayment.Person @Person.Person updatedPaymentOrder.personId
+              merchantId = cast @DPayment.Merchant @Merchant.Merchant updatedPaymentOrder.merchantId
+              merchantOperatingCityId = cast @DPayment.MerchantOperatingCity @DMOC.MerchantOperatingCity commonMerchantOperatingCityId
+              fetchFullInfo = getLoyaltyInfo personId.getId merchantId merchantOperatingCityId
+          mbProgramMap <- TPayment.loadLoyaltyProgramMap merchantId merchantOperatingCityId
+          let resolveProgram pid = pure $ (Map.lookup pid) =<< mbProgramMap
+          let domainEntityId = fromMaybe updatedPaymentOrder.id.getId finalPaymentStatusResponse.domainEntityId
+          res <-
+            withTryCatch "processLoyaltyInfoFromOrderStatus" $
+              LoyaltyWalletSvc.processLoyaltyInfoFromOrderStatus
+                personId.getId
+                updatedPaymentOrder
+                domainEntityId
+                loyalty
+                resolveProgram
+                fetchFullInfo
+          case res of
+            Left err -> logError $ "loyalty processing failed for order " <> updatedPaymentOrder.id.getId <> ": " <> show err
+            Right () -> pure ()
+    (DPayment.PaymentStatus {orderLoyaltyInfo = Just _}, Nothing) ->
+      logInfo $ "loyalty processing skipped: order " <> updatedPaymentOrder.id.getId <> " has no merchantOperatingCityId"
+    _ -> pure ()
+  return finalPaymentStatusResponse
+  where
+    mkPaymentStatusResp :: DPayment.PaymentStatusResp -> Maybe DPayment.PaymentFulfillmentStatus -> Maybe Text -> DPayment.PaymentStatusResp
+    mkPaymentStatusResp paymentStatusResponse' paymentFulfillmentStatus' domainEntityId' = do
+      case paymentStatusResponse' of
+        DPayment.PaymentStatus {..} -> DPayment.PaymentStatus {DPayment.paymentFulfillmentStatus = paymentFulfillmentStatus', DPayment.domainEntityId = domainEntityId', ..}
+        _ -> paymentStatusResponse'
+
+    createPassReconEntry ::
+      ( EsqDBFlow m r,
+        CacheFlow m r,
+        MonadFlow m,
+        EsqDBReplicaFlow m r
+      ) =>
+      Text ->
+      m ()
+    createPassReconEntry transactionId = do
+      case paymentStatusResponse.status of
+        Payment.CHARGED -> do
+          purchasedPassPayment <- QPurchasedPassPayment.findByPrimaryKey (Id transactionId) >>= fromMaybeM (InvalidRequest $ "Purchase pass payment not found for id: " <> transactionId)
+          bapConfig <- getOneConfig (BecknConfigDimensions {merchantOperatingCityId = purchasedPassPayment.merchantOperatingCityId.getId, merchantId = purchasedPassPayment.merchantId.getId, domain = Just (show Spec.FRFS), vehicleCategory = Just (Utils.frfsVehicleCategoryToBecknVehicleCategory Spec.BUS)}) (Just (maybeToList <$> CQBC.findByMerchantIdDomainVehicleAndMerchantOperatingCityIdWithFallback purchasedPassPayment.merchantOperatingCityId purchasedPassPayment.merchantId (show Spec.FRFS) (Utils.frfsVehicleCategoryToBecknVehicleCategory Spec.BUS))) >>= fromMaybeM (InternalError "Beckn Config not found")
+          mkPassReconEntry bapConfig purchasedPassPayment
+        _ -> return ()
+      where
+        mkPassReconEntry bapConfig purchasedPassPayment = do
+          let finderFee :: Price = mkPrice Nothing $ fromMaybe 0 $ (readMaybe . T.unpack) =<< bapConfig.buyerFinderFee
+          now <- getCurrentTime
+          reconId <- generateGUID
+          let reconEntry =
+                Recon.FRFSRecon
+                  { Recon.id = reconId,
+                    Recon.frfsTicketBookingId = Id purchasedPassPayment.id.getId,
+                    Recon.networkOrderId = purchasedPassPayment.id.getId,
+                    Recon.collectorSubscriberId = bapConfig.subscriberId,
+                    Recon.receiverSubscriberId = "MTC bus pass",
+                    Recon.date = show now,
+                    Recon.time = show now,
+                    Recon.mobileNumber = Nothing,
+                    Recon.sourceStationCode = Nothing,
+                    Recon.destinationStationCode = Nothing,
+                    Recon.ticketQty = Nothing,
+                    Recon.ticketNumber = Nothing,
+                    Recon.transactionRefNumber = Nothing,
+                    Recon.transactionUUID = paymentStatusResponse.txnUUID,
+                    Recon.txnId = paymentStatusResponse.txnId,
+                    Recon.fare = mkPrice Nothing purchasedPassPayment.amount,
+                    Recon.buyerFinderFee = finderFee,
+                    Recon.totalOrderValue = mkPrice Nothing purchasedPassPayment.amount,
+                    Recon.settlementAmount = mkPrice Nothing purchasedPassPayment.amount,
+                    Recon.beneficiaryIFSC = Nothing,
+                    Recon.beneficiaryBankAccount = Nothing,
+                    Recon.collectorIFSC = bapConfig.bapIFSC,
+                    Recon.settlementReferenceNumber = Nothing,
+                    Recon.settlementDate = Nothing,
+                    Recon.differenceAmount = Nothing,
+                    Recon.message = Nothing,
+                    Recon.ticketStatus = Nothing,
+                    Recon.providerId = "MTC Bus Pass",
+                    Recon.providerName = "MTC Bus Pass Provider",
+                    Recon.entityType = Just Recon.BUS_PASS,
+                    Recon.reconStatus = Just Recon.PENDING,
+                    Recon.paymentGateway = Nothing,
+                    Recon.merchantId = Just purchasedPassPayment.merchantId,
+                    Recon.merchantOperatingCityId = Just purchasedPassPayment.merchantOperatingCityId,
+                    Recon.createdAt = now,
+                    Recon.updatedAt = now
+                  }
+          void $ QRecon.create reconEntry
+
+refundStatusHandler ::
+  ( EncFlow m r,
+    EsqDBFlow m r,
+    CacheFlow m r,
+    MonadFlow m,
+    EsqDBReplicaFlow m r,
+    ServiceFlow m r
+  ) =>
+  DOrder.PaymentOrder ->
+  DOrder.PaymentServiceType ->
+  m ()
+refundStatusHandler paymentOrder paymentServiceType = do
+  refundsEntry <- HQRefunds.findAllByOrderId paymentOrder.shortId
+  mapM_
+    ( \refundEntry -> do
+        case paymentServiceType of
+          DOrder.FRFSBooking -> bookingsRefundStatusHandler refundEntry
+          DOrder.FRFSBusBooking -> bookingsRefundStatusHandler refundEntry
+          DOrder.FRFSMultiModalBooking -> bookingsRefundStatusHandler refundEntry
+          DOrder.FRFSPassPurchase -> passesRefundStatusHandler refundEntry
+          DOrder.ParkingBooking -> parkingBookingRefundStatusHandler refundEntry
+          _ -> pure ()
+    )
+    refundsEntry
+  where
+    bookingsRefundStatusHandler ::
+      ( EsqDBFlow m r,
+        CacheFlow m r,
+        MonadFlow m,
+        EsqDBReplicaFlow m r,
+        ServiceFlow m r,
+        EncFlow m r
+      ) =>
+      DRefunds.Refunds ->
+      m ()
+    bookingsRefundStatusHandler refund = do
+      let isRefundApiCallSuccess = refund.isApiCallSuccess
+      bookingPayments <- QFRFSTicketBookingPayment.findAllByOrderId paymentOrder.id
+      mapM_
+        ( \bookingPayment -> do
+            let bookingPaymentId = bookingPayment.id
+                bookingId = bookingPayment.frfsTicketBookingId
+            mbBooking <- QFRFSTicketBooking.findById bookingId
+            case mbBooking of
+              Nothing -> pure ()
+              Just booking -> do
+                when (booking.status `elem` [DFRFSTicketBooking.NEW, DFRFSTicketBooking.APPROVED, DFRFSTicketBooking.PAYMENT_PENDING]) $ do
+                  QFRFSTicketBooking.updateStatusById DFRFSTicketBooking.FAILED bookingId
+            case refund.status of
+              Payment.REFUND_SUCCESS -> QFRFSTicketBookingPayment.updateStatusById DFRFSTicketBookingPayment.REFUNDED bookingPaymentId
+              Payment.REFUND_FAILURE -> QFRFSTicketBookingPayment.updateStatusById DFRFSTicketBookingPayment.REFUND_FAILED bookingPaymentId
+              _ -> do
+                case isRefundApiCallSuccess of
+                  Nothing -> QFRFSTicketBookingPayment.updateStatusById DFRFSTicketBookingPayment.REFUND_PENDING bookingPaymentId
+                  Just True -> QFRFSTicketBookingPayment.updateStatusById DFRFSTicketBookingPayment.REFUND_INITIATED bookingPaymentId
+                  Just False -> QFRFSTicketBookingPayment.updateStatusById DFRFSTicketBookingPayment.REFUND_FAILED bookingPaymentId
+        )
+        bookingPayments
+
+    passesRefundStatusHandler ::
+      ( EsqDBFlow m r,
+        CacheFlow m r,
+        MonadFlow m,
+        EsqDBReplicaFlow m r,
+        ServiceFlow m r,
+        EncFlow m r
+      ) =>
+      DRefunds.Refunds ->
+      m ()
+    passesRefundStatusHandler refund = do
+      purchasedPassPayment <- QPurchasedPassPayment.findOneByPaymentOrderId paymentOrder.id >>= fromMaybeM (PurchasedPassPaymentNotFound paymentOrder.id.getId)
+      purchasedPass <- QPurchasedPass.findById purchasedPassPayment.purchasedPassId >>= fromMaybeM (PurchasedPassNotFound purchasedPassPayment.purchasedPassId.getId)
+      case refund.status of
+        Payment.REFUND_SUCCESS -> do
+          QPurchasedPassPayment.updateStatusByOrderId DPurchasedPass.Refunded paymentOrder.id
+          when (purchasedPass.status == DPurchasedPass.Pending && purchasedPass.startDate == purchasedPassPayment.startDate && purchasedPass.endDate == purchasedPassPayment.endDate) $ do
+            QPurchasedPass.updateStatusById DPurchasedPass.Refunded purchasedPass.id
+        Payment.REFUND_FAILURE -> do
+          QPurchasedPassPayment.updateStatusByOrderId DPurchasedPass.RefundFailed paymentOrder.id
+          when (purchasedPass.status == DPurchasedPass.Pending && purchasedPass.startDate == purchasedPassPayment.startDate && purchasedPass.endDate == purchasedPassPayment.endDate) $ do
+            QPurchasedPass.updateStatusById DPurchasedPass.RefundFailed purchasedPass.id
+        Payment.REFUND_PENDING -> do
+          QPurchasedPassPayment.updateStatusByOrderId DPurchasedPass.RefundPending paymentOrder.id
+          when (purchasedPass.status == DPurchasedPass.Pending && purchasedPass.startDate == purchasedPassPayment.startDate && purchasedPass.endDate == purchasedPassPayment.endDate) $ do
+            QPurchasedPass.updateStatusById DPurchasedPass.RefundPending purchasedPass.id
+        Payment.MANUAL_REVIEW -> do
+          QPurchasedPassPayment.updateStatusByOrderId DPurchasedPass.RefundInitiated paymentOrder.id
+          when (purchasedPass.status == DPurchasedPass.Pending && purchasedPass.startDate == purchasedPassPayment.startDate && purchasedPass.endDate == purchasedPassPayment.endDate) $ do
+            QPurchasedPass.updateStatusById DPurchasedPass.RefundInitiated purchasedPass.id
+        _ ->
+          case refund.isApiCallSuccess of
+            Nothing -> do
+              QPurchasedPassPayment.updateStatusByOrderId DPurchasedPass.RefundPending paymentOrder.id
+              when (purchasedPass.status == DPurchasedPass.Pending && purchasedPass.startDate == purchasedPassPayment.startDate && purchasedPass.endDate == purchasedPassPayment.endDate) $ do
+                QPurchasedPass.updateStatusById DPurchasedPass.RefundPending purchasedPass.id
+            Just True -> do
+              QPurchasedPassPayment.updateStatusByOrderId DPurchasedPass.RefundInitiated paymentOrder.id
+              when (purchasedPass.status == DPurchasedPass.Pending && purchasedPass.startDate == purchasedPassPayment.startDate && purchasedPass.endDate == purchasedPassPayment.endDate) $ do
+                QPurchasedPass.updateStatusById DPurchasedPass.RefundInitiated purchasedPass.id
+            Just False -> do
+              QPurchasedPassPayment.updateStatusByOrderId DPurchasedPass.RefundFailed paymentOrder.id
+              when (purchasedPass.status == DPurchasedPass.Pending && purchasedPass.startDate == purchasedPassPayment.startDate && purchasedPass.endDate == purchasedPassPayment.endDate) $ do
+                QPurchasedPass.updateStatusById DPurchasedPass.RefundFailed purchasedPass.id
+
+    parkingBookingRefundStatusHandler ::
+      ( EsqDBFlow m r,
+        CacheFlow m r,
+        MonadFlow m,
+        EsqDBReplicaFlow m r,
+        ServiceFlow m r,
+        EncFlow m r
+      ) =>
+      DRefunds.Refunds ->
+      m ()
+    parkingBookingRefundStatusHandler refund = do
+      parkingTransaction <- QPT.findByPaymentOrderId paymentOrder.id >>= fromMaybeM (InvalidRequest "Parking transaction not found")
+      case refund.status of
+        Payment.REFUND_SUCCESS -> do
+          QPT.updateStatusById DPT.Refunded parkingTransaction.id
+        Payment.REFUND_FAILURE -> do
+          QPT.updateStatusById DPT.RefundFailed parkingTransaction.id
+        _ ->
+          case refund.isApiCallSuccess of
+            Nothing -> QPT.updateStatusById DPT.RefundPending parkingTransaction.id
+            Just True -> QPT.updateStatusById DPT.RefundInitiated parkingTransaction.id
+            Just False -> QPT.updateStatusById DPT.RefundFailed parkingTransaction.id
+
+initiateRefundWithPaymentStatusRespSync ::
+  ( EsqDBFlow m r,
+    CacheFlow m r,
+    Finance.HasActorInfo m r,
+    EsqDBReplicaFlow m r,
+    ServiceFlow m r,
+    EncFlow m r,
+    SchedulerFlow r,
+    HasField "blackListedJobs" r [Text]
+  ) =>
+  Id Person.Person ->
+  Id DOrder.PaymentOrder ->
+  m DPayment.PaymentStatusResp
+initiateRefundWithPaymentStatusRespSync personId paymentOrderId = do
+  paymentOrder <- QPaymentOrder.findById paymentOrderId >>= fromMaybeM (InvalidRequest "Payment order not found")
+  paymentServiceType <- paymentOrder.paymentServiceType & fromMaybeM (InvalidRequest "Payment service type not found")
+  person <- QPerson.findById personId >>= fromMaybeM (PersonNotFound personId.getId)
+  processRefund person paymentOrder paymentServiceType
+  let merchantOperatingCityId = fromMaybe person.merchantOperatingCityId (cast <$> paymentOrder.merchantOperatingCityId)
+      orderStatusCall = TPayment.orderStatus (cast paymentOrder.merchantId) merchantOperatingCityId Nothing paymentServiceType (Just person.id.getId) person.clientSdkVersion paymentOrder.isMockPayment
+      commonMerchantOperatingCityId = cast @DMOC.MerchantOperatingCity @DPayment.MerchantOperatingCity merchantOperatingCityId
+  paymentStatusResp <- DPayment.orderStatusService commonMerchantOperatingCityId paymentOrder.personId paymentOrder.id orderStatusCall
+  refundStatusHandler paymentOrder paymentServiceType
+  return paymentStatusResp
+  where
+    processRefund ::
+      ( EsqDBFlow m r,
+        CacheFlow m r,
+        Finance.HasActorInfo m r,
+        EsqDBReplicaFlow m r,
+        ServiceFlow m r,
+        EncFlow m r,
+        SchedulerFlow r,
+        HasField "blackListedJobs" r [Text]
+      ) =>
+      Person.Person ->
+      DOrder.PaymentOrder ->
+      DOrder.PaymentServiceType ->
+      m ()
+    processRefund person paymentOrder paymentServiceType = do
+      let merchantOperatingCityId = fromMaybe person.merchantOperatingCityId (cast <$> paymentOrder.merchantOperatingCityId)
+      riderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = person.merchantOperatingCityId.getId}) (Just (CQRC.findByMerchantOperatingCityId person.merchantOperatingCityId)) >>= fromMaybeM (RiderConfigDoesNotExist merchantOperatingCityId.getId)
+      let refundsOrderCall = TPayment.refundOrder (cast paymentOrder.merchantId) merchantOperatingCityId Nothing paymentServiceType (Just person.id.getId) person.clientSdkVersion
+      let commonMerchantOperatingCityId = cast @DMOC.MerchantOperatingCity @DPayment.MerchantOperatingCity merchantOperatingCityId
+      mbRefundResp <- DPayment.createRefundService commonMerchantOperatingCityId paymentOrder.shortId refundsOrderCall
+      whenJust mbRefundResp $ \refundResp -> do
+        let refundRequestId = (listToMaybe refundResp.refunds) <&> (.requestId) -- TODO :: When will refunds be more than one ? even if more than 1 there requestId would be same right ?
+        whenJust refundRequestId $ \refundId -> do
+          let scheduleAfter = riderConfig.refundStatusUpdateInterval -- Schedule for 24 hours later
+              jobData =
+                JobScheduler.CheckRefundStatusJobData
+                  { JobScheduler.refundId = refundId,
+                    JobScheduler.numberOfRetries = 0
+                  }
+          createJobIn @_ @'CheckRefundStatus (Just person.merchantId) (Just merchantOperatingCityId) scheduleAfter (jobData :: JobScheduler.CheckRefundStatusJobData)
+          logInfo $ "Scheduled refund status check job for " <> refundId <> " in 24 hours (initial check)"
+
+markRefundPendingAndSyncOrderStatus ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    SchedulerFlow r,
+    EsqDBReplicaFlow m r,
+    HasLongDurationRetryCfg r c,
+    HasShortDurationRetryCfg r c,
+    CallFRFSBPP.BecknAPICallFlow m r,
+    HasFlowEnv m r '["googleSAPrivateKey" ::: String],
+    HasBAPMetrics m r,
+    HasFlowEnv m r '["smsCfg" ::: SmsConfig],
+    HasFlowEnv m r '["urlShortnerConfig" ::: UrlShortner.UrlShortnerConfig],
+    HasField "ltsHedisEnv" r Redis.HedisEnv,
+    HasField "isMetroTestTransaction" r Bool,
+    HasField "blackListedJobs" r [Text],
+    Finance.HasActorInfo m r
+  ) =>
+  Id Merchant.Merchant ->
+  Id Person.Person ->
+  Id DOrder.PaymentOrder ->
+  m DPayment.PaymentStatusResp
+markRefundPendingAndSyncOrderStatus merchantId personId orderId = do
+  paymentOrder <- QPaymentOrder.findById orderId >>= fromMaybeM (PaymentOrderNotFound orderId.getId)
+  let paymentServiceType = fromMaybe DOrder.Normal paymentOrder.paymentServiceType
+  case paymentServiceType of
+    DOrder.FRFSBooking -> markBookingsRefundPending paymentOrder
+    DOrder.FRFSBusBooking -> markBookingsRefundPending paymentOrder
+    DOrder.FRFSMultiModalBooking -> markBookingsRefundPending paymentOrder
+    DOrder.FRFSPassPurchase -> markPassesRefundPending paymentOrder
+    DOrder.ParkingBooking -> markParkingRefundPending paymentOrder
+    _ -> pure ()
+  -- Hardcoded refund handler since this is only used for refund scenarios
+  let refundFulfillmentHandler _ = pure (DPayment.FulfillmentRefundPending, Nothing, Nothing)
+  syncOrderStatus refundFulfillmentHandler merchantId personId paymentOrder
+  where
+    markBookingsRefundPending paymentOrder = do
+      bookingPayments <- QFRFSTicketBookingPayment.findAllByOrderId paymentOrder.id
+      mapM_ (\bookingPayment -> QFRFSTicketBookingPayment.updateStatusById DFRFSTicketBookingPayment.REFUND_PENDING bookingPayment.id) bookingPayments
+
+    markPassesRefundPending paymentOrder = do
+      QPurchasedPassPayment.updateStatusByOrderId DPurchasedPass.RefundPending paymentOrder.id
+
+    markParkingRefundPending paymentOrder = do
+      mbParkingTransaction <- QPT.findByPaymentOrderId paymentOrder.id
+      whenJust mbParkingTransaction $ \parkingTransaction -> do
+        QPT.updateStatusById DPT.RefundPending parkingTransaction.id
+
+syncOrderStatus ::
+  ( CacheFlow m r,
+    EsqDBFlow m r,
+    MonadFlow m,
+    EncFlow m r,
+    SchedulerFlow r,
+    EsqDBReplicaFlow m r,
+    HasLongDurationRetryCfg r c,
+    HasShortDurationRetryCfg r c,
+    CallFRFSBPP.BecknAPICallFlow m r,
+    HasFlowEnv m r '["googleSAPrivateKey" ::: String],
+    HasBAPMetrics m r,
+    HasFlowEnv m r '["smsCfg" ::: SmsConfig],
+    HasFlowEnv m r '["urlShortnerConfig" ::: UrlShortner.UrlShortnerConfig],
+    HasField "ltsHedisEnv" r Redis.HedisEnv,
+    HasField "isMetroTestTransaction" r Bool,
+    HasField "blackListedJobs" r [Text],
+    Finance.HasActorInfo m r
+  ) =>
+  FulfillmentStatusHandler m ->
+  Id Merchant.Merchant ->
+  Id Person.Person ->
+  DOrder.PaymentOrder ->
+  m DPayment.PaymentStatusResp
+syncOrderStatus fulfillmentHandler merchantId personId paymentOrder = do
+  person <- QPerson.findById personId >>= fromMaybeM (InvalidRequest "Person not found")
+  commonMerchantOperatingCityId <- paymentOrder.merchantOperatingCityId & fromMaybeM (InternalError "MerchantOperatingCityId not found in payment order")
+  let paymentServiceType = fromMaybe DOrder.Normal paymentOrder.paymentServiceType
+      mocId = cast @DPayment.MerchantOperatingCity @DMOC.MerchantOperatingCity commonMerchantOperatingCityId
+  ticketPlaceId <-
+    case paymentServiceType of
+      DOrder.Normal -> do
+        ticketBooking <- QTB.findById (cast paymentOrder.id)
+        return $ ticketBooking <&> (.ticketPlaceId)
+      DOrder.RideBooking -> return Nothing
+      _ -> return Nothing
+  let orderStatusCall = TPayment.orderStatus merchantId mocId ticketPlaceId paymentServiceType (Just person.id.getId) person.clientSdkVersion paymentOrder.isMockPayment
+  orderStatusHandler mocId fulfillmentHandler paymentServiceType paymentOrder orderStatusCall
+
+-------------------------------------------------------------------------------------------------------
+------------------------------------- Payment Utility Functions ---------------------------------------
+-------------------------------------------------------------------------------------------------------
+
+-- | Optional ledger info for ride payments. When provided, ledger entries are
+--   created/settled/voided alongside the payment intent operations.
+data RidePaymentLedgerInfo = RidePaymentLedgerInfo
+  { rideFare :: HighPrecMoney, -- base ride fare without tax (post-discount when discount applied)
+    gstAmount :: HighPrecMoney, -- GST/VAT on ride fare (post-discount when discount applied)
+    tollFare :: HighPrecMoney, -- toll charges without tax
+    tollVatAmount :: HighPrecMoney, -- VAT on toll charges
+    parkingCharge :: HighPrecMoney, -- parking charges without tax
+    parkingChargeVat :: HighPrecMoney, -- VAT on parking charges
+    platformFee :: HighPrecMoney, -- application fee / platform commission
+    offerDiscountAmount :: HighPrecMoney, -- discount absorbed by marketplace (0 for CASHBACK or no offer)
+    cashbackPayoutAmount :: HighPrecMoney, -- cashback to pay rider (0 for DISCOUNT or no offer)
+
+    -- | Platform-absorbed VAT on the discount portion. Funded on BAP via
+    --   BuyerExpense → BuyerAsset; paid across to BPP via buyer-external
+    --   where it is credited to the driver as part of BaseRide.
+    rideVatAbsorbedOnDiscount :: HighPrecMoney,
+    cancellationCharge :: HighPrecMoney, -- cancellation fee without tax (0 for normal ride)
+    cancellationTax :: HighPrecMoney, -- GST/VAT on cancellation fee (0 for normal ride)
+    financeCtx :: FinanceCtx
+  }
+  deriving (Show, Generic)
+
+-- | Smart constructor for RidePaymentLedgerInfo from numeric fields.
+--   Call sites that can project into [FareBreakup] (ride-completed,
+--   ride-assigned, scheduled PI execution) go through
+--   'buildLedgerInfoFromBreakups' which uses this internally; call sites
+--   where only pre-aggregated dues are available (debt settlement) build
+--   the numeric fields themselves and pass them here directly.
+mkRidePaymentLedgerInfo ::
+  HighPrecMoney -> -- rideFare (tax-exclusive)
+  HighPrecMoney -> -- gstAmount
+  HighPrecMoney -> -- tollFare (tax-exclusive)
+  HighPrecMoney -> -- tollVatAmount
+  HighPrecMoney -> -- parkingCharge (tax-exclusive)
+  HighPrecMoney -> -- parkingChargeVat
+  HighPrecMoney -> -- platformFee
+  HighPrecMoney -> -- offerDiscountAmount
+  HighPrecMoney -> -- cashbackPayoutAmount
+  HighPrecMoney -> -- rideVatAbsorbedOnDiscount
+  HighPrecMoney -> -- cancellationCharge (0 for normal ride)
+  HighPrecMoney -> -- cancellationTax (0 for normal ride)
+  FinanceCtx ->
+  RidePaymentLedgerInfo
+mkRidePaymentLedgerInfo rideFare gstAmount tollFare tollVatAmount parkingCharge parkingChargeVat platformFee offerDiscountAmount cashbackPayoutAmount rideVatAbsorbedOnDiscount cancellationCharge cancellationTax financeCtx =
+  RidePaymentLedgerInfo
+    { rideFare,
+      gstAmount,
+      tollFare,
+      tollVatAmount,
+      parkingCharge,
+      parkingChargeVat,
+      platformFee,
+      offerDiscountAmount,
+      cashbackPayoutAmount,
+      rideVatAbsorbedOnDiscount,
+      cancellationCharge,
+      cancellationTax,
+      financeCtx
+    }
+
+-- | Build RidePaymentLedgerInfo from raw fare breakups + customer offer
+--   discount. Delegates to 'RD.parseProjectFareParamsBreakup' +
+--   'RD.applyRideDiscount' — the canonical discount + VAT algorithm
+--   from 'Domain.SharedLogic.RideDiscount'.
+--
+--   Returns 'Nothing' when the BPP breakup doesn't include the ten-tag
+--   summary (legacy ON_SEARCH / non-compliant BPP). Callers fall back to
+--   a domain-side constructed ledger info for backward compatibility.
+buildLedgerInfoFromBreakups ::
+  (MonadFlow m) =>
+  [DFareBreakup.FareBreakup] ->
+  HighPrecMoney -> -- requestedDiscount (bookingDiscountAmount)
+  HighPrecMoney -> -- cashbackPayoutAmount (0 for DISCOUNT or no offer)
+  HighPrecMoney -> -- applicationFeeAmount (platform commission)
+  HighPrecMoney -> -- tipAmount (0 when tip is a separate PI add-on)
+  FinanceCtx ->
+  m (Maybe RidePaymentLedgerInfo)
+buildLedgerInfoFromBreakups breakups discount cashback appFee _tip ctx =
+  case RD.parseProjectFareParamsBreakup (breakupToPair <$> breakups) of
+    Nothing -> pure Nothing
+    Just b -> do
+      let r = RD.applyRideDiscount b discount
+          breakupPostDiscount =
+            b
+              { RD.discountApplicableRideFareTaxExclusive = r.postDiscountApplicableTaxExclusive,
+                RD.discountApplicableRideFareTax = r.postDiscountApplicableTax
+              }
+          info =
+            mkRidePaymentLedgerInfo
+              (breakupPostDiscount.discountApplicableRideFareTaxExclusive + breakupPostDiscount.nonDiscountApplicableRideFareTaxExclusive - appFee)
+              (breakupPostDiscount.discountApplicableRideFareTax + breakupPostDiscount.nonDiscountApplicableRideFareTax)
+              breakupPostDiscount.tollFareTaxExclusive
+              breakupPostDiscount.tollFareTax
+              breakupPostDiscount.parkingChargeTaxExclusive
+              breakupPostDiscount.parkingChargeTax
+              appFee
+              r.clampedDiscount
+              cashback
+              r.rideVatAbsorbedOnDiscount
+              -- A cancelled ride's own fee arrives as a base+tax pair. A due carried into a LATER
+              -- ride's fare arrives gross in the tax-exclusive slot with cancellationTax = 0, since
+              -- the BPP tracks such dues as one running total.
+              breakupPostDiscount.cancellationFeeTaxExclusive
+              breakupPostDiscount.cancellationTax
+              ctx
+      pure (Just info)
+  where
+    breakupToPair fb = (fb.description, fb.amount.amount)
+
+-- | Build offer stats input from a person. Resolves staticCustomerId from phone
+--   and passes raw identifiers to the payment library for entity resolution.
+buildOfferStatsInput ::
+  ( MonadFlow m,
+    EsqDBReplicaFlow m r,
+    EsqDBFlow m r,
+    CacheFlow m r,
+    EncFlow m r
+  ) =>
+  Person.Person ->
+  m DPayment.OfferStatsInput
+buildOfferStatsInput person = do
+  personPhone <- mapM decrypt person.mobileNumber
+  personEmail <- mapM decrypt person.email
+  staticCustomerId <- case personPhone of
+    Just phone -> SLUtils.getStaticCustomerId person phone
+    Nothing -> pure person.id.getId
+  pure
+    DPayment.OfferStatsInput
+      { personId = person.id.getId,
+        staticPersonId = if staticCustomerId /= person.id.getId then Just staticCustomerId else Nothing,
+        deviceId = person.deviceId,
+        email = personEmail,
+        mobile = personPhone
+      }
+
+-- | Retrieve the ride payment order for a rideId (domainEntityId = rideId).
+--   Returns only the ride PI order, NOT the tip PI order (which uses "tip:<rideId>").
+getOrderIdForRide :: (MonadFlow m, CacheFlow m r, EsqDBFlow m r) => Id Ride.Ride -> m (Maybe (Id DOrder.PaymentOrder))
+getOrderIdForRide rideId = do
+  mbOrder <- QPaymentOrder.findByDomainEntityId rideId.getId
+  pure $ (.id) <$> mbOrder
+
+-- | Inverse of getOrderIdForRide: a refund_request's orderId is a payment_order id, NOT a ride id.
+--   payment_order.id is an independently generated GUID; the rideId lives on the order's
+--   domainEntityId — never cast the order GUID to a ride GUID.
+getRideIdForOrder :: (MonadFlow m, CacheFlow m r, EsqDBFlow m r) => Id DOrder.PaymentOrder -> m (Maybe (Id Ride.Ride))
+getRideIdForOrder orderId = do
+  mbOrder <- QPaymentOrder.findById orderId
+  pure $ Id <$> ((.domainEntityId) =<< mbOrder)
+
+-- | Retrieve ALL payment orders for a ride (ride PI + tip PI).
+--   Useful for capture, refund, and status operations that need to act on all orders.
+getAllOrdersForRide :: (MonadFlow m, CacheFlow m r, EsqDBFlow m r) => Id Ride.Ride -> m [DOrder.PaymentOrder]
+getAllOrdersForRide rideId = do
+  mbRideOrder <- QPaymentOrder.findByDomainEntityId rideId.getId
+  mbTipOrder <- QPaymentOrder.findByDomainEntityId ("tip:" <> rideId.getId)
+  pure $ catMaybes [mbRideOrder, mbTipOrder]
+
+type MakePaymentIntentConstraints m r c =
+  ( MonadFlow m,
+    EncFlow m r,
+    EsqDBFlow m r,
+    CacheFlow m r,
+    ServiceFlow m r,
+    HasShortDurationRetryCfg r c,
+    HasKafkaProducer r,
+    FinanceBeamFlow.BeamFlow m r,
+    HasFlowEnv m r '["nwAddress" ::: BaseUrl],
+    Finance.HasActorInfo m r
+  )
+
+makePaymentIntent ::
+  MakePaymentIntentConstraints m r c =>
+  Id Merchant.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  Maybe DMPM.PaymentMode ->
+  Id Person.Person ->
+  Maybe (Id Ride.Ride) ->
+  Maybe (Id DOrder.PaymentOrder) ->
+  DOrder.PaymentServiceType ->
+  DPayment.CreatePaymentIntentServiceReq ->
+  Maybe RidePaymentLedgerInfo ->
+  m (Maybe DPayment.CreatePaymentIntentServiceResp)
+makePaymentIntent merchantId merchantOpCityId paymentMode personId mbRideId mbExistingOrderId paymentServiceType req mbLedgerInfo = do
+  logDebug $ "makePaymentIntent: rideId=" <> show ((.getId) <$> mbRideId) <> " existingOrderId=" <> show ((.getId) <$> mbExistingOrderId) <> " mbLedgerInfo=" <> show mbLedgerInfo
+  let effectiveAmount = req.amount - req.discountAmount
+  -- If offer fully covers the fare, skip payment service (treat as cash/free ride flow)
+  if effectiveAmount <= 0
+    then do
+      logInfo $ "Post-offer amount <= 0, skipping payment intent creation for ride: " <> show ((.getId) <$> mbRideId)
+      pure Nothing
+    else do
+      let commonMerchantId = cast @Merchant.Merchant @DPayment.Merchant merchantId
+          commonMerchantOperatingCityId = cast @DMOC.MerchantOperatingCity @DPayment.MerchantOperatingCity merchantOpCityId
+          commonPersonId = cast @Person.Person @DPayment.Person personId
+          createPaymentCall = TPayment.createPayment merchantId merchantOpCityId paymentMode Nothing
+          cancelPaymentCall piId = do
+            cancelResp <- TPayment.cancelPaymentIntent merchantId merchantOpCityId paymentMode piId
+            pure
+              PInterface.CreatePaymentResp
+                { paymentServiceOrderId = cancelResp.paymentIntentId,
+                  clientSecret = cancelResp.clientSecret,
+                  status = Payment.castToTransactionStatus cancelResp.status,
+                  sdkPayload = Nothing,
+                  paymentLinks = Nothing
+                }
+          incrementAuthCall piId amount applicationFeeAmount =
+            TPayment.updateAmountInPaymentIntent merchantId merchantOpCityId paymentMode piId amount applicationFeeAmount
+      nwAddress <- asks (.nwAddress)
+      let serviceReq =
+            DPayment.CreatePaymentServiceReq
+              { amount = effectiveAmount,
+                currency = req.currency,
+                customerId = req.customer,
+                customerEmail = fromMaybe "" req.receiptEmail,
+                customerPhone = "",
+                customerFirstName = Nothing,
+                customerLastName = Nothing,
+                paymentMethodId = Just req.paymentMethod,
+                driverAccountId = Just req.driverAccountId,
+                applicationFeeAmount = Just req.applicationFeeAmount,
+                receiptEmail = req.receiptEmail,
+                splitSettlementDetails = Nothing,
+                createMandate = Nothing,
+                mandateMaxAmount = Nothing,
+                mandateFrequency = Nothing,
+                mandateStartDate = Nothing,
+                mandateEndDate = Nothing,
+                metadataGatewayReferenceId = Nothing,
+                optionsGetUpiDeepLinks = Nothing,
+                metadataExpiryInMins = Nothing,
+                basket = Nothing,
+                paymentRules = Nothing,
+                webhookUrl = Just nwAddress,
+                udf1 = Nothing,
+                offerId = req.offerId <&> (.getId),
+                discountAmount = Just req.discountAmount,
+                payoutAmount = Nothing,
+                domainEntityId = (.getId) <$> mbRideId
+              }
+      mbServiceResp <- DPayment.createPaymentService commonMerchantId (Just commonMerchantOperatingCityId) commonPersonId mbExistingOrderId Nothing paymentServiceType serviceReq createPaymentCall cancelPaymentCall (Just incrementAuthCall)
+      serviceResp <- mbServiceResp & fromMaybeM (InternalError "Payment order expired, please try again")
+      let resp =
+            DPayment.CreatePaymentIntentServiceResp
+              { paymentIntentId = serviceResp.paymentServiceOrderId,
+                orderId = serviceResp.orderId
+              }
+      -- Create or update PENDING core ride ledger entries (RideFare, GST, PlatformFee) after successful payment creation.
+      -- Cancellation entries are handled via cancellationCharge/cancellationTax fields; tip entries are managed separately.
+      whenJust mbLedgerInfo $ \ledgerInfo ->
+        void $
+          RidePaymentFinance.upsertCoreRidePaymentLedger
+            ledgerInfo.financeCtx
+            ledgerInfo.rideFare
+            ledgerInfo.gstAmount
+            ledgerInfo.tollFare
+            ledgerInfo.tollVatAmount
+            ledgerInfo.parkingCharge
+            ledgerInfo.parkingChargeVat
+            ledgerInfo.platformFee
+            ledgerInfo.offerDiscountAmount
+            ledgerInfo.cashbackPayoutAmount
+            ledgerInfo.rideVatAbsorbedOnDiscount
+            ledgerInfo.cancellationCharge
+            ledgerInfo.cancellationTax
+      pure (Just resp)
+
+cancelPaymentIntent ::
+  ( MonadFlow m,
+    EncFlow m r,
+    EsqDBFlow m r,
+    CacheFlow m r,
+    HasShortDurationRetryCfg r c,
+    HasKafkaProducer r,
+    FinanceBeamFlow.BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id Merchant.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  Maybe DMPM.PaymentMode ->
+  Id Ride.Ride ->
+  m ()
+cancelPaymentIntent merchantId merchantOpCityId paymentMode rideId = do
+  let cancelPaymentIntentCall = TPayment.cancelPaymentIntent merchantId merchantOpCityId paymentMode
+      commonMerchantOperatingCityId = cast @DMOC.MerchantOperatingCity @DPayment.MerchantOperatingCity merchantOpCityId
+  -- Cancel at Stripe — tolerate failures (PI may already be cancelled/captured/expired)
+  handle (\(e :: SomeException) -> logError $ "Cancel payment intent failed for ride " <> rideId.getId <> ": " <> show e) $
+    DPayment.cancelPaymentIntentService commonMerchantOperatingCityId (cast @Ride.Ride @DPayment.Ride rideId) cancelPaymentIntentCall
+  -- Void unsettled ledger entries and ride invoice regardless of Stripe cancel result
+  void $ RidePaymentFinance.voidRidePaymentEntriesAndInvoice rideId.getId
+
+chargePaymentIntent ::
+  ( MonadFlow m,
+    EncFlow m r,
+    EsqDBFlow m r,
+    CacheFlow m r,
+    HasShortDurationRetryCfg r c,
+    HasKafkaProducer r,
+    FinanceBeamFlow.BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id Merchant.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  Maybe DMPM.PaymentMode ->
+  DOrder.PaymentServiceType ->
+  Payment.PaymentIntentId ->
+  Id Ride.Ride ->
+  Text -> -- settlement reason
+  Id Person.Person ->
+  DPayment.OfferStatsInput -> -- callback to build stats input (called only on success)
+  m Bool
+chargePaymentIntent merchantId merchantOpCityId paymentMode paymentServiceType paymentIntentId rideId settledReason personId offerStatsInput = do
+  let capturePaymentIntentCall = TPayment.capturePaymentIntent merchantId merchantOpCityId paymentMode
+      getPaymentIntentCall = TPayment.getPaymentIntent merchantId merchantOpCityId paymentMode
+      commonMerchantOperatingCityId = cast @DMOC.MerchantOperatingCity @DPayment.MerchantOperatingCity merchantOpCityId
+      applyOfferCall = TPayment.offerApply merchantId merchantOpCityId Nothing paymentServiceType Nothing Nothing
+  useDomainOffers <- TPayment.useDomainOffers merchantId merchantOpCityId Nothing paymentServiceType
+  ride <- QRide.findById rideId >>= fromMaybeM (RideNotFound rideId.getId)
+  charged <- DPayment.chargePaymentIntentService commonMerchantOperatingCityId paymentServiceType paymentIntentId capturePaymentIntentCall getPaymentIntentCall offerStatsInput useDomainOffers applyOfferCall ride.createdAt
+  -- Find all unsettled ledger entries (PENDING or DUE) for this ride
+  unsettledEntries <- RidePaymentFinance.findUnsettledRidePaymentEntries rideId.getId
+  unless (null unsettledEntries) $ do
+    let entryIds = map (.id) unsettledEntries
+    if charged
+      then do
+        -- Settle all unsettled entries on successful capture.
+        -- chargePaymentIntent fires only on the online (Stripe) capture path → isOnline=True.
+        let ctx =
+              RidePaymentFinance.buildRiderFinanceCtx
+                merchantId.getId
+                merchantOpCityId.getId
+                (Kernel.Prelude.head unsettledEntries).currency
+                True
+                personId.getId
+                rideId.getId
+                Nothing
+                Nothing
+                Nothing
+        result <- RidePaymentFinance.settleRidePaymentLedger ctx entryIds settledReason
+        case result of
+          Right () -> do
+            logInfo $ "Settled " <> show (length entryIds) <> " ledger entries for ride: " <> rideId.getId <> " reason: " <> settledReason
+            -- markRideInvoicePaid now closes both the Ride and (if any) RideCancellation invoice.
+            RidePaymentFinance.markRideInvoicePaid rideId.getId
+          Left err -> logError $ "Failed to settle ledger entries for ride " <> rideId.getId <> ": " <> show err
+      else do
+        -- Mark entries as DUE on failed capture so getDueAmount picks them up
+        RidePaymentFinance.markEntriesAsDue entryIds
+        RidePaymentFinance.markRideInvoiceIssued rideId.getId
+        logWarning $ "Marked " <> show (length entryIds) <> " ledger entries as DUE for ride: " <> rideId.getId <> " (capture failed)"
+  pure charged
+
+-- | Unified refund wrapper. Uses refundPaymentService under the hood.
+makeRefundPayment ::
+  ( EncFlow m r,
+    EsqDBFlow m r,
+    CacheFlow m r,
+    HasShortDurationRetryCfg r c,
+    HasKafkaProducer r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id Merchant.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  Maybe DMPM.PaymentMode ->
+  DPayment.RefundPaymentServiceReq ->
+  m (Maybe Payment.RefundPaymentResp)
+makeRefundPayment merchantId merchantOpCityId paymentMode refundReq = do
+  let refundCall = TPayment.refundPayment merchantId merchantOpCityId paymentMode Nothing
+  DPayment.refundPaymentService refundReq refundCall
+
+-- | Refresh status for the given Refunds row. Nothing in mbRefundsId = no attempt yet → no refresh.
+getRefundStatusForOrder ::
+  ( EncFlow m r,
+    EsqDBFlow m r,
+    CacheFlow m r,
+    HasShortDurationRetryCfg r c,
+    HasKafkaProducer r,
+    Finance.HasActorInfo m r
+  ) =>
+  Id Merchant.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  Maybe DMPM.PaymentMode ->
+  Id DOrder.PaymentOrder ->
+  Maybe (Id DRefunds.Refunds) ->
+  m (Maybe Payment.RefundPaymentResp)
+getRefundStatusForOrder merchantId merchantOpCityId paymentMode orderId mbRefundsId = do
+  let getRefundStatusCall = TPayment.getRefundStatus merchantId merchantOpCityId paymentMode
+      commonMerchantOperatingCityId = cast @DMOC.MerchantOperatingCity @DPayment.MerchantOperatingCity merchantOpCityId
+  DPayment.getRefundStatusService orderId mbRefundsId commonMerchantOperatingCityId getRefundStatusCall
+
+paymentErrorHandler ::
+  ( EncFlow m r,
+    Esq.EsqDBReplicaFlow m r,
+    EsqDBFlow m r,
+    CacheFlow m r,
+    HasFlowEnv m r '["kafkaProducerTools" ::: KafkaProducerTools],
+    HasFlowEnv m r '["ondcTokenHashMap" ::: HM.HashMap KeyConfig TokenConfig],
+    HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl],
+    HasFlowEnv m r '["nwAddress" ::: BaseUrl],
+    HasShortDurationRetryCfg r c,
+    HasKafkaProducer r
+  ) =>
+  Booking.Booking ->
+  SomeException ->
+  m ()
+paymentErrorHandler booking exec = do
+  let err = fromException @Payment.StripeError exec
+  cancelBooking err
+  where
+    cancelBooking err = do
+      let req =
+            DCancel.CancelReq
+              { reasonCode = SCR.CancellationReasonCode (maybe "UNKOWN_ERROR" toErrorCode err),
+                reasonStage = SCR.OnAssign,
+                additionalInfo = err >>= toMessage,
+                reallocate = Nothing,
+                blockOnCancellationRate = Nothing,
+                abortPaytmEdc = Nothing
+              }
+      dCancelRes <- DCancel.cancel booking Nothing req SBCR.ByApplication
+      void $ withShortRetry $ CallBPP.cancelV2 booking.merchantId dCancelRes.bppUrl =<< ACL.buildCancelReqV2 dCancelRes req.reallocate
+
+validatePaymentInstrument :: (MonadThrow m, Log m) => Merchant.Merchant -> Maybe DMPM.PaymentInstrument -> Maybe Payment.PaymentMethodId -> m ()
+validatePaymentInstrument merchant mbPaymentInstrument mbPaymentMethodId = do
+  if merchant.onlinePayment
+    then do
+      let paymentInstrument = fromMaybe (DMPM.Card DMPM.DefaultCardType) mbPaymentInstrument
+      case paymentInstrument of
+        DMPM.Card _ -> when (isNothing mbPaymentMethodId) $ throwError PaymentMethodRequired
+        DMPM.Cash -> pure ()
+        _ -> throwError (InvalidRequest "Only Card and Cash payment instruments supported")
+    else do
+      let paymentInstrument = fromMaybe DMPM.Cash mbPaymentInstrument
+      case paymentInstrument of
+        DMPM.Cash -> pure ()
+        DMPM.BoothOnline -> pure ()
+        _ -> throwError (InvalidRequest "Only Cash and BoothOnline payment instruments supported")
+
+isOnlinePayment :: Maybe Merchant.Merchant -> Booking.Booking -> Bool
+isOnlinePayment mbMerchant booking = maybe False (.onlinePayment) mbMerchant && booking.paymentInstrument /= Just DMPM.Cash
+
+-- in case if person.paymentMode was already changed, we use booking.paymentMode for old completed rides
+getCustomerAndPaymentMethod :: (MonadFlow m, CacheFlow m r, EsqDBFlow m r) => Booking.Booking -> Person.Person -> m (Payment.CustomerId, Payment.PaymentMethodId)
+getCustomerAndPaymentMethod booking person = do
+  let paymentMode = fromMaybe DMPM.LIVE booking.paymentMode
+  logDebug $ "getCustomerAndPaymentMethod: " <> show booking.id.getId <> " " <> show person.id.getId <> " " <> show paymentMode
+  paymentCustomer <- QPaymentCustomer.findByPersonIdAndPaymentMode (Just person.id) (Just paymentMode) >>= fromMaybeM (PersonFieldNotPresent "paymentCustomer")
+  logDebug $ "paymentCustomer: " <> show paymentCustomer
+  paymentMethodId <- paymentCustomer.defaultPaymentMethodId & fromMaybeM (PersonFieldNotPresent "defaultPaymentMethodId")
+  pure (paymentCustomer.customerId, paymentMethodId)
+
+updateDefaultPersonPaymentMethodId ::
+  (MonadFlow m, CacheFlow m r, EsqDBFlow m r) =>
+  Person.Person ->
+  Payment.PaymentMethodId ->
+  m ()
+updateDefaultPersonPaymentMethodId person paymentMethodId = do
+  let paymentMode = fromMaybe DMPM.LIVE person.paymentMode
+  QPaymentCustomer.updateDefaultPaymentMethodId (Just paymentMethodId) (Just person.id) (Just paymentMode)
+
+-------------------------------------------------------------------------------------------------------
+------------------------------------- Pending Payment Validation --------------------------------------
+-------------------------------------------------------------------------------------------------------
+
+paymentJobExecLockKey :: Text -> Text
+paymentJobExecLockKey rideId = "PaymentJobExec:RideId-" <> rideId
+
+-- | Capture pending payment before allowing new ride.
+-- Finds rides with uncaptured payment (Initiated or NotInitiated), attempts capture.
+-- Success -> allow new ride. Failure -> block ride; user can retry via Get Dues / Clear Dues.
+filterPendingDuesEntries :: [LE.LedgerEntry] -> [Text] -> [LE.LedgerEntry]
+filterPendingDuesEntries entries excludedRefTypes =
+  entries
+    & filter (\e -> e.status == LE.DUE)
+    & filter (\e -> e.referenceType `notElem` excludedRefTypes)
+
+getDuesForPerson ::
+  ( MonadFlow m,
+    EsqDBFlow m r,
+    EsqDBReplicaFlow m r,
+    CacheFlow m r,
+    FinanceBeamFlow.BeamFlow m r
+  ) =>
+  Person.Person ->
+  m APIRidePayment.GetDueAmountResp
+getDuesForPerson person = do
+  riderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = person.merchantOperatingCityId.getId}) (Just (CQRC.findByMerchantOperatingCityId person.merchantOperatingCityId))
+  let excludedPurposes = fromMaybe [] (riderConfig >>= (.duesExcludedPaymentPurposes))
+  mbLatestRideBooking <- QRide.findMostRecentRideForRider person.id
+  case mbLatestRideBooking of
+    Nothing -> pure noDues
+    Just (ride, _) -> do
+      pendingEntries <- RidePaymentFinance.findDueRidePaymentEntries ride.id.getId
+      let filteredEntries = filterPendingDuesEntries pendingEntries excludedPurposes
+      if null filteredEntries
+        then pure noDues
+        else do
+          let totalAmount = sum $ map (.amount) filteredEntries
+              currency = Kernel.Prelude.head filteredEntries & (.currency)
+          logInfo $
+            "AUDIT: Get Dues - person_id: " <> person.id.getId
+              <> ", ride_id: "
+              <> ride.id.getId
+              <> ", due_invoices: "
+              <> show (length filteredEntries)
+              <> ", total_amount: "
+              <> show totalAmount
+          pure $
+            APIRidePayment.GetDueAmountResp
+              { rides = [APIRidePayment.DueAmountRide {rideId = ride.id, amount = totalAmount}],
+                totalDueAmount = totalAmount,
+                rideFareDue = RidePaymentFinance.sumByRefType RidePaymentFinance.ridePaymentRefRideFare filteredEntries,
+                gstDue = RidePaymentFinance.sumByRefType RidePaymentFinance.ridePaymentRefGST filteredEntries,
+                tollFareDue = RidePaymentFinance.sumByRefType RidePaymentFinance.ridePaymentRefTollFare filteredEntries,
+                tollVatDue = RidePaymentFinance.sumByRefType RidePaymentFinance.ridePaymentRefTollVAT filteredEntries,
+                platformFeeDue = RidePaymentFinance.sumByRefType RidePaymentFinance.ridePaymentRefPlatformFee filteredEntries,
+                currency = Just currency
+              }
+  where
+    noDues =
+      APIRidePayment.GetDueAmountResp
+        { rides = [],
+          totalDueAmount = 0,
+          rideFareDue = 0,
+          gstDue = 0,
+          tollFareDue = 0,
+          tollVatDue = 0,
+          platformFeeDue = 0,
+          currency = Nothing
+        }
+
+getDefaultPaymentMethodForDues ::
+  (MonadFlow m, EsqDBFlow m r, CacheFlow m r) =>
+  Person.Person ->
+  m Payment.PaymentMethodId
+getDefaultPaymentMethodForDues p = do
+  let paymentMode = fromMaybe DMPM.LIVE p.paymentMode
+  paymentCustomer <- QPaymentCustomer.findByPersonIdAndPaymentMode (Just p.id) (Just paymentMode) >>= fromMaybeM (InvalidRequest "No payment customer found.")
+  paymentCustomer.defaultPaymentMethodId & fromMaybeM (InvalidRequest "No default payment method found. Please provide a payment method.")
+
+clearDuesForPerson ::
+  ( MakePaymentIntentConstraints m r c,
+    EsqDBReplicaFlow m r,
+    CoreMetrics m,
+    HasRequestId r,
+    HasFlowEnv m r '["internalEndPointHashMap" ::: HM.HashMap BaseUrl BaseUrl]
+  ) =>
+  Person.Person ->
+  APIRidePayment.GetDueAmountResp ->
+  Currency ->
+  Payment.PaymentMethodId ->
+  m APIRidePayment.ClearDuesResp
+clearDuesForPerson person duesResp currency paymentMethodId = do
+  rideId <- listToMaybe duesResp.rides <&> (.rideId) & fromMaybeM (InvalidRequest "No ride id found")
+  Redis.withWaitAndLockRedis (paymentJobExecLockKey rideId.getId) 10 20 $ do
+    ride <- QRide.findById rideId >>= fromMaybeM (RideNotFound rideId.getId)
+    pendingEntries <- RidePaymentFinance.findDueRidePaymentEntries rideId.getId
+    booking <- QBooking.findById ride.bookingId >>= fromMaybeM (BookingNotFound ride.bookingId.getId)
+    mbRideOfferEntity' <- QOfferEntity.findByEntityIdAndEntityType rideId.getId DOfferEntity.RIDE
+    let debtDiscountAmount = maybe 0 (.discountAmount) mbRideOfferEntity'
+    (customerPaymentId, _) <- getCustomerAndPaymentMethod booking person
+    driverAccountId <- ride.driverAccountId & fromMaybeM (RideFieldNotPresent "driverAccountId")
+    email <- mapM decrypt person.email
+    let debtApplicationFeeAmount = fromMaybe 0 ride.commission
+    let createPaymentIntentServiceReq =
+          DPayment.CreatePaymentIntentServiceReq
+            { amount = duesResp.totalDueAmount,
+              applicationFeeAmount = debtApplicationFeeAmount,
+              discountAmount = debtDiscountAmount,
+              offerId = Nothing,
+              currency = currency,
+              customer = customerPaymentId,
+              paymentMethod = paymentMethodId,
+              receiptEmail = email,
+              driverAccountId
+            }
+    let debtLedgerCtx = RidePaymentFinance.buildRiderFinanceCtx booking.merchantId.getId booking.merchantOperatingCityId.getId currency True person.id.getId rideId.getId Nothing Nothing (listToMaybe $ catMaybes [booking.fromLocation.address.area, booking.fromLocation.address.street, booking.fromLocation.address.city])
+        debtLedgerInfo =
+          mkRidePaymentLedgerInfo
+            (duesResp.rideFareDue - duesResp.platformFeeDue)
+            duesResp.gstDue
+            duesResp.tollFareDue
+            duesResp.tollVatDue
+            0
+            0
+            duesResp.platformFeeDue
+            debtDiscountAmount
+            0
+            0
+            0
+            0
+            debtLedgerCtx
+    paymentIntentResp <-
+      makePaymentIntent
+        person.merchantId
+        booking.merchantOperatingCityId
+        booking.paymentMode
+        person.id
+        (Just rideId)
+        Nothing
+        DOrder.RideHailing
+        createPaymentIntentServiceReq
+        (Just debtLedgerInfo)
+        >>= fromMaybeM (InternalError "Payment order expired, please try again")
+    logInfo $
+      "AUDIT: Debt settlement for ride " <> rideId.getId
+        <> ", amount: "
+        <> show duesResp.totalDueAmount
+        <> ", pending_entries: "
+        <> show (length pendingEntries)
+    captureResult <-
+      withTryCatch "clearDuesForPerson:chargePaymentIntent" $ do
+        offerStatsInput <- buildOfferStatsInput person
+        chargePaymentIntent
+          person.merchantId
+          booking.merchantOperatingCityId
+          booking.paymentMode
+          DOrder.RideHailing
+          paymentIntentResp.paymentIntentId
+          rideId
+          RidePaymentFinance.settledReasonDebtSettlement
+          booking.riderId
+          offerStatsInput
+    case captureResult of
+      Right True -> do
+        QRide.markPaymentStatus Ride.Completed rideId
+        whenJust ride.cancellationChargesOnCancel $ \_ -> do
+          mbMerchant <- CQM.findById person.merchantId
+          mbMobileNumber <- mapM decrypt person.mobileNumber
+          case (mbMerchant, mbMobileNumber) of
+            (Just merchant, Just mobileNumber) ->
+              void $
+                withTryCatch "clearDuesForPerson:syncCancellationLedger" $
+                  CallBPPInternal.customerCancellationDuesSync
+                    merchant.driverOfferApiKey
+                    merchant.driverOfferBaseUrl
+                    merchant.driverOfferMerchantId
+                    mobileNumber
+                    (fromMaybe "+91" person.mobileCountryCode)
+                    person.currentCity
+                    CallBPPInternal.SettleCancellationLedger
+                    ride.bppRideId.getId
+            _ -> logError $ "clearDuesForPerson: skipping cancellation ledger sync, missing merchant or mobile number for rideId: " <> rideId.getId
+        logInfo $
+          "AUDIT: Debt settlement CAPTURED - order_id: " <> paymentIntentResp.orderId.getId
+            <> ", amount: "
+            <> show duesResp.totalDueAmount
+            <> ", settled_entries: "
+            <> show (length pendingEntries)
+        pure $
+          APIRidePayment.ClearDuesResp
+            { orderId = Just paymentIntentResp.orderId,
+              status = APIRidePayment.SUCCESS,
+              amountCleared = duesResp.totalDueAmount,
+              currency = currency,
+              ridesCleared = [rideId],
+              errorMessage = Nothing
+            }
+      Right False -> do
+        logError $ "AUDIT: Debt settlement FAILED - order_id: " <> paymentIntentResp.orderId.getId <> ", ride_id: " <> rideId.getId
+        pure $
+          APIRidePayment.ClearDuesResp
+            { orderId = Just paymentIntentResp.orderId,
+              status = APIRidePayment.FAILED,
+              amountCleared = 0,
+              currency = currency,
+              ridesCleared = [],
+              errorMessage = Just "Payment failed. Please try again."
+            }
+      Left (err :: SomeException) -> do
+        let userFriendlyMessage = mapPaymentErrorToUserMessage (show err)
+        logError $
+          "AUDIT: Debt settlement EXCEPTION - order_id: " <> paymentIntentResp.orderId.getId
+            <> ", ride_id: "
+            <> rideId.getId
+            <> ", error: "
+            <> show err
+            <> " (parent invoices remain unsettled)"
+        pure $
+          APIRidePayment.ClearDuesResp
+            { orderId = Just paymentIntentResp.orderId,
+              status = APIRidePayment.FAILED,
+              amountCleared = 0,
+              currency = currency,
+              ridesCleared = [],
+              errorMessage = Just userFriendlyMessage
+            }
+  where
+    mapPaymentErrorToUserMessage :: Text -> Text
+    mapPaymentErrorToUserMessage errMsg
+      | "insufficient" `T.isInfixOf` T.toLower errMsg = "Payment failed due to insufficient funds. Please check your payment method."
+      | "declined" `T.isInfixOf` T.toLower errMsg = "Payment was declined by your bank. Please try a different payment method."
+      | "expired" `T.isInfixOf` T.toLower errMsg = "Payment method has expired. Please update your payment method."
+      | "invalid" `T.isInfixOf` T.toLower errMsg = "Invalid payment method. Please check your payment details."
+      | "timeout" `T.isInfixOf` T.toLower errMsg = "Payment request timed out. Please try again."
+      | "network" `T.isInfixOf` T.toLower errMsg = "Network error occurred. Please check your connection and try again."
+      | otherwise = "Payment failed. Please try again or contact support if the issue persists."
+
+capturePendingPaymentIfExists ::
+  ( EsqDBFlow m r,
+    EsqDBReplicaFlow m r,
+    CacheFlow m r,
+    EncFlow m r,
+    HasShortDurationRetryCfg r c,
+    HasKafkaProducer r,
+    FinanceBeamFlow.BeamFlow m r,
+    Finance.HasActorInfo m r
+  ) =>
+  Person.Person ->
+  Id DMOC.MerchantOperatingCity ->
+  m ()
+capturePendingPaymentIfExists person merchantOperatingCityId = do
+  -- Find most recent ride for this rider
+  mbLatestRideBooking <- QRide.findMostRecentRideForRider person.id
+  case mbLatestRideBooking of
+    Nothing -> pure () -- No rides, allow new ride
+    Just (ride, booking) ->
+      Redis.withWaitOnLockRedisWithExpiry (paymentJobExecLockKey ride.id.getId) 10 20 $ do
+        -- 1. If there are already DUE entries (previous capture failed), block immediately
+        existingDues <- RidePaymentFinance.findDueRidePaymentEntries ride.id.getId
+        unless (null existingDues) $ do
+          let dueAmount = sum $ map (.amount) existingDues
+          logError $ "Blocking new ride: rider has " <> show (length existingDues) <> " DUE entries totaling " <> show dueAmount <> " for ride " <> ride.id.getId
+          throwError $ InvalidRequest "You have pending dues from a previous ride. Please clear your dues before booking a new ride."
+
+        -- 2. If there are PENDING entries, attempt capture now
+        pendingEntries <- RidePaymentFinance.findPendingRidePaymentEntries ride.id.getId
+        unless (null pendingEntries) $ do
+          let totalPending = sum $ map (.amount) pendingEntries
+          logInfo $ "Found " <> show (length pendingEntries) <> " PENDING ledger entries totaling " <> show totalPending <> " for ride " <> ride.id.getId <> ", attempting capture"
+
+          mbOrderId <- getOrderIdForRide ride.id
+          whenJust mbOrderId $ \orderId -> do
+            mbOrder <- QPaymentOrder.findById orderId
+            whenJust mbOrder $ \order -> do
+              let paymentIntentId = order.paymentServiceOrderId
+              -- chargePaymentIntent will mark entries as DUE on failure, SETTLED on success
+              offerStatsInput <- buildOfferStatsInput person
+              paymentCharged <- chargePaymentIntent booking.merchantId merchantOperatingCityId booking.paymentMode DOrder.RideHailing paymentIntentId ride.id RidePaymentFinance.settledReasonRidePayment booking.riderId offerStatsInput
+              if paymentCharged
+                then do
+                  logInfo $ "Successfully captured payment for ride " <> ride.id.getId
+                  QRide.markPaymentStatus Ride.Completed ride.id
+                else do
+                  logError $ "Failed to capture payment for ride " <> ride.id.getId
+                  QRide.markPaymentStatus Ride.Failed ride.id
+                  -- chargePaymentIntent already marked entries as DUE, now block
+                  throwError $ InvalidRequest "You have pending dues from a previous ride. Please clear your dues before booking a new ride."
+
+zeroEffectivePaymentDueToOffer ::
+  (MonadFlow m, EncFlow m r, CacheFlow m r, EsqDBFlow m r, EsqDBReplicaFlow m r, FinanceBeamFlow.BeamFlow m r, HasKafkaProducer r, Finance.HasActorInfo m r) =>
+  Id Merchant.Merchant ->
+  Id DMOC.MerchantOperatingCity ->
+  Id Ride.Ride ->
+  Person.Person ->
+  Maybe Text ->
+  Currency ->
+  HighPrecMoney -> -- discountApplicableFareAmountTaxIncl: discount-applicable ride fare inclusive of its VAT (same basis offer was applied against)
+  HighPrecMoney -> -- discountAmount (from ride/booking; matches what's persisted)
+  RidePaymentLedgerInfo ->
+  Booking.Booking ->
+  m ()
+zeroEffectivePaymentDueToOffer merchantId merchantOperatingCityId rideId person mbOfferId currency discountApplicableFareAmountTaxIncl discountAmount li booking = do
+  -- Offer fully covers fare, no payment needed — create SETTLED ledger entries
+  logInfo $ "Post-offer amount <= 0, skipping charge for ride: " <> rideId.getId
+  logDebug $ "zeroEffectivePaymentDueToOffer: rideId=" <> rideId.getId <> " mbOfferId=" <> show mbOfferId <> " ledgerInfo=" <> show li
+  whenJust mbOfferId $ \offerId -> do
+    result <-
+      RidePaymentFinance.createFullyDiscountedRidePaymentLedger
+        li.financeCtx
+        li.rideFare
+        li.gstAmount
+        li.tollFare
+        li.tollVatAmount
+        li.parkingCharge
+        li.parkingChargeVat
+        li.platformFee
+        discountAmount
+        li.rideVatAbsorbedOnDiscount
+    case result of
+      Right _ -> logInfo $ "Created SETTLED ledger for fully discounted ride: " <> rideId.getId
+      Left err -> logError $ "Failed to create fully discounted ledger: " <> show err
+    riderConfig <- getConfig (RiderConfigDimensions {merchantOperatingCityId = merchantOperatingCityId.getId}) (Just (CQRC.findByMerchantOperatingCityId merchantOperatingCityId))
+    let enableRideHailingOffers = maybe False (.enableRideHailingOffers) riderConfig
+    when enableRideHailingOffers $ do
+      mbRideOfferEntity <- QOfferEntity.findByEntityIdAndEntityType rideId.getId DOfferEntity.RIDE
+      whenJust mbRideOfferEntity $ \rideOfferEntity -> do
+        useDomainOffers <- TPayment.useDomainOffers merchantId merchantOperatingCityId Nothing DOrder.RideHailing
+        let applyOfferCall = TPayment.offerApply merchantId merchantOperatingCityId Nothing DOrder.RideHailing Nothing person.clientSdkVersion
+        offerStatsInput <- buildOfferStatsInput person
+        void $
+          withTryCatch "applyOfferWithoutPayment:zeroEffective" $ do
+            let mbProduct = Just (show booking.vehicleServiceTierType, discountApplicableFareAmountTaxIncl)
+            DPayment.applyOfferWithoutPaymentService rideId.getId offerId rideOfferEntity.offerCode offerStatsInput (Just discountAmount) Nothing discountApplicableFareAmountTaxIncl currency merchantId.getId merchantOperatingCityId.getId useDomainOffers applyOfferCall booking.createdAt mbProduct
+  QRide.markPaymentStatus Ride.Completed rideId

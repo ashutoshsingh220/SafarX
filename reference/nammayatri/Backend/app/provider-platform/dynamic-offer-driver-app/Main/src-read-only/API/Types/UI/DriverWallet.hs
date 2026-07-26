@@ -1,0 +1,113 @@
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
+module API.Types.UI.DriverWallet where
+
+import Data.Aeson
+import Data.OpenApi (ToSchema)
+import qualified Data.Time
+import qualified Domain.Types.WalletTransaction
+import EulerHS.Prelude hiding (id)
+import qualified Kernel.Prelude
+import qualified Kernel.Types.Common
+import qualified Kernel.Types.Id
+import Kernel.Utils.TH
+import qualified Lib.Finance.Domain.Types.LedgerEntry
+import qualified Lib.Payment.Domain.Types.Common
+import qualified Lib.Payment.Domain.Types.PaymentOrder
+import qualified Lib.Payment.Domain.Types.PayoutRequest
+import Servant
+import Tools.Auth
+
+data AggregationLevel
+  = Day
+  | Week
+  | Month
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema, Kernel.Prelude.ToParamSchema)
+
+data PaymentOrderInfo = PaymentOrderInfo {id :: Kernel.Types.Id.Id Lib.Payment.Domain.Types.PaymentOrder.PaymentOrder, walletStatus :: Domain.Types.WalletTransaction.WalletTransactionStatus}
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data PayoutHistoryItem = PayoutHistoryItem
+  { amount :: Kernel.Prelude.Maybe Kernel.Types.Common.HighPrecMoney,
+    entityName :: Kernel.Prelude.Maybe Lib.Payment.Domain.Types.Common.EntityName,
+    payoutFee :: Kernel.Types.Common.HighPrecMoney,
+    payoutMethod :: Kernel.Prelude.Text,
+    payoutVpa :: Kernel.Prelude.Maybe Kernel.Prelude.Text,
+    status :: Lib.Payment.Domain.Types.PayoutRequest.PayoutRequestStatus,
+    timestamp :: Data.Time.UTCTime
+  }
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data PayoutHistoryResponse = PayoutHistoryResponse
+  { items :: [PayoutHistoryItem],
+    lastPayout :: Kernel.Prelude.Maybe PayoutHistoryItem,
+    totalPaidOut :: Kernel.Types.Common.HighPrecMoney,
+    totalPending :: Kernel.Types.Common.HighPrecMoney
+  }
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data TopUpRequest = TopUpRequest {amount :: Kernel.Types.Common.HighPrecMoney, purpose :: Kernel.Prelude.Maybe Kernel.Prelude.Text}
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data WalletAggregateBucket = WalletAggregateBucket
+  { deductions :: Kernel.Types.Common.HighPrecMoney,
+    earnings :: Kernel.Types.Common.HighPrecMoney,
+    from :: Data.Time.UTCTime,
+    netEarnings :: Kernel.Types.Common.HighPrecMoney,
+    to :: Data.Time.UTCTime
+  }
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data WalletBalanceResponse = WalletBalanceResponse {currentBalance :: Kernel.Types.Common.HighPrecMoney}
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data WalletItem = WalletItem
+  { itemName :: Kernel.Prelude.Text,
+    itemReference :: Kernel.Prelude.Text,
+    itemValue :: Kernel.Types.Common.HighPrecMoney,
+    nonRedeemableBalance :: Kernel.Types.Common.HighPrecMoney,
+    redeemableBalance :: Kernel.Types.Common.HighPrecMoney
+  }
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data WalletItemGroup = WalletItemGroup {items :: [WalletItem], totalAmount :: Kernel.Types.Common.HighPrecMoney}
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data WalletSummaryResponse = WalletSummaryResponse
+  { additions :: WalletItemGroup,
+    agg :: [WalletAggregateBucket],
+    currentBalance :: Kernel.Types.Common.HighPrecMoney,
+    deductions :: WalletItemGroup,
+    netEarningsBalance :: Kernel.Types.Common.HighPrecMoney,
+    nonRedeemableBalance :: Kernel.Types.Common.HighPrecMoney,
+    redeemableBalance :: Kernel.Types.Common.HighPrecMoney
+  }
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data WalletTransactionHistoryItem = WalletTransactionHistoryItem
+  { date :: Data.Time.UTCTime,
+    isCredit :: Kernel.Prelude.Bool,
+    itemName :: Kernel.Prelude.Text,
+    itemReference :: Kernel.Prelude.Text,
+    itemValue :: Kernel.Types.Common.HighPrecMoney,
+    paymentOrder :: Kernel.Prelude.Maybe PaymentOrderInfo,
+    status :: Lib.Finance.Domain.Types.LedgerEntry.EntryStatus
+  }
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+data WalletTransactionHistoryResponse = WalletTransactionHistoryResponse {items :: [WalletTransactionHistoryItem]}
+  deriving stock (Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
+$(mkHttpInstancesForEnum ''AggregationLevel)
