@@ -4,6 +4,14 @@ env/
 ENV/
 *.venv
 
+# Local environment files (contain credentials; never commit)
+.env
+.env.*
+!.env.example
+
+# Generated machine-learning artifacts
+*.pkl
+
 # Python
 __pycache__/
 *.py[cod]

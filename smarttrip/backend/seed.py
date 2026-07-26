@@ -1,19 +1,12 @@
 import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from app.config import settings
-from app.models import Base, Location, Bus, FeederCorridor
+from sqlalchemy import func, select
+
+from app.database import async_session
+from app.models import Bus, FeederCorridor, Location
 
 async def seed_data():
-    engine = create_async_engine(settings.DATABASE_URL, echo=True)
-    async_session = async_sessionmaker(engine, expire_on_commit=False)
-
-    async with engine.begin() as conn:
-        # We assume tables are created by alembic or here for testing
-        await conn.run_sync(Base.metadata.create_all)
-
     async with async_session() as session:
-        # Check if already seeded
-        result = await session.execute(text("SELECT COUNT(*) FROM locations"))
+        result = await session.execute(select(func.count(Location.id)))
         if result.scalar() > 0:
             print("Data already seeded")
             return
@@ -40,5 +33,4 @@ async def seed_data():
         print("Successfully seeded DB with Pune/Bangalore points, 40 buses, and feeder corridors.")
 
 if __name__ == "__main__":
-    from sqlalchemy import text
     asyncio.run(seed_data())

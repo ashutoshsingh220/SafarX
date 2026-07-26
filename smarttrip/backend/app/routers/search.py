@@ -12,5 +12,5 @@ async def perform_search(request: SearchRequest, db: AsyncSession = Depends(get_
     try:
         journeys = await search_journeys(db, request)
         return journeys
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

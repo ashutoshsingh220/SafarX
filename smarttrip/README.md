@@ -20,12 +20,38 @@ A next-generation door-to-door travel assistant combining multi-modal routing, d
 
 ## Quickstart
 
-To run the entire platform locally:
+### Prerequisites
+
+- Docker Desktop, with the Docker Engine running.
+- Python 3.11 or newer (Python 3.12 is used by the API container).
+
+The backend dependency list is versioned at `backend/requirements.txt`. Each developer should install it into a local virtual environment; do not commit `.venv/` or `.env`.
+
+### Windows backend setup
+
+Run these commands in PowerShell:
+
+```powershell
+cd "D:\projects\Smart Trip AI\smarttrip\backend"
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+Add real keys only to the local `.env` file. With the default mock flags enabled, no external API is called.
+
+### Start the stack
 
 ```bash
 cd smarttrip
-./run_demo.sh
+docker compose up -d --build
+docker compose exec api alembic upgrade head
+docker compose exec api python seed.py
 ```
+
+Then open `http://localhost:8000/docs` or call `http://localhost:8000/health`.
 
 ## Testing the AI Agent
 Open a new terminal while the backend is running:

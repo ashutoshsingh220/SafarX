@@ -1,53 +1,67 @@
-import pytest
 from datetime import datetime, timedelta
-from app.services.pricing import apply_pricing_strategies
 
-def test_standard_pricing():
-    now = datetime.now()
-    res = apply_pricing_strategies(
-        feeder_fare=100.0,
-        bus_fare=1500.0,
-        is_smarttrip_plus=False,
-        booking_time=now,
-        travel_time=now + timedelta(hours=2),
-        is_high_demand_corridor=False
-    )
-    assert res["original_feeder_fare"] == 100.0
-    assert res["bus_commission"] == 75.0 # 5% of 1500
-    # Subsidy: min(75*0.5, 100*0.4) = min(37.5, 40) = 37.5
-    assert res["subsidy"] == 37.5
-    assert res["final_ride_cost"] == 100.0 - 37.5
-    assert res["bundle_price"] == 1500.0 + 62.5
+import pytest
 
-def test_smarttrip_plus_and_early():
-    now = datetime.now()
-    res = apply_pricing_strategies(
-        feeder_fare=150.0,
-        bus_fare=2000.0,
-        is_smarttrip_plus=True,
-        booking_time=now,
-        travel_time=now + timedelta(hours=8), # > 6 hours
-        is_high_demand_corridor=False
-    )
-    # S5: 150 * 0.9 = 135
-    # S4: cap at 20 -> 20.0
-    # S2: commission = 100. Subsidy = min(50, 20*0.4) = 8.0
-    assert res["subsidy"] == 8.0
-    assert res["final_ride_cost"] == 12.0
-    assert res["bundle_price"] == 2012.0
+from app.services.pricing import apply_pricing_strategies, calculate_bus_commission
 
-def test_high_demand_corridor():
-    now = datetime.now()
-    res = apply_pricing_strategies(
-        feeder_fare=120.0,
-        bus_fare=1000.0,
-        is_smarttrip_plus=False,
-        booking_time=now,
-        travel_time=now + timedelta(hours=1),
-        is_high_demand_corridor=True
-    )
-    # S1: ride_cost = 50.0
-    # S2: commission = 50. Subsidy = min(25, 50*0.4) = 20.0
-    assert res["subsidy"] == 20.0
-    assert res["final_ride_cost"] == 30.0
-    assert res["bundle_price"] == 1030.0
+
+NOW = datetime(2026, 8, 1, 9, 0)
+
+
+def price(**overrides):
+    values = {
+        "feeder_fare": 100.0,
+        "bus_fare": 1_500.0,
+        "is_smarttrip_plus": False,
+        "booking_time": NOW,
+        "travel_time": NOW + timedelta(hours=2),
+        "is_high_demand_corridor": False,
+    }
+    values.update(overrides)
+    return apply_pricing_strategies(**values)
+
+
+def test_s1_high_demand_corridor_caps_feeder_at_fifty() -> None:
+    result = price(feeder_fare=120.0, is_high_demand_corridor=True)
+
+    assert result.feeder_after_shuttle == 50.0
+    assert result.applied_feeder_shuttle is True
+
+
+def test_s2_cross_subsidy_uses_the_lower_of_both_caps() -> None:
+    result = price(feeder_fare=100.0, bus_fare=1_500.0)
+
+    assert result.bus_commission == 75.0
+    assert result.subsidy == 37.5
+    assert result.final_ride_cost == 62.5
+
+
+def test_s3_bundle_price_is_bus_plus_discounted_last_mile() -> None:
+    result = price(feeder_fare=100.0, bus_fare=1_500.0)
+
+    assert result.bundle_price == 1_562.5
+
+
+def test_s4_membership_caps_pre_subsidy_ride_at_twenty() -> None:
+    result = price(feeder_fare=150.0, bus_fare=2_000.0, is_smarttrip_plus=True)
+
+    assert result.feeder_after_membership == 20.0
+    assert result.subsidy == 8.0
+    assert result.final_ride_cost == 12.0
+    assert result.applied_membership_cap is True
+
+
+def test_s5_early_booking_reduces_last_mile_by_ten_percent() -> None:
+    result = price(travel_time=NOW + timedelta(hours=6))
+
+    assert result.feeder_after_early_booking == 90.0
+    assert result.applied_early_booking is True
+
+
+def test_negative_fares_are_rejected() -> None:
+    with pytest.raises(ValueError, match="cannot be negative"):
+        price(feeder_fare=-1.0)
+
+
+def test_bus_commission_defaults_to_five_percent() -> None:
+    assert calculate_bus_commission(1_500.0) == 75.0

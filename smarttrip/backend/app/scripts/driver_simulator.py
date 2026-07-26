@@ -1,32 +1,25 @@
+"""Post route-polyline location updates to the local tracking endpoint."""
+import argparse
 import asyncio
 import httpx
-import random
-import time
 
-API_URL = "http://127.0.0.1:8000/ws/internal/update_location"
+# Susgaon -> Wakad demo corridor; frontend can animate each received point.
+ROUTE_POLYLINE = [(18.5492, 73.7431), (18.5580, 73.7485), (18.5704, 73.7546), (18.5850, 73.7590), (18.5987, 73.7628)]
 
-async def simulate_driver(journey_id: str, start_lat: float, start_lon: float):
-    lat = start_lat
-    lon = start_lon
-    print(f"Starting driver simulation for journey: {journey_id}")
-    
-    async with httpx.AsyncClient() as client:
-        for _ in range(20):
-            # Move slightly northeast
-            lat += random.uniform(0.0001, 0.001)
-            lon += random.uniform(0.0001, 0.001)
-            
-            try:
-                response = await client.post(
-                    f"{API_URL}?journey_id={journey_id}&lat={lat}&lon={lon}"
-                )
-                print(f"Updated {journey_id}: {lat}, {lon} -> Status: {response.status_code}")
-            except Exception as e:
-                print(f"Failed to update {journey_id}: {e}")
-                
-            await asyncio.sleep(2) # Update every 2 seconds
-            
-    print(f"Driver simulation for {journey_id} completed.")
+async def simulate(journey_id: str, api_base_url: str, interval: float) -> None:
+    async with httpx.AsyncClient(timeout=10) as client:
+        for sequence, (lat, lon) in enumerate(ROUTE_POLYLINE):
+            response = await client.post(f"{api_base_url}/ws/internal/update_location", params={"journey_id": journey_id}, json={"lat": lat, "lon": lon, "sequence": sequence})
+            response.raise_for_status()
+            print(f"{sequence}: {lat:.4f}, {lon:.4f}")
+            await asyncio.sleep(interval)
 
-if __name__ == "__main__":
-    asyncio.run(simulate_driver("J1", 18.5492, 73.7431))
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--journey-id", default="bus-1-demo")
+    parser.add_argument("--api-base-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--interval", type=float, default=2.0)
+    args = parser.parse_args()
+    asyncio.run(simulate(args.journey_id, args.api_base_url, args.interval))
+
+if __name__ == "__main__": main()
