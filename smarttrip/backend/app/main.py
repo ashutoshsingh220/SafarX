@@ -6,7 +6,7 @@ import redis.asyncio as redis
 from app.config import settings
 from app.database import get_db
 from app.schemas import HealthResponse
-from app.routers import agent, bookings, ml, search
+from app.routers import agent, bookings, ml, routes, search
 from app.websockets import manager as ws_manager
 
 app = FastAPI(title="SmartTrip AI API")
@@ -15,6 +15,7 @@ app.include_router(search.router)
 app.include_router(ml.router)
 app.include_router(bookings.router)
 app.include_router(agent.router)
+app.include_router(routes.router)
 app.include_router(ws_manager.router)
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])

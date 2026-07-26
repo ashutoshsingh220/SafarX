@@ -5,6 +5,7 @@ is disabled and the required local environment variables are present.
 """
 
 import math
+import json
 from datetime import datetime, timedelta
 from typing import Final
 
@@ -16,6 +17,7 @@ from app.config import settings
 from app.models import Bus, FeederCorridor, Location
 from app.schemas import BoardingPoint, DistanceEstimate, Journey, Leg, SearchRequest
 from app.services.pricing import apply_pricing_strategies
+from app.services.osrm import OSRMClient, OSRMClientError
 
 CITY_AIRPORT_CODES: Final[dict[str, str]] = {
     "pune": "PNQ",
@@ -72,7 +74,20 @@ async def find_nearest_boarding_point(
 async def get_distance_eta(
     start_lat: float, start_lon: float, end_lat: float, end_lon: float
 ) -> DistanceEstimate:
-    """Use a local Haversine estimate or Google Distance Matrix when configured."""
+    """Use OSRM when enabled; otherwise preserve the local mock calculation."""
+    if settings.USE_REAL_OSRM:
+        try:
+            route = await OSRMClient().get_route(
+                {"lat": start_lat, "lon": start_lon}, {"lat": end_lat, "lon": end_lon}
+            )
+        except OSRMClientError as exc:
+            raise ExternalServiceError(str(exc)) from exc
+        return DistanceEstimate(
+            distance_meters=route["distance_meters"],
+            duration_seconds=round(route["duration_seconds"]),
+            polyline=json.dumps(route["geometry"], separators=(",", ":")),
+        )
+
     if settings.USE_MOCK_MAPS:
         distance = _haversine_meters(start_lat, start_lon, end_lat, end_lon)
         duration = max(60, int((distance / 1000) / 30 * 3600))

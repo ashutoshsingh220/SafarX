@@ -6,7 +6,10 @@ class Settings(BaseSettings):
     """Runtime configuration loaded from the local, untracked .env file."""
 
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).resolve().parents[1] / ".env",
+        env_file=(
+            Path(__file__).resolve().parents[1] / ".env",
+            Path(__file__).resolve().parents[1] / ".env.local",
+        ),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -30,11 +33,13 @@ class Settings(BaseSettings):
     AMADEUS_BASE_URL: str = "https://test.api.amadeus.com"
     OPENWEATHER_API_KEY: str = ""
     EXTERNAL_API_TIMEOUT_SECONDS: float = 12.0
+    OSRM_URL: str = "http://localhost:5000"
 
     USE_MOCK_FLIGHTS: bool = True
     USE_MOCK_WEATHER: bool = True
     USE_MOCK_PAYMENTS: bool = True
     USE_MOCK_MAPS: bool = True
+    USE_REAL_OSRM: bool = False
     USE_MOCK_AI: bool = True
     USE_MOCK_AUTH: bool = True
     USE_MOCK_PUSH: bool = True

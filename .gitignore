@@ -12,6 +12,9 @@ ENV/
 # Generated machine-learning artifacts
 *.pkl
 
+# Downloaded and generated OSRM map data can be very large.
+smarttrip/backend/data/*.osm*
+
 # Python
 __pycache__/
 *.py[cod]

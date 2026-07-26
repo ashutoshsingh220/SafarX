@@ -27,6 +27,15 @@ services:
       timeout: 5s
       retries: 5
 
+  osrm:
+    image: osrm/osrm-backend:latest
+    command: osrm-routed --algorithm mld /data/india-latest.osrm
+    ports:
+      - "5000:5000"
+    volumes:
+      # OSRM preprocessing artifacts are created by scripts/setup_osrm.*.
+      - ./backend/data:/data:ro
+
   api:
     build:
       context: ./backend
@@ -35,6 +44,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://smarttrip:smarttrip@db:5432/smarttrip
       REDIS_URL: redis://redis:6379/0
+      OSRM_URL: http://osrm:5000
+      USE_REAL_OSRM: "false"
       USE_MOCK_FLIGHTS: "true"
       USE_MOCK_WEATHER: "true"
       USE_MOCK_PAYMENTS: "true"
