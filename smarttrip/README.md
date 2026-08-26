@@ -1,72 +1,68 @@
-# SmartTrip AI
+# 🚀 SmartTrip AI Application Workspace
 
-A next-generation door-to-door travel assistant combining multi-modal routing, dynamic pricing strategies, and an AI conversational agent.
+This directory contains the core implementation of **SmartTrip AI** (backend API, frontend client, Docker orchestration, and ML services).
 
-## Project Structure
-- `backend/`: FastAPI Python server containing search, pricing, agents, and websocket logic.
-- `frontend/`: Flutter cross-platform mobile application.
-- `docker-compose.yml`: Spins up PostGIS (for spatial queries) and Redis.
+> 📖 **Full Documentation**: For complete architecture breakdown, tech stack summary, dynamic pricing details, and project status, view the main repository [README](../README.md).
 
-## Features Built
-- **Phase 1:** Docker infrastructure & PostGIS schemas (`Location`, `Bus`, `FeederCorridor`).
-- **Phase 2:** Multi-Modal Search (`/api/v1/search`) integrating simulated flights and nearest-point PostGIS feeder routing.
-- **Phase 3:** Pricing Engine (`app/services/pricing.py`) implementing Cross-Subsidy, Bundle Pricing, and SmartTrip Plus memberships.
-- **Phase 4:** AI Agent (`cli_agent.py`) utilizing `gemini-2.0-flash` with Function Calling to search and book trips via natural language.
-- **Phase 5:** ML Endpoints (`/api/v1/ml/demand` and `/api/v1/ml/eta`) using simulated scikit-learn models (KMeans and Linear Regression).
-- **Phase 6:** Auth & Bookings (`/api/v1/bookings`) with simulated payments and Firebase-style Bearer token authentication.
-- **Phase 7:** Real-Time Tracking (`/ws/track/{journey_id}`) via WebSockets with a Python `driver_simulator.py`.
-- **Phase 8:** Flutter UI initialized with Riverpod state management and a mock Map interface.
-- **Phase 9:** `run_demo.sh` orchestrator.
+---
 
-## Quickstart
+## 🛠️ Folder Contents
 
-### Prerequisites
+- **`backend/`**: FastAPI application (Python 3.11/3.12) with spatial search, Gemini 2.0 Flash AI agent, S1–S5 pricing engine, ML models, and WebSocket real-time telemetry.
+- **`frontend/`**: Cross-platform mobile app built with Flutter and Riverpod state management.
+- **`docs/`**: Operational documentation including OSRM configuration guide (`OSRM_SETUP.md`).
+- **`scripts/`**: Automation scripts for downloading and building OSRM map data (`setup_osrm.ps1` / `setup_osrm.sh`).
+- **`docker-compose.yml`**: Spins up PostGIS 15, Redis 7, OSRM, and the uvicorn API container.
+- **`run_demo.sh`**: One-click startup script for setting up and running the local backend demo.
 
-- Docker Desktop, with the Docker Engine running.
-- Python 3.11 or newer (Python 3.12 is used by the API container).
+---
 
-The backend dependency list is versioned at `backend/requirements.txt`. Each developer should install it into a local virtual environment; do not commit `.venv/` or `.env`.
+## ⚡ Quickstart Commands
 
-### Windows backend setup
-
-Run these commands in PowerShell:
-
-```powershell
-cd "D:\projects\Smart Trip AI\smarttrip\backend"
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-```
-
-Add real keys only to the local `.env` file. With the default mock flags enabled, no external API is called.
-
-### Start the stack
+### 1. Launch with Docker Compose
 
 ```bash
-cd smarttrip
 docker compose up -d --build
 docker compose exec api alembic upgrade head
 docker compose exec api python seed.py
 ```
 
-Then open `http://localhost:8000/docs` or call `http://localhost:8000/health`.
+API Docs: `http://localhost:8000/docs`  
+Health Check: `http://localhost:8000/health`
 
-## Testing the AI Agent
-Open a new terminal while the backend is running:
+---
+
+### 2. Windows PowerShell Setup (Without Docker)
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+python seed.py
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+---
+
+### 3. Testing the Gemini AI Agent CLI
+
 ```bash
-cd smarttrip/backend
-source venv/bin/activate
-export PYTHONPATH=.
+cd backend
+# Linux/macOS: source .venv/bin/activate
+# Windows: .\.venv\Scripts\Activate.ps1
 python cli_agent.py
 ```
 
-## Testing Real-Time Tracking
-Open a new terminal while the backend is running:
+---
+
+### 4. Testing Real-Time Tracking Telemetry
+
 ```bash
-cd smarttrip/backend
-source venv/bin/activate
-export PYTHONPATH=.
+cd backend
 python app/scripts/driver_simulator.py
 ```
+
+WebSocket Endpoint: `ws://localhost:8000/ws/track/{journey_id}`
