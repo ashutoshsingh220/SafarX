@@ -2,18 +2,24 @@ from fastapi import Depends, FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
-
 from app.config import settings
 from app.database import get_db
 from app.schemas import HealthResponse
 from app.routers import agent, bookings, ml, search
 from app.websockets import manager as ws_manager
 
+from fastapi.security import APIKeyHeader
+from fastapi import Security
+
 app = FastAPI(title="SmartTrip AI API")
 
-app.include_router(search.router)
-app.include_router(ml.router)
-app.include_router(bookings.router)
+# Define API Key security scheme for Swagger UI
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+bearer_token = APIKeyHeader(name="Authorization", auto_error=False)
+
+app.include_router(search.router, dependencies=[Security(api_key_header), Security(bearer_token)])
+app.include_router(ml.router, dependencies=[Security(api_key_header), Security(bearer_token)])
+app.include_router(bookings.router, dependencies=[Security(api_key_header), Security(bearer_token)])
 app.include_router(agent.router)
 app.include_router(ws_manager.router)
 
