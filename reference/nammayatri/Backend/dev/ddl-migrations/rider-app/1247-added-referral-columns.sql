@@ -1,1 +1,0 @@
-CREATE INDEX idx_customer_referral_code ON atlas_app.person USING btree (customer_referral_code);

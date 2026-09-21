@@ -1,1 +1,0 @@
-CREATE INDEX idx_image_person_docType ON atlas_driver_offer_bpp.image USING btree (person_id, image_type);

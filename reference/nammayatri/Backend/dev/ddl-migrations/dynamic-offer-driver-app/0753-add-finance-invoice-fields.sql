@@ -1,1 +1,0 @@
-CREATE INDEX IF NOT EXISTS idx_finance_invoice_payment_order_id ON atlas_driver_offer_bpp.finance_invoice USING btree (payment_order_id);

@@ -1,1 +1,0 @@
-alter table atlas_driver_offer_bpp.payment_order add column sdk_payload_dump json;

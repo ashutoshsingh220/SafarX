@@ -1,1 +1,0 @@
-ALTER TABLE atlas_driver_offer_bpp.special_location ADD COLUMN enabled boolean NOT NULL DEFAULT true;

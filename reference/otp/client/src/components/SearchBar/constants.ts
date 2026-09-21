@@ -1,1 +1,0 @@
-export const COORDINATE_PRECISION = 7;

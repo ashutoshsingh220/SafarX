@@ -1,1 +1,0 @@
-CREATE INDEX idx_driver_date ON atlas_driver_offer_bpp.daily_stats (driver_id, merchant_local_date);

@@ -1,1 +1,0 @@
-ALTER TABLE atlas_app.payment_order ADD COLUMN is_mock_payment boolean;

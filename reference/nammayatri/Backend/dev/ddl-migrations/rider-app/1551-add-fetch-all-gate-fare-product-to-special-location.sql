@@ -1,1 +1,0 @@
-ALTER TABLE atlas_app.special_location ADD COLUMN fetch_all_gate_fare_product boolean;

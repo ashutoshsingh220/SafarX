@@ -1,1 +1,0 @@
-ALTER TABLE atlas_app.frfs_gtfs_stage_fare ADD CONSTRAINT frfs_gtfs_stage_fare_vehicle_service_tier_id_stage_key UNIQUE (vehicle_service_tier_id, stage);

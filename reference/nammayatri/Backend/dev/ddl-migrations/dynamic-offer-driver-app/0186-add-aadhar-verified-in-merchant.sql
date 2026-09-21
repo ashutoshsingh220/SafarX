@@ -1,1 +1,0 @@
-ALTER TABLE  atlas_driver_offer_bpp.merchant ADD COLUMN aadhaar_verification_required boolean NOT NULL DEFAULT false;

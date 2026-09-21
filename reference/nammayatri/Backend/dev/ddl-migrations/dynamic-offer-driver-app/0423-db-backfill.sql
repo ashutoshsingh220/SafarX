@@ -1,1 +1,0 @@
-ALTER TABLE atlas_driver_offer_bpp.fare_policy ADD COLUMN congestion_charge text;

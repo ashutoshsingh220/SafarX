@@ -1,1 +1,0 @@
-ALTER TABLE atlas_driver_offer_bpp.fare_parameters ADD COLUMN night_shift_rate_if_applies float;

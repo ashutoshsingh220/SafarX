@@ -1,1 +1,0 @@
-ALTER TABLE atlas_driver_offer_bpp.person ALTER COLUMN merchant_id SET NOT NULL;

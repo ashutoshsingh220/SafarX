@@ -1,1 +1,0 @@
-ALTER TABLE atlas_app.payment_order RENAME COLUMN customer_id TO person_id;

@@ -1,1 +1,0 @@
-ALTER TABLE atlas_driver_offer_bpp.special_location ADD COLUMN linked_locations_ids text[] NOT NULL default '{}';

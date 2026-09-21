@@ -1,1 +1,0 @@
-ALTER TABLE atlas_driver_offer_bpp.coin_history ADD COLUMN service_tier_type text;

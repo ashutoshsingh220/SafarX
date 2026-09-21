@@ -1,5 +1,0 @@
-ALTER TABLE atlas_driver_offer_bpp.vehicle_registration_certificate
-DROP CONSTRAINT unique_rc_id;
-
-ALTER TABLE atlas_driver_offer_bpp.vehicle_registration_certificate ADD CONSTRAINT unique_rc_id UNIQUE (certificate_number_hash);
-

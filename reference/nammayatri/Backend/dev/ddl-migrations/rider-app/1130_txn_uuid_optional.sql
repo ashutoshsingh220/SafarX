@@ -1,3 +1,0 @@
-ALTER TABLE atlas_app.payment_transaction ALTER COLUMN txn_uuid DROP NOT NULL;
-ALTER TABLE atlas_app.payment_transaction ALTER COLUMN payment_method_type DROP NOT NULL;
-ALTER TABLE atlas_app.payment_transaction ALTER COLUMN payment_method DROP NOT NULL;

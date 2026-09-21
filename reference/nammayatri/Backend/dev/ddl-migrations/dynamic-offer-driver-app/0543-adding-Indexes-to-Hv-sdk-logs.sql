@@ -1,1 +1,0 @@
-CREATE INDEX idx_hv_sdk_logs_driver_id ON atlas_driver_offer_bpp.hyperverge_sdk_logs USING btree (driver_id);

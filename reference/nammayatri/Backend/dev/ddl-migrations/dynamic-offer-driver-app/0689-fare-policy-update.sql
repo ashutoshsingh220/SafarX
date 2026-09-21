@@ -1,1 +1,0 @@
-ALTER TABLE atlas_driver_offer_bpp.fare_policy ADD COLUMN pickup_buffer_in_secs_for_night_shift_cal integer;

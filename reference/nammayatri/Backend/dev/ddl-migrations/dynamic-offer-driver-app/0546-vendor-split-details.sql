@@ -1,3 +1,0 @@
-
-
-ALTER TABLE atlas_driver_offer_bpp.payment_transaction ADD COLUMN split_settlement_response json;

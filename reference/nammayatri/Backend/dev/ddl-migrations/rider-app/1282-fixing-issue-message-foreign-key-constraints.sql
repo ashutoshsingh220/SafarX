@@ -1,6 +1,0 @@
-ALTER TABLE atlas_app.issue_message DROP CONSTRAINT issue_message_reference_category_id_fkey;
-
-ALTER TABLE atlas_app.issue_message
-ADD CONSTRAINT issue_message_reference_category_id_fkey
-FOREIGN KEY (reference_category_id)
-REFERENCES atlas_app.issue_category(id);

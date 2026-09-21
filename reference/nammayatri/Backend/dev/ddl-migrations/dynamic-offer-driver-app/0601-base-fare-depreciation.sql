@@ -1,1 +1,0 @@
-ALTER TABLE atlas_driver_offer_bpp.fare_policy_progressive_details_per_extra_km_rate_section ADD COLUMN base_fare_depreciation double precision;

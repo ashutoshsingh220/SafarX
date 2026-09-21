@@ -1,1 +1,0 @@
-ALTER TABLE atlas_driver_offer_bpp.transporter_config DROP COLUMN IF EXISTS enable_document_metadata;

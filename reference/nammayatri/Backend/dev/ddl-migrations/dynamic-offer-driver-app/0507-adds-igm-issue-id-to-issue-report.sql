@@ -1,1 +1,0 @@
-ALTER TABLE  atlas_driver_offer_bpp.issue_report ADD beckn_issue_id character varying(36);

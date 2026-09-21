@@ -1,1 +1,0 @@
-Alter Table atlas_driver_offer_bpp.coin_history ADD COLUMN bulk_upload_title JSON;

@@ -1,1 +1,0 @@
-ALTER TABLE atlas_app.merchant ADD COLUMN time_diff_from_utc int NOT NULL DEFAULT 19800; -- +5:30

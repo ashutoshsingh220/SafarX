@@ -1,1 +1,0 @@
-ALTER TABLE atlas_app.merchant ADD column dir_cache_slot JSON;
