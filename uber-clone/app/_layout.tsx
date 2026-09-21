@@ -21,7 +21,11 @@ if (!process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY) {
   );
 }
 
-LogBox.ignoreLogs(["Clerk:"]);
+LogBox.ignoreLogs([
+  "Clerk:",
+  "Possible unhandled promise rejection",
+  "Warning: Failed prop type",
+]);
 
 export default function RootLayout() {
   const [loaded] = useFonts({
