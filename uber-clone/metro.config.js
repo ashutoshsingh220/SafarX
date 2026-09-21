@@ -8,24 +8,26 @@ const defaultResolveRequest = config.resolver.resolveRequest;
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (platform === "web") {
-    if (moduleName.includes("Libraries/Components/TextInput/TextInputState")) {
+    if (
+      moduleName === "react-native-maps" ||
+      moduleName === "react-native-maps-directions"
+    ) {
       return {
-        filePath: path.resolve(
-          __dirname,
-          "node_modules/react-native-web/dist/modules/TextInputState/index.js"
-        ),
+        filePath: path.resolve(__dirname, "mocks/react-native-maps.js"),
         type: "sourceFile",
       };
     }
-    if (
-      moduleName === "../../Utilities/Platform" ||
-      moduleName === "../Utilities/Platform" ||
-      moduleName.endsWith("Libraries/Utilities/Platform")
-    ) {
+    if (moduleName === "@stripe/stripe-react-native") {
+      return {
+        filePath: path.resolve(__dirname, "mocks/stripe-react-native.js"),
+        type: "sourceFile",
+      };
+    }
+    if (moduleName.startsWith("react-native/Libraries/")) {
       return {
         filePath: path.resolve(
           __dirname,
-          "node_modules/react-native-web/dist/exports/Platform/index.js"
+          "node_modules/react-native-web/dist/index.js"
         ),
         type: "sourceFile",
       };
