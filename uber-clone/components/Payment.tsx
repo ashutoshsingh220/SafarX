@@ -45,11 +45,11 @@ const Payment = ({
 
   const initializePaymentSheet = async () => {
     const { error } = await initPaymentSheet({
-      merchantDisplayName: "SmartTrip AI",
+      merchantDisplayName: "Example, Inc.",
       intentConfiguration: {
         mode: {
           amount: parseInt(amount) * 100,
-          currencyCode: "USD",
+          currencyCode: "usd",
         },
         confirmHandler: async (
           paymentMethod,

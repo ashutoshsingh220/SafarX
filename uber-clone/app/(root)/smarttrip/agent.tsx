@@ -10,13 +10,12 @@ export default function AgentScreen() {
   const [inputText, setInputText] = React.useState("");
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Initialize with greeting if empty
   useEffect(() => {
     if (agentMessages.length === 0) {
       addAgentMessage({
         id: "init",
         role: "assistant",
-        content: "Hi there! 👋 I'm your SmartTrip Assistant. Where would you like to go?",
+        content: "Hi there! 👋 I'm your SmartTrip AI Assistant. Where would you like to travel?",
         timestamp: Date.now(),
       });
     }
@@ -38,7 +37,6 @@ export default function AgentScreen() {
     setIsAgentThinking(true);
 
     try {
-      // Build history from current messages for multi-turn context
       const history = agentMessages
         .filter(m => m.role === "user" || m.role === "assistant")
         .map(m => ({
@@ -47,7 +45,6 @@ export default function AgentScreen() {
           content: m.content,
         }));
 
-      // Send to backend API with history
       const res = await sendAgentMessage({ message: userMsg, history });
       
       addAgentMessage({
@@ -70,12 +67,12 @@ export default function AgentScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-general-500">
-      <View className="flex-row items-center p-4 bg-white shadow-sm shadow-neutral-300">
+    <SafeAreaView className="flex-1 bg-neutral-100">
+      <View className="flex-row items-center p-4 bg-white shadow-sm border-b border-neutral-200">
         <TouchableOpacity onPress={() => router.back()} className="mr-4">
           <Text className="text-2xl">←</Text>
         </TouchableOpacity>
-        <Text className="text-xl font-JakartaSemiBold">SmartTrip Agent</Text>
+        <Text className="text-xl font-JakartaBold">SmartTrip AI Agent</Text>
       </View>
 
       <ScrollView 
@@ -86,10 +83,10 @@ export default function AgentScreen() {
         {agentMessages.map((msg) => (
           <View 
             key={msg.id} 
-            className={`mb-4 max-w-[80%] p-3 rounded-2xl ${
+            className={`mb-4 max-w-[80%] p-3.5 rounded-2xl ${
               msg.role === "user" 
                 ? "bg-primary-500 self-end rounded-tr-none" 
-                : "bg-white border border-neutral-200 self-start rounded-tl-none"
+                : "bg-white border border-neutral-200 self-start rounded-tl-none shadow-sm"
             }`}
           >
             <Text className={`font-Jakarta ${msg.role === "user" ? "text-white" : "text-black"}`}>
@@ -100,7 +97,7 @@ export default function AgentScreen() {
         {isAgentThinking && (
           <View className="bg-white border border-neutral-200 self-start p-3 rounded-2xl rounded-tl-none mb-4 flex-row items-center">
             <ActivityIndicator size="small" color="#0286FF" />
-            <Text className="font-Jakarta ml-2 text-gray-500">Thinking...</Text>
+            <Text className="font-Jakarta ml-2 text-gray-500">SmartTrip is thinking...</Text>
           </View>
         )}
         <View className="h-10" />
@@ -112,8 +109,8 @@ export default function AgentScreen() {
       >
         <View className="p-4 bg-white border-t border-neutral-200 flex-row items-center">
           <TextInput
-            className="flex-1 bg-neutral-100 p-3 rounded-full font-Jakarta"
-            placeholder="Ask anything (e.g., 'Find cheap buses to Mumbai')"
+            className="flex-1 bg-neutral-100 p-3.5 rounded-full font-Jakarta text-base"
+            placeholder="Ask anything (e.g. Pune to Bangalore)"
             value={inputText}
             onChangeText={setInputText}
             onSubmitEditing={handleSend}

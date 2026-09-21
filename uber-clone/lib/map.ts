@@ -1,5 +1,29 @@
 import { Driver, MarkerData } from "@/types/type";
 
+const directionsAPI = process.env.EXPO_PUBLIC_DIRECTIONS_API_KEY;
+
+export const generateMarkersFromData = ({
+  data,
+  userLatitude,
+  userLongitude,
+}: {
+  data: Driver[];
+  userLatitude: number;
+  userLongitude: number;
+}): MarkerData[] => {
+  return data.map((driver) => {
+    const latOffset = (Math.random() - 0.5) * 0.01; // Random offset between -0.005 and 0.005
+    const lngOffset = (Math.random() - 0.5) * 0.01; // Random offset between -0.005 and 0.005
+
+    return {
+      latitude: userLatitude + latOffset,
+      longitude: userLongitude + lngOffset,
+      title: `${driver.first_name} ${driver.last_name}`,
+      ...driver,
+    };
+  });
+};
+
 export const calculateRegion = ({
   userLatitude,
   userLongitude,
@@ -13,10 +37,10 @@ export const calculateRegion = ({
 }) => {
   if (!userLatitude || !userLongitude) {
     return {
-      latitude: 18.5204,
-      longitude: 73.8567,
-      latitudeDelta: 0.0922,
-      longitudeDelta: 0.0421,
+      latitude: 37.78825,
+      longitude: -122.4324,
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
     };
   }
 
@@ -24,8 +48,8 @@ export const calculateRegion = ({
     return {
       latitude: userLatitude,
       longitude: userLongitude,
-      latitudeDelta: 0.05,
-      longitudeDelta: 0.05,
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
     };
   }
 
@@ -34,51 +58,21 @@ export const calculateRegion = ({
   const minLng = Math.min(userLongitude, destinationLongitude);
   const maxLng = Math.max(userLongitude, destinationLongitude);
 
-  const midLat = (minLat + maxLat) / 2;
-  const midLng = (minLng + maxLng) / 2;
+  const latitudeDelta = (maxLat - minLat) * 1.3; // Adding some padding
+  const longitudeDelta = (maxLng - minLng) * 1.3; // Adding some padding
 
-  const latDelta = (maxLat - minLat) * 1.5 || 0.05;
-  const lngDelta = (maxLng - minLng) * 1.5 || 0.05;
+  const latitude = (userLatitude + destinationLatitude) / 2;
+  const longitude = (userLongitude + destinationLongitude) / 2;
 
   return {
-    latitude: midLat,
-    longitude: midLng,
-    latitudeDelta: Math.max(latDelta, 0.02),
-    longitudeDelta: Math.max(lngDelta, 0.02),
+    latitude,
+    longitude,
+    latitudeDelta,
+    longitudeDelta,
   };
 };
 
-export const generateMarkersFromData = ({
-  data,
-  userLatitude,
-  userLongitude,
-}: {
-  data: Driver[];
-  userLatitude: number;
-  userLongitude: number;
-}): MarkerData[] => {
-  if (!Array.isArray(data)) return [];
-
-  return data.map((driver) => {
-    const latOffset = (Math.random() - 0.5) * 0.02;
-    const lngOffset = (Math.random() - 0.5) * 0.02;
-
-    return {
-      id: driver.id || Math.random(),
-      title: `${driver.first_name || "Driver"} ${driver.last_name || ""}`,
-      latitude: userLatitude + latOffset,
-      longitude: userLongitude + lngOffset,
-      rating: driver.rating || 4.5,
-      price: driver.price || "150",
-      time: Math.floor(Math.random() * 10) + 5,
-      car_seats: driver.car_seats || 4,
-      profile_image_url: driver.profile_image_url,
-      car_image_url: driver.car_image_url,
-    };
-  });
-};
-
-export const calculateDriverTimes = ({
+export const calculateDriverTimes = async ({
   markers,
   userLatitude,
   userLongitude,
@@ -91,16 +85,37 @@ export const calculateDriverTimes = ({
   destinationLatitude: number | null;
   destinationLongitude: number | null;
 }) => {
-  if (!markers || !userLatitude || !userLongitude) return [];
+  if (
+    !userLatitude ||
+    !userLongitude ||
+    !destinationLatitude ||
+    !destinationLongitude
+  )
+    return;
 
-  return markers.map((marker) => {
-    const timeToUser = Math.floor(Math.random() * 8) + 2;
-    const timeToDestination = Math.floor(Math.random() * 20) + 15;
+  try {
+    const timesPromises = markers.map(async (marker) => {
+      const responseToUser = await fetch(
+        `https://maps.googleapis.com/maps/api/directions/json?origin=${marker.latitude},${marker.longitude}&destination=${userLatitude},${userLongitude}&key=${directionsAPI}`,
+      );
+      const dataToUser = await responseToUser.json();
+      const timeToUser = dataToUser.routes[0].legs[0].duration.value; // Time in seconds
 
-    return {
-      ...marker,
-      time: timeToUser,
-      price: (timeToDestination * 12).toFixed(0),
-    };
-  });
+      const responseToDestination = await fetch(
+        `https://maps.googleapis.com/maps/api/directions/json?origin=${userLatitude},${userLongitude}&destination=${destinationLatitude},${destinationLongitude}&key=${directionsAPI}`,
+      );
+      const dataToDestination = await responseToDestination.json();
+      const timeToDestination =
+        dataToDestination.routes[0].legs[0].duration.value; // Time in seconds
+
+      const totalTime = (timeToUser + timeToDestination) / 60; // Total time in minutes
+      const price = (totalTime * 0.5).toFixed(2); // Calculate price based on time
+
+      return { ...marker, time: totalTime, price };
+    });
+
+    return await Promise.all(timesPromises);
+  } catch (error) {
+    console.error("Error calculating driver times:", error);
+  }
 };

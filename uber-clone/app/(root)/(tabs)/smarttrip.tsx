@@ -1,40 +1,43 @@
+import React from "react";
+import { View, Text, TouchableOpacity, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { View, Text, ScrollView, TouchableOpacity } from "react-native";
 import { router } from "expo-router";
 
-const SmartTripMenu = () => {
+export default function SmartTripTabScreen() {
   return (
-    <SafeAreaView className="flex-1 bg-general-500">
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
-        <Text className="text-2xl font-JakartaBold mb-2">SmartTrip AI 🚌✨</Text>
-        <Text className="text-md font-Jakarta text-gray-500 mb-8">
-          Plan door-to-door trips across cities with AI-powered multi-modal bundling.
+    <SafeAreaView className="flex-1 bg-neutral-100 p-4">
+      <ScrollView className="flex-1">
+        <Text className="text-3xl font-JakartaBold mb-2">SmartTrip AI</Text>
+        <Text className="text-gray-500 font-Jakarta mb-6">
+          Next-generation door-to-door travel assistant & AI companion.
         </Text>
 
-        <TouchableOpacity 
-          onPress={() => router.push("/(root)/smarttrip/search")}
-          className="bg-primary-500 p-5 rounded-2xl mb-4 flex-row items-center justify-between shadow-md shadow-neutral-300"
+        <TouchableOpacity
+          onPress={() => router.push("/(root)/smarttrip/agent")}
+          className="bg-primary-500 p-5 rounded-2xl mb-4 shadow-sm flex-row items-center justify-between"
         >
-          <View>
-            <Text className="text-white font-JakartaSemiBold text-lg">Travel Search</Text>
-            <Text className="text-white font-Jakarta text-sm opacity-90 mt-1">Search intercity buses, trains & flights</Text>
+          <View className="flex-1 mr-3">
+            <Text className="text-white font-JakartaBold text-xl mb-1">🤖 AI Conversational Agent</Text>
+            <Text className="text-white/80 font-Jakarta text-sm">
+              Chat naturally to find & book door-to-door trips using Gemini 2.0 Flash.
+            </Text>
           </View>
-          <Text className="text-3xl">🎫</Text>
+          <Text className="text-white text-2xl font-JakartaBold">→</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          onPress={() => router.push("/(root)/smarttrip/agent")}
-          className="bg-general-400 p-5 rounded-2xl flex-row items-center justify-between shadow-md shadow-neutral-300"
+        <TouchableOpacity
+          onPress={() => router.push("/(root)/smarttrip/search")}
+          className="bg-white p-5 rounded-2xl mb-4 border border-neutral-200 shadow-sm flex-row items-center justify-between"
         >
-          <View>
-            <Text className="text-black font-JakartaSemiBold text-lg">AI Assistant</Text>
-            <Text className="text-black font-Jakarta text-sm opacity-60 mt-1">Chat to build your perfect trip bundle</Text>
+          <View className="flex-1 mr-3">
+            <Text className="text-black font-JakartaBold text-xl mb-1">🗺️ Multimodal Search</Text>
+            <Text className="text-gray-500 font-Jakarta text-sm">
+              Compare feeder shuttles, intercity buses, trains, and flights.
+            </Text>
           </View>
-          <Text className="text-3xl">🤖</Text>
+          <Text className="text-primary-500 text-2xl font-JakartaBold">→</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
-};
-
-export default SmartTripMenu;
+}

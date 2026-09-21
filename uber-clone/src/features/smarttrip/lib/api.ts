@@ -11,7 +11,6 @@ export async function sendAgentMessage({
   history: any[];
 }) {
   try {
-    // Try primary FastAPI endpoint first
     const response = await fetch(`${API_BASE_URL}/api/v1/agent/plan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -27,28 +26,12 @@ export async function sendAgentMessage({
       };
     }
   } catch (e) {
-    console.warn("Primary API unavailable, trying Expo internal endpoint...");
-  }
-
-  // Fallback to internal Expo serverless route
-  try {
-    const fallbackResponse = await fetch("/(api)/smarttrip/agent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history }),
-    });
-
-    if (fallbackResponse.ok) {
-      const data = await fallbackResponse.json();
-      return data.data || data;
-    }
-  } catch (e) {
-    console.error("Agent API Error:", e);
+    console.warn("FastAPI agent backend offline, using fallback response...");
   }
 
   return {
     reply:
-      "SmartTrip AI is ready! Connect the backend server or start Docker to get real-time trip plans.",
+      "SmartTrip AI is ready! Connect the backend server at http://localhost:8000 to get real-time trip plans.",
     history,
   };
 }
@@ -89,7 +72,6 @@ export async function searchTransport(
     console.warn("FastAPI search endpoint offline, returning demo options...");
   }
 
-  // Fallback mock search results if backend is offline
   return [
     {
       id: "bus-demo-1",

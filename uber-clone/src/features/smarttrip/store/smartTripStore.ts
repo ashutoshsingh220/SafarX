@@ -1,10 +1,3 @@
-/**
- * SmartTrip Zustand Store
- *
- * Isolated state management for SmartTrip AI features.
- * Does NOT modify the existing useLocationStore or useDriverStore.
- */
-
 import { create } from "zustand";
 import type {
   TransportResult,
@@ -14,7 +7,6 @@ import type {
 } from "../types/smarttrip";
 
 interface SmartTripState {
-  // Search
   searchForm: SearchFormData;
   searchResults: TransportResult[];
   isSearching: boolean;
@@ -22,13 +14,11 @@ interface SmartTripState {
   setSearchResults: (results: TransportResult[]) => void;
   setIsSearching: (loading: boolean) => void;
 
-  // Bundle
   selectedTransport: TransportResult | null;
   currentBundle: BundleQuote | null;
   setSelectedTransport: (option: TransportResult | null) => void;
   setCurrentBundle: (bundle: BundleQuote | null) => void;
 
-  // Agent
   agentMessages: AgentMessage[];
   isAgentThinking: boolean;
   addAgentMessage: (message: AgentMessage) => void;
@@ -36,7 +26,6 @@ interface SmartTripState {
   setIsAgentThinking: (thinking: boolean) => void;
   clearAgentMessages: () => void;
 
-  // Reset
   resetAll: () => void;
 }
 
@@ -48,7 +37,6 @@ const initialSearchForm: SearchFormData = {
 };
 
 export const useSmartTripStore = create<SmartTripState>((set) => ({
-  // Search
   searchForm: { ...initialSearchForm },
   searchResults: [],
   isSearching: false,
@@ -59,13 +47,11 @@ export const useSmartTripStore = create<SmartTripState>((set) => ({
   setSearchResults: (results) => set({ searchResults: results }),
   setIsSearching: (loading) => set({ isSearching: loading }),
 
-  // Bundle
   selectedTransport: null,
   currentBundle: null,
   setSelectedTransport: (option) => set({ selectedTransport: option }),
   setCurrentBundle: (bundle) => set({ currentBundle: bundle }),
 
-  // Agent
   agentMessages: [],
   isAgentThinking: false,
   addAgentMessage: (message) =>
@@ -76,7 +62,6 @@ export const useSmartTripStore = create<SmartTripState>((set) => ({
   setIsAgentThinking: (thinking) => set({ isAgentThinking: thinking }),
   clearAgentMessages: () => set({ agentMessages: [] }),
 
-  // Reset
   resetAll: () =>
     set({
       searchForm: { ...initialSearchForm },
