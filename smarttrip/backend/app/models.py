@@ -47,3 +47,52 @@ class Booking(Base):
     device_token = Column(String(512), nullable=True)
     notification_status = Column(String(32), nullable=False, default="not_requested")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class TransitHub(Base):
+    __tablename__ = "transit_hubs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True, nullable=False)
+    code = Column(String, index=True, nullable=True)
+    city = Column(String, index=True, nullable=False)
+    state = Column(String, nullable=True)
+    hub_type = Column(String(32), index=True, nullable=False)  # RAILWAY_STATION, AIRPORT, BUS_TERMINAL
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+
+
+class MultimodalBundleBooking(Base):
+    __tablename__ = "multimodal_bundle_bookings"
+
+    id = Column(String(36), primary_key=True)
+    pnr = Column(String(32), unique=True, index=True, nullable=False)
+    user_id = Column(String(128), index=True, nullable=False)
+    origin_address = Column(String, nullable=False)
+    destination_address = Column(String, nullable=False)
+    primary_mode = Column(String(32), nullable=False)
+    total_fare = Column(Float, nullable=False)
+    total_duration_minutes = Column(Integer, nullable=False)
+    total_distance_km = Column(Float, nullable=False)
+    badge = Column(String(32), nullable=True)
+    status = Column(String(32), default="CONFIRMED", nullable=False)
+    qr_code_payload = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class MultimodalBookingLeg(Base):
+    __tablename__ = "multimodal_booking_legs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bundle_id = Column(String(36), ForeignKey("multimodal_bundle_bookings.id"), nullable=False)
+    leg_index = Column(Integer, nullable=False)
+    leg_type = Column(String(32), nullable=False)  # FIRST_MILE, LONG_HAUL, LAST_MILE
+    mode = Column(String(32), nullable=False)
+    operator = Column(String, nullable=False)
+    origin = Column(String, nullable=False)
+    destination = Column(String, nullable=False)
+    distance_km = Column(Float, nullable=False)
+    duration_minutes = Column(Integer, nullable=False)
+    fare = Column(Float, nullable=False)
+    ticket_identifier = Column(String, nullable=False)
+

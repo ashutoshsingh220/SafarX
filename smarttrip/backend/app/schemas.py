@@ -113,3 +113,67 @@ class DistanceEstimate(BaseModel):
     distance_meters: float
     duration_seconds: int
     polyline: Optional[str] = None
+
+
+class MultimodalPlanRequest(BaseModel):
+    origin_name: str = Field(description="Origin address/location name (e.g. Symbiosis Institute of Technology, Lavale, Pune)")
+    origin_lat: float = Field(ge=-90, le=90)
+    origin_lon: float = Field(ge=-180, le=180)
+    destination_name: str = Field(description="Destination address/location name (e.g. Har Ki Pauri, Haridwar)")
+    destination_lat: float = Field(ge=-90, le=90)
+    destination_lon: float = Field(ge=-180, le=180)
+    travel_date: Optional[datetime] = None
+    feeder_mode: Optional[Literal["AUTO", "CAB", "SHUTTLE"]] = "AUTO"
+
+
+class MultimodalLegOut(BaseModel):
+    leg_index: int
+    leg_type: Literal["FIRST_MILE", "LONG_HAUL", "LAST_MILE"]
+    mode: Literal["AUTO", "CAB", "TRAIN", "FLIGHT", "BUS", "E_RICKSHAW"]
+    operator: str
+    origin: str
+    destination: str
+    distance_km: float
+    duration_minutes: int
+    fare: float
+    description: Optional[str] = None
+    vehicle_icon: str = "car"
+
+
+class MultimodalPlanOut(BaseModel):
+    plan_id: str
+    badge: Optional[Literal["CHEAPEST", "FASTEST", "BEST_VALUE", "DIRECT_CAB"]] = None
+    primary_mode: Literal["TRAIN", "FLIGHT", "BUS", "DIRECT_CAB"]
+    total_fare: float
+    total_duration_minutes: int
+    total_distance_km: float
+    legs: List[MultimodalLegOut]
+    summary: str
+
+
+class MultimodalPlanResponse(BaseModel):
+    origin: str
+    destination: str
+    origin_coords: dict[str, float]
+    destination_coords: dict[str, float]
+    plans: List[MultimodalPlanOut]
+
+
+class MultimodalBookingRequest(BaseModel):
+    user_id: str = Field(default="guest_user", min_length=1)
+    plan: MultimodalPlanOut
+
+
+class MultimodalBookingResponse(BaseModel):
+    booking_id: str
+    pnr: str
+    status: str
+    total_fare: float
+    primary_mode: str
+    origin_address: str
+    destination_address: str
+    badge: Optional[str] = None
+    legs: List[MultimodalLegOut]
+    qr_code_payload: str
+    created_at: datetime
+
