@@ -31,9 +31,7 @@ class Settings(BaseSettings):
     FIREBASE_PRIVATE_KEY: str = ""
     FIREBASE_CLIENT_EMAIL: str = ""
     FIREBASE_SERVICE_ACCOUNT_JSON: str = ""
-    AMADEUS_CLIENT_ID: str = ""
-    AMADEUS_CLIENT_SECRET: str = ""
-    AMADEUS_BASE_URL: str = "https://test.api.amadeus.com"
+    SERPAPI_API_KEY: str = ""
     OPENWEATHER_API_KEY: str = ""
     EXTERNAL_API_TIMEOUT_SECONDS: float = 12.0
     OSRM_URL: str = "http://localhost:5000"

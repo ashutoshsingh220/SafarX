@@ -121,24 +121,9 @@ async def get_distance_eta(
     )
 
 
-async def _amadeus_access_token(client: httpx.AsyncClient) -> str:
-    if not settings.AMADEUS_CLIENT_ID or not settings.AMADEUS_CLIENT_SECRET:
-        raise ExternalServiceError("Amadeus credentials are required when USE_MOCK_FLIGHTS=false")
-    response = await client.post(
-        f"{settings.AMADEUS_BASE_URL}/v1/security/oauth2/token",
-        data={"grant_type": "client_credentials"},
-        auth=(settings.AMADEUS_CLIENT_ID, settings.AMADEUS_CLIENT_SECRET),
-    )
-    response.raise_for_status()
-    token = response.json().get("access_token")
-    if not token:
-        raise ExternalServiceError("Amadeus did not return an access token")
-    return token
-
-
 async def search_flights(from_city: str, to_city: str, travel_date: datetime) -> list[Leg]:
-    """Return a mock flight or query Amadeus test data after explicit configuration."""
-    if settings.USE_MOCK_FLIGHTS:
+    """Search domestic flights using SerpApi Google Flights, or return deterministic flight for demo."""
+    if settings.USE_MOCK_FLIGHTS or not settings.SERPAPI_API_KEY:
         if from_city.casefold() == "pune" and to_city.casefold() in {"bangalore", "bengaluru"}:
             departure = travel_date.replace(hour=20, minute=30, second=0, microsecond=0)
             return [
@@ -151,8 +136,8 @@ async def search_flights(from_city: str, to_city: str, travel_date: datetime) ->
                     duration_seconds=5_400,
                     distance_meters=730_000,
                     fare=4_500.0,
-                    operator="AirMock",
-                    vehicle_id="AM-101",
+                    operator="IndiGo (6E-204)",
+                    vehicle_id="6E-204",
                     vehicle_icon="flight",
                 )
             ]
@@ -161,47 +146,50 @@ async def search_flights(from_city: str, to_city: str, travel_date: datetime) ->
     origin = CITY_AIRPORT_CODES.get(from_city.casefold())
     destination = CITY_AIRPORT_CODES.get(to_city.casefold())
     if not origin or not destination:
-        raise ExternalServiceError("No Amadeus airport mapping is configured for this route")
+        return []
 
-    async with httpx.AsyncClient(timeout=settings.EXTERNAL_API_TIMEOUT_SECONDS) as client:
-        token = await _amadeus_access_token(client)
-        response = await client.get(
-            f"{settings.AMADEUS_BASE_URL}/v2/shopping/flight-offers",
-            params={
-                "originLocationCode": origin,
-                "destinationLocationCode": destination,
-                "departureDate": travel_date.date().isoformat(),
-                "adults": 1,
-                "max": 3,
-            },
-            headers={"Authorization": f"Bearer {token}"},
-        )
-    response.raise_for_status()
-    legs: list[Leg] = []
-    for index, offer in enumerate(response.json().get("data", []), start=1):
-        itinerary = offer.get("itineraries", [{}])[0]
-        segments = itinerary.get("segments", [])
-        if not segments:
-            continue
-        first, last = segments[0], segments[-1]
-        departure = datetime.fromisoformat(first["departure"]["at"])
-        arrival = datetime.fromisoformat(last["arrival"]["at"])
-        legs.append(
-            Leg(
-                mode="FLIGHT",
-                start_location_name=first["departure"]["iataCode"],
-                end_location_name=last["arrival"]["iataCode"],
-                start_time=departure,
-                end_time=arrival,
-                duration_seconds=int((arrival - departure).total_seconds()),
-                distance_meters=0,
-                fare=float(offer["price"]["grandTotal"]),
-                operator=first.get("carrierCode", "Amadeus partner"),
-                vehicle_id=f"flight-{index}",
-                vehicle_icon="flight",
+    try:
+        url = "https://serpapi.com/search.json"
+        params = {
+            "engine": "google_flights",
+            "departure_id": origin,
+            "arrival_id": destination,
+            "outbound_date": travel_date.date().isoformat(),
+            "currency": "INR",
+            "hl": "en",
+            "api_key": settings.SERPAPI_API_KEY,
+        }
+        async with httpx.AsyncClient(timeout=settings.EXTERNAL_API_TIMEOUT_SECONDS) as client:
+            response = await client.get(url, params=params)
+        response.raise_for_status()
+        payload = response.json()
+        best_flights = payload.get("best_flights", []) or payload.get("other_flights", [])
+        legs: list[Leg] = []
+        for index, item in enumerate(best_flights[:3], start=1):
+            flights = item.get("flights", [])
+            if not flights:
+                continue
+            first = flights[0]
+            departure = travel_date.replace(hour=8, minute=0, second=0, microsecond=0)
+            dur_mins = item.get("total_duration", 120)
+            legs.append(
+                Leg(
+                    mode="FLIGHT",
+                    start_location_name=f"{origin} Airport",
+                    end_location_name=f"{destination} Airport",
+                    start_time=departure,
+                    end_time=departure + timedelta(minutes=dur_mins),
+                    duration_seconds=dur_mins * 60,
+                    distance_meters=0,
+                    fare=float(item.get("price", 5000.0)),
+                    operator=first.get("airline", "IndiGo / Air India"),
+                    vehicle_id=first.get("flight_number", f"FL-{index}"),
+                    vehicle_icon="flight",
+                )
             )
-        )
-    return legs
+        return legs
+    except Exception as exc:
+        raise ExternalServiceError(f"SerpApi Google Flights error: {str(exc)}") from exc
 
 
 def build_mock_train_journey(request: SearchRequest) -> Journey | None:
