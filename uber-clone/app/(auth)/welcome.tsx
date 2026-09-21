@@ -17,7 +17,7 @@ const Home = () => {
     <SafeAreaView className="flex h-full items-center justify-between bg-white">
       <TouchableOpacity
         onPress={() => {
-          router.replace("/(auth)/sign-up");
+          router.replace("/(root)/(tabs)/home");
         }}
         className="w-full flex justify-end items-end p-5"
       >
@@ -58,11 +58,22 @@ const Home = () => {
         title={isLastSlide ? "Get Started" : "Next"}
         onPress={() =>
           isLastSlide
-            ? router.replace("/(auth)/sign-up")
+            ? router.replace("/(root)/(tabs)/home")
             : swiperRef.current?.scrollBy(1)
         }
-        className="w-11/12 mt-10 mb-5"
+        className="w-11/12 mt-10 mb-2"
       />
+
+      {isLastSlide && (
+        <TouchableOpacity
+          onPress={() => router.replace("/(auth)/sign-in")}
+          className="mb-5"
+        >
+          <Text className="text-gray-500 font-JakartaMedium text-sm">
+            Have an account? <Text className="text-primary-500 font-JakartaBold">Sign In</Text>
+          </Text>
+        </TouchableOpacity>
+      )}
     </SafeAreaView>
   );
 };

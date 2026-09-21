@@ -61,6 +61,16 @@ export default function Layout() {
         }}
       />
       <Tabs.Screen
+        name="smarttrip"
+        options={{
+          title: "SmartTrip",
+          headerShown: false,
+          tabBarIcon: ({ focused }) => (
+            <TabIcon source={icons.point} focused={focused} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="rides"
         options={{
           title: "Rides",

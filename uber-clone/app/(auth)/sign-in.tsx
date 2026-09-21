@@ -17,9 +17,21 @@ const SignIn = () => {
   });
 
   const onSignInPress = useCallback(async () => {
-    if (!isLoaded) return;
+    if (!isLoaded) {
+      router.replace("/(root)/(tabs)/home");
+      return;
+    }
 
     try {
+      const isPlaceholder =
+        !process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+        process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY.includes("example-clerk-key");
+
+      if (isPlaceholder) {
+        router.replace("/(root)/(tabs)/home");
+        return;
+      }
+
       const signInAttempt = await signIn.create({
         identifier: form.email,
         password: form.password,
@@ -29,13 +41,36 @@ const SignIn = () => {
         await setActive({ session: signInAttempt.createdSessionId });
         router.replace("/(root)/(tabs)/home");
       } else {
-        // See https://clerk.com/docs/custom-flows/error-handling for more info on error handling
         console.log(JSON.stringify(signInAttempt, null, 2));
-        Alert.alert("Error", "Log in failed. Please try again.");
+        Alert.alert(
+          "Notice",
+          "Log in failed. Would you like to continue as guest?",
+          [
+            { text: "Try Again", style: "cancel" },
+            {
+              text: "Continue as Guest",
+              onPress: () => router.replace("/(root)/(tabs)/home"),
+            },
+          ]
+        );
       }
     } catch (err: any) {
-      console.log(JSON.stringify(err, null, 2));
-      Alert.alert("Error", err.errors[0].longMessage);
+      console.log("Sign-in caught error:", JSON.stringify(err, null, 2));
+      const msg =
+        err?.errors?.[0]?.longMessage ||
+        err?.message ||
+        "Auth service currently in dev mode.";
+      Alert.alert(
+        "Sign In Notice",
+        `${msg}\n\nContinue in Guest / Demo mode to explore SmartTrip AI?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Continue as Guest",
+            onPress: () => router.replace("/(root)/(tabs)/home"),
+          },
+        ]
+      );
     }
   }, [isLoaded, form]);
 
@@ -73,6 +108,13 @@ const SignIn = () => {
             title="Sign In"
             onPress={onSignInPress}
             className="mt-6"
+          />
+
+          <CustomButton
+            title="Continue as Guest (Demo Mode)"
+            onPress={() => router.replace("/(root)/(tabs)/home")}
+            className="mt-3 bg-neutral-200"
+            textVariant="secondary"
           />
 
           <OAuth />

@@ -18,7 +18,10 @@ const Profile = () => {
         <View className="flex items-center justify-center my-5">
           <Image
             source={{
-              uri: user?.externalAccounts[0]?.imageUrl ?? user?.imageUrl,
+              uri:
+                user?.externalAccounts?.[0]?.imageUrl ??
+                user?.imageUrl ??
+                "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400",
             }}
             style={{ width: 110, height: 110, borderRadius: 110 / 2 }}
             className=" rounded-full h-[110px] w-[110px] border-[3px] border-white shadow-sm shadow-neutral-300"

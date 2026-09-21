@@ -28,7 +28,11 @@ const Home = () => {
   const { setUserLocation, setDestinationLocation } = useLocationStore();
 
   const handleSignOut = () => {
-    signOut();
+    try {
+      if (signOut) signOut();
+    } catch (e) {
+      console.log("Sign out notice:", e);
+    }
     router.replace("/(auth)/sign-in");
   };
 
@@ -38,7 +42,7 @@ const Home = () => {
     data: recentRides,
     loading,
     error,
-  } = useFetch<Ride[]>(`/(api)/ride/${user?.id}`);
+  } = useFetch<Ride[]>(user?.id ? `/(api)/ride/${user.id}` : "");
 
   useEffect(() => {
     (async () => {
@@ -105,7 +109,7 @@ const Home = () => {
           <>
             <View className="flex flex-row items-center justify-between my-5">
               <Text className="text-2xl font-JakartaExtraBold">
-                Welcome {user?.firstName}👋
+                Welcome {user?.firstName || "Traveler"} 👋
               </Text>
               <TouchableOpacity
                 onPress={handleSignOut}

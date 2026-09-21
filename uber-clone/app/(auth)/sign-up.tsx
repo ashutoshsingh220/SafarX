@@ -26,8 +26,20 @@ const SignUp = () => {
   });
 
   const onSignUpPress = async () => {
-    if (!isLoaded) return;
+    if (!isLoaded) {
+      router.replace("/(root)/(tabs)/home");
+      return;
+    }
     try {
+      const isPlaceholder =
+        !process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+        process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY.includes("example-clerk-key");
+
+      if (isPlaceholder) {
+        router.replace("/(root)/(tabs)/home");
+        return;
+      }
+
       await signUp.create({
         emailAddress: form.email,
         password: form.password,
@@ -38,10 +50,22 @@ const SignUp = () => {
         state: "pending",
       });
     } catch (err: any) {
-      // See https://clerk.com/docs/custom-flows/error-handling
-      // for more info on error handling
-      console.log(JSON.stringify(err, null, 2));
-      Alert.alert("Error", err.errors[0].longMessage);
+      console.log("Sign-up caught error:", JSON.stringify(err, null, 2));
+      const msg =
+        err?.errors?.[0]?.longMessage ||
+        err?.message ||
+        "Auth service currently in dev mode.";
+      Alert.alert(
+        "Sign Up Notice",
+        `${msg}\n\nContinue in Guest / Demo mode to explore SmartTrip AI?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Continue as Guest",
+            onPress: () => router.replace("/(root)/(tabs)/home"),
+          },
+        ]
+      );
     }
   };
   const onPressVerify = async () => {
@@ -76,7 +100,7 @@ const SignUp = () => {
       // for more info on error handling
       setVerification({
         ...verification,
-        error: err.errors[0].longMessage,
+        error: err?.errors?.[0]?.longMessage || "Verification failed.",
         state: "failed",
       });
     }
@@ -119,6 +143,12 @@ const SignUp = () => {
             title="Sign Up"
             onPress={onSignUpPress}
             className="mt-6"
+          />
+          <CustomButton
+            title="Continue as Guest (Demo Mode)"
+            onPress={() => router.replace("/(root)/(tabs)/home")}
+            className="mt-3 bg-neutral-200"
+            textVariant="secondary"
           />
           <OAuth />
           <Link

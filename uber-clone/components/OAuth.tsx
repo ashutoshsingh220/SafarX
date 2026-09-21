@@ -10,14 +10,40 @@ const OAuth = () => {
   const { startOAuthFlow } = useOAuth({ strategy: "oauth_google" });
 
   const handleGoogleSignIn = async () => {
-    const result = await googleOAuth(startOAuthFlow);
+    try {
+      const result = await googleOAuth(startOAuthFlow);
 
-    if (result.code === "session_exists") {
-      Alert.alert("Success", "Session exists. Redirecting to home screen.");
-      router.replace("/(root)/(tabs)/home");
+      if (result.code === "session_exists" || result.success) {
+        Alert.alert("Success", "Redirecting to home screen.");
+        router.replace("/(root)/(tabs)/home");
+        return;
+      }
+
+      Alert.alert(
+        "Notice",
+        result.message || "Google sign-in unavailable in development mode.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Continue as Guest",
+            onPress: () => router.replace("/(root)/(tabs)/home"),
+          },
+        ]
+      );
+    } catch (err: any) {
+      console.log("OAuth error:", err);
+      Alert.alert(
+        "Notice",
+        "Sign-in encountered an error. Continue as guest?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Continue as Guest",
+            onPress: () => router.replace("/(root)/(tabs)/home"),
+          },
+        ]
+      );
     }
-
-    Alert.alert(result.success ? "Success" : "Error", result.message);
   };
 
   return (

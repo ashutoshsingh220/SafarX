@@ -17,6 +17,12 @@ const Layout = () => {
           headerShown: false,
         }}
       />
+      <Stack.Screen
+        name="smarttrip"
+        options={{
+          headerShown: false,
+        }}
+      />
     </Stack>
   );
 };
