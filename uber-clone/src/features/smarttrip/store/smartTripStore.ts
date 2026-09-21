@@ -4,6 +4,8 @@ import type {
   BundleQuote,
   AgentMessage,
   SearchFormData,
+  MultimodalPlan,
+  MultimodalBooking,
 } from "../types/smarttrip";
 
 interface SmartTripState {
@@ -13,6 +15,13 @@ interface SmartTripState {
   setSearchForm: (form: Partial<SearchFormData>) => void;
   setSearchResults: (results: TransportResult[]) => void;
   setIsSearching: (loading: boolean) => void;
+
+  multimodalPlans: MultimodalPlan[];
+  selectedPlan: MultimodalPlan | null;
+  confirmedBooking: MultimodalBooking | null;
+  setMultimodalPlans: (plans: MultimodalPlan[]) => void;
+  setSelectedPlan: (plan: MultimodalPlan | null) => void;
+  setConfirmedBooking: (booking: MultimodalBooking | null) => void;
 
   selectedTransport: TransportResult | null;
   currentBundle: BundleQuote | null;
@@ -46,6 +55,13 @@ export const useSmartTripStore = create<SmartTripState>((set) => ({
     })),
   setSearchResults: (results) => set({ searchResults: results }),
   setIsSearching: (loading) => set({ isSearching: loading }),
+
+  multimodalPlans: [],
+  selectedPlan: null,
+  confirmedBooking: null,
+  setMultimodalPlans: (plans) => set({ multimodalPlans: plans }),
+  setSelectedPlan: (plan) => set({ selectedPlan: plan }),
+  setConfirmedBooking: (booking) => set({ confirmedBooking: booking }),
 
   selectedTransport: null,
   currentBundle: null,

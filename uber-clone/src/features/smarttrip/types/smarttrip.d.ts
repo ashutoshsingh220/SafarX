@@ -38,3 +38,43 @@ export interface AgentMessage {
   content: string;
   timestamp: number;
 }
+
+export interface MultimodalLeg {
+  leg_index: number;
+  leg_type: "FIRST_MILE" | "LONG_HAUL" | "LAST_MILE";
+  mode: string;
+  operator: string;
+  origin: string;
+  destination: string;
+  distance_km: number;
+  duration_minutes: number;
+  fare: number;
+  description?: string;
+  vehicle_icon: string;
+}
+
+export interface MultimodalPlan {
+  plan_id: string;
+  badge?: "CHEAPEST" | "FASTEST" | "BEST_VALUE" | "DIRECT_CAB";
+  primary_mode: "TRAIN" | "FLIGHT" | "BUS" | "DIRECT_CAB";
+  total_fare: number;
+  total_duration_minutes: number;
+  total_distance_km: number;
+  legs: MultimodalLeg[];
+  summary: string;
+}
+
+export interface MultimodalBooking {
+  booking_id: string;
+  pnr: string;
+  status: string;
+  total_fare: number;
+  primary_mode: string;
+  origin_address: string;
+  destination_address: string;
+  badge?: string;
+  legs: MultimodalLeg[];
+  qr_code_payload: string;
+  created_at: string;
+}
+
