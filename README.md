@@ -106,15 +106,15 @@ flowchart TD
 ### 1. 🤖 Autonomous Gemini 2.0 Flash Travel Agent
 - **Natural Language Planning**: Handles ambiguous, conversational transit requests (*"Plan me a trip from Susgaon Pune to Pithoragarh with minimum walking"*).
 - **Structured Tool Calling**: Operates with Google GenAI function declarations:
-  - search_routes: Multi-modal queries across cabs, buses, express trains, and flights.
-  - price_bundle: Dynamically computes S1–S5 financial subsidies.
-  - ook_route: Dispatches booking confirmation intents.
+  - `search_routes`: Multi-modal queries across cabs, buses, express trains, and flights.
+  - `price_bundle`: Dynamically computes S1–S5 financial subsidies.
+  - `book_route`: Dispatches booking confirmation intents.
 - **Resilient Fallback**: Includes deterministic offline mock capabilities for zero-latency local development.
 
 ### 2. 💸 S1–S5 Algorithmic Pricing Engine
 SmartTrip AI implements proprietary algorithmic fare rules to eliminate price gouging on last-mile segments:
 - **S1 (High-Demand Corridor Cap)**: Caps high-density feeder corridor trips at ₹50.
-- **S2 (Commission Cross-Subsidization)**: Reinvests up to 50% of the trunk bus/train commission directly into subsidizing the user's last-mile cab (min(50% trunk commission, 40% feeder fare)).
+- **S2 (Commission Cross-Subsidization)**: Reinvests up to 50% of the trunk bus/train commission directly into subsidizing the user's last-mile cab (`min(50% trunk commission, 40% feeder fare)`).
 - **S3 (Unified Bundle Pricing)**: Fuses intercity transport and feeder transfer into a single transparent price.
 - **S4 (SmartTrip Plus Subscription)**: Reduces pre-subsidy feeder fares to ₹20 for subscribed users.
 - **S5 (Early Bird Incentive)**: Unlocks an additional 10% discount on last-mile transfers booked $\ge 6$ hours in advance.
@@ -125,13 +125,13 @@ SmartTrip AI implements proprietary algorithmic fare rules to eliminate price go
 - **Live Google Directions Engine**: Polyline encoding/decoding with real-time distance and driving duration telemetry.
 
 ### 4. 🧠 Tri-Model Predictive ML Suite
-- **Spatial Demand Clustering (KMeans)**: Dynamically groups traveler coordinates into high-efficiency shuttle aggregation points.
-- **ETA Predictor (XGBoost)**: Supervised regression model trained on historical traffic metrics, hour-of-day, and road classification to predict precise arrival windows.
-- **Journey Option Ranker (RandomForest)**: Ranks multimodal options against a multi-objective loss function (cost, duration, physical transfers, comfort).
+- **Spatial Demand Clustering (`KMeans`)**: Dynamically groups traveler coordinates into high-efficiency shuttle aggregation points.
+- **ETA Predictor (`XGBoost`)**: Supervised regression model trained on historical traffic metrics, hour-of-day, and road classification to predict precise arrival windows.
+- **Journey Option Ranker (`RandomForest`)**: Ranks multimodal options against a multi-objective loss function (cost, duration, physical transfers, comfort).
 
 ### 5. 📡 Real-Time Telemetry & Driver Simulation
-- **Bidirectional WebSockets**: Stream vehicle telemetry (/ws/track/{journey_id}) with live GPS lat/long updates.
-- **Driver Simulator**: Built-in test script (driver_simulator.py) for stress-testing WebSocket connections and route progression.
+- **Bidirectional WebSockets**: Stream vehicle telemetry (`/ws/track/{journey_id}`) with live GPS lat/long updates.
+- **Driver Simulator**: Built-in test script (`driver_simulator.py`) for stress-testing WebSocket connections and route progression.
 
 ---
 
@@ -142,7 +142,7 @@ SmartTrip AI implements proprietary algorithmic fare rules to eliminate price go
 | **Mobile Frontend** | React Native, Expo 51, Expo Router v3, NativeWind (TailwindCSS), Zustand, Lucide Icons |
 | **Maps & Geospatial** | React Native Maps, Google Maps Platform (Places New, Directions, Geocoding), OSRM |
 | **Backend Framework** | Python 3.11 / 3.12, FastAPI, Asyncio, Pydantic v2, Uvicorn |
-| **Agentic AI** | Google Gemini 2.0 Flash (google-genai SDK), Native Function Calling |
+| **Agentic AI** | Google Gemini 2.0 Flash (`google-genai` SDK), Native Function Calling |
 | **Database & GIS** | PostgreSQL 15, PostGIS 3.3, GeoAlchemy2, SQLAlchemy 2.0 (Async), Alembic |
 | **Caching & Messaging** | Redis 7, Starlette WebSockets |
 | **Machine Learning** | Scikit-learn, XGBoost 2.0+, NumPy, Pandas |
@@ -153,7 +153,7 @@ SmartTrip AI implements proprietary algorithmic fare rules to eliminate price go
 
 ## 📂 Repository Layout
 
-`
+```text
 SmartTripAI/
 ├── CONTRIBUTING.md                 # Developer setup, coding standards, and PR workflows
 ├── DEVELOPMENT_JOURNAL.md          # Chronological development timeline and decisions
@@ -182,7 +182,7 @@ SmartTripAI/
     │       └── smarttrip/          # Multimodal Trip Planner & Agent screens
     ├── components/                 # Reusable UI widgets (Map, Input, RideCard)
     └── store/                      # Zustand reactive global state stores
-`
+```
 
 ---
 
@@ -198,7 +198,7 @@ SmartTripAI/
 
 ### Step 1: Launch Backend Infrastructure
 
-`ash
+```bash
 cd smarttrip/backend
 
 # Set up Python virtual environment
@@ -210,26 +210,26 @@ pip install -r requirements.txt
 
 # Start FastAPI server
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-`
+```
 
 - **Interactive Swagger Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
 - **Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
 
 *(Optional: Run full multi-container stack via Docker Compose)*
-`ash
+```bash
 cd smarttrip
 docker compose up -d --build
 docker compose exec api alembic upgrade head
 docker compose exec api python seed.py
-`
+```
 
 ---
 
-### Step 2: Launch Mobile Application (uber-clone)
+### Step 2: Launch Mobile Application (`uber-clone`)
 
 In a new terminal window:
 
-`ash
+```bash
 cd uber-clone
 
 # Install npm dependencies
@@ -241,9 +241,9 @@ adb reverse tcp:8000 tcp:8000
 
 # Start Metro Bundler for standalone development client
 npx expo start --dev-client
-`
+```
 
-> **Note**: Press  in the Metro terminal or open the installed **Ryde / Uber** app on your Android emulator to load the live bundle.
+> **Note**: Press `a` in the Metro terminal or open the installed **Ryde / Uber** app on your Android emulator to load the live bundle.
 
 ---
 
@@ -251,18 +251,18 @@ npx expo start --dev-client
 
 To test the Gemini 2.0 Flash travel agent directly from your command line:
 
-`ash
+```bash
 cd smarttrip/backend
 python cli_agent.py
-`
+```
 
-`
+```text
 ============================================================
            SmartTrip AI - Conversational Terminal
 ============================================================
 You: I want to travel from Susgaon to Bangalore tomorrow morning.
 Agent: I found 3 multimodal options combining a local cab feeder with an express bus/train...
-`
+```
 
 ---
 
