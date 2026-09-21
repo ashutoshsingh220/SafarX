@@ -46,24 +46,37 @@ const Home = () => {
 
   useEffect(() => {
     (async () => {
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        setHasPermission(false);
-        return;
-      }
-
-      let location = await Location.getCurrentPositionAsync({});
-
-      const address = await Location.reverseGeocodeAsync({
-        latitude: location.coords?.latitude!,
-        longitude: location.coords?.longitude!,
-      });
-
+      // Set initial user location so map displays immediately
       setUserLocation({
-        latitude: location.coords?.latitude,
-        longitude: location.coords?.longitude,
-        address: `${address[0].name}, ${address[0].region}`,
+        latitude: 18.5204,
+        longitude: 73.8567,
+        address: "Pune, Maharashtra",
       });
+
+      try {
+        let { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") {
+          setHasPermission(false);
+          return;
+        }
+
+        let location = await Location.getCurrentPositionAsync({});
+
+        const address = await Location.reverseGeocodeAsync({
+          latitude: location.coords?.latitude!,
+          longitude: location.coords?.longitude!,
+        });
+
+        if (address && address.length > 0) {
+          setUserLocation({
+            latitude: location.coords?.latitude,
+            longitude: location.coords?.longitude,
+            address: `${address[0].name || ""}, ${address[0].region || address[0].city || ""}`,
+          });
+        }
+      } catch (err) {
+        console.log("GPS Location notice:", err);
+      }
     })();
   }, []);
 

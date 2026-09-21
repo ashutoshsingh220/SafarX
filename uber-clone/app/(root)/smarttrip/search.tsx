@@ -1,14 +1,17 @@
 import React, { useState } from "react";
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, TextInput } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSmartTripStore } from "../../../src/features/smarttrip/store/smartTripStore";
 import { planMultimodalJourney } from "../../../src/features/smarttrip/lib/api";
+import { GooglePlacesAutocompleteInput } from "../../../src/features/smarttrip/components/GooglePlacesAutocompleteInput";
 import { router } from "expo-router";
 
 export default function TravelSearchScreen() {
   const { multimodalPlans, setMultimodalPlans, setSelectedPlan } = useSmartTripStore();
-  const [origin, setOrigin] = useState("Symbiosis Institute of Technology, Lavale, Pune");
-  const [destination, setDestination] = useState("Har Ki Pauri, Haridwar");
+  const [origin, setOrigin] = useState("");
+  const [destination, setDestination] = useState("");
+  const [originCoords, setOriginCoords] = useState<{ lat?: number; lon?: number }>({});
+  const [destinationCoords, setDestinationCoords] = useState<{ lat?: number; lon?: number }>({});
   const [feederMode, setFeederMode] = useState<"AUTO" | "CAB">("AUTO");
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -19,14 +22,13 @@ export default function TravelSearchScreen() {
     setIsSearching(true);
     setHasSearched(true);
     try {
-      // Default coordinates for SIT Pune and Har Ki Pauri
       const results = await planMultimodalJourney({
         origin_name: origin.trim(),
-        origin_lat: 18.5362,
-        origin_lon: 73.7297,
+        origin_lat: originCoords.lat ?? 18.5362,
+        origin_lon: originCoords.lon ?? 73.7297,
         destination_name: destination.trim(),
-        destination_lat: 29.9567,
-        destination_lon: 78.1700,
+        destination_lat: destinationCoords.lat ?? 29.9567,
+        destination_lon: destinationCoords.lon ?? 78.1700,
         feeder_mode: feederMode,
       });
       setMultimodalPlans(results);
@@ -70,22 +72,39 @@ export default function TravelSearchScreen() {
         </View>
       </View>
 
-      <ScrollView className="flex-1 p-4" keyboardShouldPersistTaps="handled">
-        <View className="bg-white p-4 rounded-2xl shadow-sm border border-neutral-200 mb-5">
-          <Text className="text-xs font-JakartaBold text-gray-400 uppercase mb-1">ORIGIN (FIRST MILE)</Text>
-          <TextInput
-            value={origin}
+      <ScrollView className="flex-1 p-4" keyboardShouldPersistTaps="always">
+        <View
+          style={{ zIndex: 100 }}
+          className="bg-white p-4 rounded-2xl shadow-sm border border-neutral-200 mb-5"
+        >
+          <GooglePlacesAutocompleteInput
+            label="ORIGIN (FIRST MILE)"
+            placeholder="Enter starting point (e.g. Pune, SIT Lavale)"
+            initialValue={origin}
+            icon="📍"
+            zIndex={40}
+            onSelectPlace={(place) => {
+              setOrigin(place.address);
+              if (place.latitude && place.longitude) {
+                setOriginCoords({ lat: place.latitude, lon: place.longitude });
+              }
+            }}
             onChangeText={setOrigin}
-            className="bg-neutral-100 p-3 rounded-xl font-JakartaMedium text-sm mb-3 border border-neutral-200"
-            placeholder="Enter starting address (e.g. SIT Lavale, Pune)"
           />
 
-          <Text className="text-xs font-JakartaBold text-gray-400 uppercase mb-1">DESTINATION (LAST MILE)</Text>
-          <TextInput
-            value={destination}
+          <GooglePlacesAutocompleteInput
+            label="DESTINATION (LAST MILE)"
+            placeholder="Enter destination (e.g. Haridwar, Mumbai)"
+            initialValue={destination}
+            icon="🎯"
+            zIndex={30}
+            onSelectPlace={(place) => {
+              setDestination(place.address);
+              if (place.latitude && place.longitude) {
+                setDestinationCoords({ lat: place.latitude, lon: place.longitude });
+              }
+            }}
             onChangeText={setDestination}
-            className="bg-neutral-100 p-3 rounded-xl font-JakartaMedium text-sm mb-3 border border-neutral-200"
-            placeholder="Enter destination (e.g. Har Ki Pauri, Haridwar)"
           />
 
           <Text className="text-xs font-JakartaBold text-gray-400 uppercase mb-1">PREFERRED FEEDER (LOCAL TRANSFER)</Text>

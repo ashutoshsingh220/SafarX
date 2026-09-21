@@ -19,7 +19,7 @@ export default function SmartTripTabScreen() {
           <View className="flex-1 mr-3">
             <Text className="text-white font-JakartaBold text-xl mb-1">🤖 AI Conversational Agent</Text>
             <Text className="text-white/80 font-Jakarta text-sm">
-              Chat naturally to find & book door-to-door trips using Gemini 2.0 Flash.
+              Chat naturally to find & book door-to-door trips with your intelligent AI companion.
             </Text>
           </View>
           <Text className="text-white text-2xl font-JakartaBold">→</Text>
