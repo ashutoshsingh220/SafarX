@@ -8,9 +8,7 @@ import {
   ScrollView,
 } from "react-native";
 
-const GOOGLE_API_KEY =
-  process.env.EXPO_PUBLIC_PLACES_API_KEY ||
-  "AIzaSyBPJDpVUMkQJHfa-stLsXLQFuBAHvBIOFI";
+const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_PLACES_API_KEY || "";
 
 export interface PlaceResult {
   address: string;

@@ -22,7 +22,7 @@
       },
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyBPJDpVUMkQJHfa-stLsXLQFuBAHvBIOFI"
+          "apiKey": "YOUR_GOOGLE_MAPS_API_KEY"
         }
       },
       "package": "com.anonymous.uber"

@@ -15,9 +15,7 @@ import MapView, { Marker, Polyline, PROVIDER_GOOGLE, UrlTile } from "react-nativ
 import { GooglePlacesAutocompleteInput } from "@/src/features/smarttrip/components/GooglePlacesAutocompleteInput";
 import { useLocationStore } from "@/store";
 
-const GOOGLE_API_KEY =
-  process.env.EXPO_PUBLIC_PLACES_API_KEY ||
-  "AIzaSyBPJDpVUMkQJHfa-stLsXLQFuBAHvBIOFI";
+const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_PLACES_API_KEY || "";
 
 const { width } = Dimensions.get("window");
 
