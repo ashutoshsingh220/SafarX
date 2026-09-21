@@ -24,7 +24,8 @@
         "googleMaps": {
           "apiKey": "AIzaSyBPJDpVUMkQJHfa-stLsXLQFuBAHvBIOFI"
         }
-      }
+      },
+      "package": "com.anonymous.uber"
     },
     "web": {
       "bundler": "metro",

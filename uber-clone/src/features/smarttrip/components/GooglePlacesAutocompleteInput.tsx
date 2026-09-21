@@ -26,11 +26,12 @@ interface Suggestion {
 }
 
 interface GooglePlacesAutocompleteInputProps {
-  label: string;
+  label?: string;
   placeholder: string;
   initialValue?: string;
   icon?: string;
   zIndex?: number;
+  containerClassName?: string;
   onSelectPlace: (place: PlaceResult) => void;
   onChangeText?: (text: string) => void;
 }
@@ -41,6 +42,7 @@ export const GooglePlacesAutocompleteInput = ({
   initialValue = "",
   icon = "📍",
   zIndex = 10,
+  containerClassName = "relative mb-3",
   onSelectPlace,
   onChangeText,
 }: GooglePlacesAutocompleteInputProps) => {
@@ -58,7 +60,6 @@ export const GooglePlacesAutocompleteInput = ({
     if (!input.trim() || input.trim().length < 2) {
       setSuggestions([]);
       setIsOpen(false);
-      setLoading(false);
       return;
     }
 
@@ -74,6 +75,7 @@ export const GooglePlacesAutocompleteInput = ({
           },
           body: JSON.stringify({
             input: input.trim(),
+            includedRegionCodes: ["in"],
           }),
         }
       );
@@ -138,19 +140,16 @@ export const GooglePlacesAutocompleteInput = ({
         }
       );
       const details = await res.json();
-      if (details?.location) {
-        onSelectPlace({
-          address: item.fullText,
-          latitude: details.location.latitude,
-          longitude: details.location.longitude,
-        });
-        return;
-      }
-    } catch (err) {
-      console.log("Details fetch error:", err);
+      const lat = details.location?.latitude;
+      const lon = details.location?.longitude;
+      onSelectPlace({
+        address: item.fullText,
+        latitude: lat,
+        longitude: lon,
+      });
+    } catch (e) {
+      onSelectPlace({ address: item.fullText });
     }
-
-    onSelectPlace({ address: item.fullText });
   };
 
   const handleClear = () => {
@@ -167,16 +166,29 @@ export const GooglePlacesAutocompleteInput = ({
         zIndex: isOpen ? 9999 : zIndex,
         elevation: isOpen ? 50 : zIndex,
       }}
-      className="relative mb-4"
+      className={containerClassName}
     >
-      <Text className="text-xs font-JakartaBold text-gray-400 uppercase mb-1">
-        {label}
-      </Text>
+      {label ? (
+        <Text className="text-xs font-JakartaBold text-gray-400 uppercase mb-1">
+          {label}
+        </Text>
+      ) : null}
 
-      <View className="flex-row items-center bg-neutral-100 rounded-2xl px-3.5 py-2.5 border border-neutral-200/80">
-        <Text className="text-base mr-2">{icon}</Text>
+      <View
+        style={{
+          backgroundColor: "#F3F4F6",
+          borderRadius: 12,
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          borderWidth: 1,
+          borderColor: "#E5E7EB",
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        {icon ? <Text className="text-base mr-2">{icon}</Text> : null}
         <TextInput
-          className="flex-1 font-Jakarta text-base text-gray-900 py-1"
+          style={{ flex: 1, fontSize: 15, color: "#111827", paddingVertical: 0 }}
           placeholder={placeholder}
           placeholderTextColor="#9CA3AF"
           value={query}
@@ -198,7 +210,7 @@ export const GooglePlacesAutocompleteInput = ({
         <View
           style={{
             position: "absolute",
-            top: 72,
+            top: label ? 74 : 56,
             left: 0,
             right: 0,
             zIndex: 9999,

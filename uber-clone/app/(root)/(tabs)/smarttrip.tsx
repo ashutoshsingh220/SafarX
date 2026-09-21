@@ -30,9 +30,9 @@ export default function SmartTripTabScreen() {
           className="bg-white p-5 rounded-2xl mb-4 border border-neutral-200 shadow-sm flex-row items-center justify-between"
         >
           <View className="flex-1 mr-3">
-            <Text className="text-black font-JakartaBold text-xl mb-1">🗺️ Multimodal Search</Text>
+            <Text className="text-black font-JakartaBold text-xl mb-1">🎫 Trip Planner & Booking</Text>
             <Text className="text-gray-500 font-Jakarta text-sm">
-              Compare feeder shuttles, intercity buses, trains, and flights.
+              Plan & book door-to-door trips across cabs, express trains & flights.
             </Text>
           </View>
           <Text className="text-primary-500 text-2xl font-JakartaBold">→</Text>

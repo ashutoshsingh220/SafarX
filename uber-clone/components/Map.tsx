@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
-import MapView, { Marker, PROVIDER_DEFAULT, UrlTile } from "react-native-maps";
+import MapView, { Marker, PROVIDER_GOOGLE, UrlTile } from "react-native-maps";
 import MapViewDirections from "react-native-maps-directions";
 
 import { icons } from "@/constants";
@@ -109,18 +109,18 @@ const Map = () => {
 
   return (
     <MapView
-      provider={PROVIDER_DEFAULT}
-      className="w-full h-full rounded-2xl"
+      provider={PROVIDER_GOOGLE}
+      style={{ width: "100%", height: "100%", borderRadius: 16 }}
       mapType="none"
       initialRegion={region}
       showsUserLocation={true}
       userInterfaceStyle="light"
     >
       <UrlTile
-        urlTemplate="https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
-        maximumZ={19}
+        urlTemplate="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+        maximumZ={22}
         flipY={false}
-        zIndex={-1}
+        zIndex={1}
       />
       <Marker
         key="user-current-location"
@@ -129,7 +129,6 @@ const Map = () => {
           longitude: effectiveLon,
         }}
         title="Your Current Location"
-        description="Pune, Maharashtra"
         pinColor="#0286FF"
       />
 
@@ -167,7 +166,8 @@ const Map = () => {
             }}
             apikey={directionsAPI!}
             strokeColor="#0286FF"
-            strokeWidth={2}
+            strokeWidth={3}
+            onError={(errorMessage) => console.log("MapViewDirections:", errorMessage)}
           />
         </>
       )}

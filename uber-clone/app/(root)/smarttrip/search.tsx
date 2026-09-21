@@ -63,12 +63,12 @@ export default function TravelSearchScreen() {
   return (
     <SafeAreaView className="flex-1 bg-neutral-100">
       <View className="flex-row items-center p-4 bg-white shadow-sm border-b border-neutral-200">
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
-          <Text className="text-2xl">←</Text>
+        <TouchableOpacity onPress={() => router.back()} className="p-2 mr-3 bg-neutral-100 rounded-full">
+          <Text className="text-base font-JakartaBold">←</Text>
         </TouchableOpacity>
         <View>
-          <Text className="text-xl font-JakartaBold">Door-to-Door Travel Planner</Text>
-          <Text className="text-xs font-Jakarta text-gray-500">First-Mile Feeder + Intercity + Last-Mile</Text>
+          <Text className="text-xl font-JakartaBold">Trip Planner</Text>
+          <Text className="text-xs font-Jakarta text-gray-500">Door-to-Door Cabs, Express Trains & Flights</Text>
         </View>
       </View>
 
@@ -77,35 +77,46 @@ export default function TravelSearchScreen() {
           style={{ zIndex: 100 }}
           className="bg-white p-4 rounded-2xl shadow-sm border border-neutral-200 mb-5"
         >
-          <GooglePlacesAutocompleteInput
-            label="ORIGIN (FIRST MILE)"
-            placeholder="Enter starting point (e.g. Pune, SIT Lavale)"
-            initialValue={origin}
-            icon="📍"
-            zIndex={40}
-            onSelectPlace={(place) => {
-              setOrigin(place.address);
-              if (place.latitude && place.longitude) {
-                setOriginCoords({ lat: place.latitude, lon: place.longitude });
-              }
-            }}
-            onChangeText={setOrigin}
-          />
+          {/* Uber-style connected pickup & destination block */}
+          <View className="flex-row items-center mb-3">
+            <View className="items-center mr-3" style={{ height: 106, justifyContent: "space-between", paddingVertical: 18 }}>
+              <View className="w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-emerald-200" />
+              <View className="w-0.5 flex-1 bg-neutral-300 my-1" />
+              <View className="w-3.5 h-3.5 rounded-sm bg-neutral-800" />
+            </View>
 
-          <GooglePlacesAutocompleteInput
-            label="DESTINATION (LAST MILE)"
-            placeholder="Enter destination (e.g. Haridwar, Mumbai)"
-            initialValue={destination}
-            icon="🎯"
-            zIndex={30}
-            onSelectPlace={(place) => {
-              setDestination(place.address);
-              if (place.latitude && place.longitude) {
-                setDestinationCoords({ lat: place.latitude, lon: place.longitude });
-              }
-            }}
-            onChangeText={setDestination}
-          />
+            <View className="flex-1">
+              <GooglePlacesAutocompleteInput
+                placeholder="Enter starting point"
+                initialValue={origin}
+                icon=""
+                zIndex={50}
+                containerClassName="relative mb-2.5"
+                onSelectPlace={(place) => {
+                  setOrigin(place.address);
+                  if (place.latitude && place.longitude) {
+                    setOriginCoords({ lat: place.latitude, lon: place.longitude });
+                  }
+                }}
+                onChangeText={setOrigin}
+              />
+
+              <GooglePlacesAutocompleteInput
+                placeholder="Enter destination"
+                initialValue={destination}
+                icon=""
+                zIndex={40}
+                containerClassName="relative"
+                onSelectPlace={(place) => {
+                  setDestination(place.address);
+                  if (place.latitude && place.longitude) {
+                    setDestinationCoords({ lat: place.latitude, lon: place.longitude });
+                  }
+                }}
+                onChangeText={setDestination}
+              />
+            </View>
+          </View>
 
           <Text className="text-xs font-JakartaBold text-gray-400 uppercase mb-1">PREFERRED FEEDER (LOCAL TRANSFER)</Text>
           <View className="flex-row gap-x-2 mb-4">

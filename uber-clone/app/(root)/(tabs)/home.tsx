@@ -87,7 +87,15 @@ const Home = () => {
   }) => {
     setDestinationLocation(location);
 
-    router.push("/(root)/find-ride");
+    router.push({
+      pathname: "/(root)/explore-place" as any,
+      params: {
+        name: location.address.split(",")[0] || location.address,
+        address: location.address,
+        latitude: location.latitude.toString(),
+        longitude: location.longitude.toString(),
+      },
+    });
   };
 
   return (

@@ -42,7 +42,17 @@ node_modules/
 # Temp files
 *.tmp
 tmp/
+smarttrip/frontend/build/
+build/
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Android build artifacts
+**/android/app/build/
+**/android/build/
+**/android/.gradle/
+**/android/local.properties
+**/android/.cxx/
+**/android/*.iml
