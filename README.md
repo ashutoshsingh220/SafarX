@@ -150,8 +150,6 @@ SmartTrip AI implements proprietary algorithmic fare rules to eliminate price go
 
 ```text
 SmartTripAI/
-├── CONTRIBUTING.md                 # Developer setup, coding standards, and PR workflows
-├── DEVELOPMENT_JOURNAL.md          # Chronological development timeline and decisions
 ├── README.md                       # Main repository architecture and documentation
 ├── docs/
 │   └── screenshots/                # High-res mobile screenshots captured from emulator
