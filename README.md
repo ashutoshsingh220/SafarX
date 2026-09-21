@@ -26,15 +26,10 @@
   <p><em>Real-time screenshots captured from the standalone Android build (Pixel 8)</em></p>
 </div>
 
-| 1. High-Fidelity Street Maps | 2. Google Maps Place Explorer | 3. Live Directions & ETAs |
-| :---: | :---: | :---: |
-| <img src="docs/screenshots/01_home_screen_map.png" width="280" alt="Home Screen Map" /> | <img src="docs/screenshots/04_place_explorer_overview.png" width="280" alt="Place Explorer Overview" /> | <img src="docs/screenshots/02_place_explorer_directions.png" width="280" alt="Live Directions" /> |
-| **Native Vector Map Tiles**<br/>• Real-time driver markers (UberGo, Premier, Auto)<br/>• Sub-meter GPS positioning<br/>• Crisp topographic street layer | **Intelligent Place Explorer**<br/>• Category filters (Dining, Hotels, Sights)<br/>• Multilingual script details<br/>• High-res photo & highlight gallery | **Google Directions Telemetry**<br/>• Dynamic distance & duration calculations<br/>• Overview polyline tracing<br/>• Instant Cab & Door-to-Door booking buttons |
-
-| 4. Connected Trip Planner | 5. Places Autocomplete | 6. SmartTrip Multimodal Hub |
-| :---: | :---: | :---: |
-| <img src="docs/screenshots/03_trip_planner_multimodal.png" width="280" alt="Trip Planner" /> | <img src="docs/screenshots/05_places_autocomplete.png" width="280" alt="Places Autocomplete" /> | <img src="docs/screenshots/06_smarttrip_hub.png" width="280" alt="SmartTrip Hub" /> |
-| **Connected Uber-Style Inputs**<br/>• Green pickup dot &rarr; Black destination pin<br/>• Clean placeholders without sample text<br/>• Dynamic local feeder selectors (Auto / Cab) | **Google Places API (New)**<br/>• Debounced predictive search<br/>• Structured secondary address formatting<br/>• Direct route dispatch | **Integrated Gateway**<br/>• AI Conversational Agent entry<br/>• Multi-modal itinerary booking engine<br/>• Live journey telemetry tracking |
+| 1. High-Fidelity Street Maps | 2. Google Maps Place Explorer | 3. Live Directions & ETAs | 4. Connected Trip Planner |
+| :---: | :---: | :---: | :---: |
+| <img src="docs/screenshots/01_home_screen_map.png" width="215" alt="Home Screen Map" /> | <img src="docs/screenshots/04_place_explorer_overview.png" width="215" alt="Place Explorer Overview" /> | <img src="docs/screenshots/02_place_explorer_directions.png" width="215" alt="Live Directions" /> | <img src="docs/screenshots/03_trip_planner_multimodal.png" width="215" alt="Trip Planner" /> |
+| **Native Vector Map Tiles**<br/>• Real-time driver markers (UberGo, Premier, Auto)<br/>• Sub-meter GPS positioning<br/>• Crisp topographic street layer | **Intelligent Place Explorer**<br/>• Category filters (Dining, Hotels, Sights)<br/>• Multilingual script details<br/>• High-res photo & highlight gallery | **Google Directions Telemetry**<br/>• Dynamic distance & duration calculations<br/>• Overview polyline tracing<br/>• Instant Cab & Door-to-Door booking buttons | **Connected Uber-Style Inputs**<br/>• Green pickup dot &rarr; Black destination pin<br/>• Clean placeholders without sample text<br/>• Dynamic local feeder selectors (Auto / Cab) |
 
 ---
 
