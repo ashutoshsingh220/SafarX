@@ -147,8 +147,9 @@ const SignUp = () => {
           <CustomButton
             title="Continue as Guest (Demo Mode)"
             onPress={() => router.replace("/(root)/(tabs)/home")}
-            className="mt-3 bg-neutral-200"
-            textVariant="secondary"
+            className="mt-3"
+            bgVariant="outline"
+            textVariant="primary"
           />
           <OAuth />
           <Link
