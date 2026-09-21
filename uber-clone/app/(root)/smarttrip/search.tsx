@@ -38,8 +38,9 @@ export default function TravelSearchScreen() {
   };
 
   const handleSelectPlan = (plan: any) => {
+    console.log("🎯 handleSelectPlan called for plan:", plan.id, plan.badge);
     setSelectedPlan(plan);
-    router.push("/(root)/smarttrip/bundle");
+    router.push("/(root)/smarttrip/bundle" as any);
   };
 
   const getBadgeStyle = (badge?: string) => {
