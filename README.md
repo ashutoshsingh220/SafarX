@@ -263,8 +263,8 @@ Agent: I found 3 multimodal options combining a local cab feeder with an express
 
 ## 👨‍💻 Authors & Acknowledgements
 
-Developed with passion by **Ashutosh Singh**,and team contributors.
+Developed with passion by **Ashutosh Singh** and team contributors.
 
-- **GitHub**: [@ashutoshsingh220](https://github.com/ashutoshsingh220) | 
+- **GitHub**: [@ashutoshsingh220](https://github.com/ashutoshsingh220)
 - **Repository**: [SmartTripAI](https://github.com/ashutoshsingh220/SmartTripAI)
 - **License**: MIT License
