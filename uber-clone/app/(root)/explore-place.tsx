@@ -362,14 +362,6 @@ export default function ExplorePlaceScreen() {
             title={placeName}
             pinColor="#EF4444"
           />
-          <Marker
-            coordinate={{
-              latitude: effectiveUserLat,
-              longitude: effectiveUserLon,
-            }}
-            title="Your Location"
-            pinColor="#0286FF"
-          />
           {showDirections && routePolyline.length > 0 && (
             <>
               {/* Outer stroke line */}

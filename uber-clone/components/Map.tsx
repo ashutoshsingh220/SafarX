@@ -177,33 +177,12 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
     }
   }, [markers, destinationLatitude, destinationLongitude, effectiveLat, effectiveLon]);
 
-  useEffect(() => {
-    if (currentLocationOnly && mapRef.current) {
-      mapRef.current.animateToRegion(
-        {
-          latitude: effectiveLat,
-          longitude: effectiveLon,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        },
-        500,
-      );
-    }
-  }, [currentLocationOnly, effectiveLat, effectiveLon]);
-
-  const region = currentLocationOnly
-    ? {
-        latitude: effectiveLat,
-        longitude: effectiveLon,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      }
-    : calculateRegion({
-        userLatitude: effectiveLat,
-        userLongitude: effectiveLon,
-        destinationLatitude,
-        destinationLongitude,
-      });
+  const region = calculateRegion({
+    userLatitude: effectiveLat,
+    userLongitude: effectiveLon,
+    destinationLatitude,
+    destinationLongitude,
+  });
 
   return (
     <MapView
