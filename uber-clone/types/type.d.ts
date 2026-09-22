@@ -8,6 +8,7 @@ declare interface Driver {
   car_image_url: string;
   car_seats: number;
   rating: number;
+  title?: string;
 }
 
 declare interface MarkerData {
@@ -23,6 +24,7 @@ declare interface MarkerData {
   last_name: string;
   time?: number;
   price?: string;
+  rate_per_km?: number;
 }
 
 declare interface MapProps {

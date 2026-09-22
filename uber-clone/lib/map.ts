@@ -130,46 +130,72 @@ export const calculateDriverTimes = async ({
     return;
 
   try {
-    const timesPromises = markers.map(async (marker) => {
-      let timeToUser = 600; // 10 min default
-      let timeToDestination = 1800; // 30 min default
-      let distanceKm = 15;
+    let timeToDestination = 1800; // seconds
+    let distanceKm = 15;
 
-      try {
-        const responseToDestination = await fetch(
-          `https://maps.googleapis.com/maps/api/directions/json?origin=${userLatitude},${userLongitude}&destination=${destinationLatitude},${destinationLongitude}&key=${directionsAPI}`,
-        );
-        const dataToDestination = await responseToDestination.json();
+    try {
+      // Query Google Directions API with real-time traffic conditions and multiple alternative routes
+      const responseToDestination = await fetch(
+        `https://maps.googleapis.com/maps/api/directions/json?origin=${userLatitude},${userLongitude}&destination=${destinationLatitude},${destinationLongitude}&departure_time=now&traffic_model=best_guess&alternatives=true&key=${directionsAPI}`,
+      );
+      const dataToDestination = await responseToDestination.json();
 
-        if (dataToDestination?.routes?.[0]?.legs?.[0]) {
-          const leg = dataToDestination.routes[0].legs[0];
-          timeToDestination = leg.duration?.value ?? 1800;
+      if (dataToDestination?.routes?.length > 0) {
+        // Algorithm: select the fastest route in real-time by duration_in_traffic
+        const sortedRoutes = [...dataToDestination.routes].sort((a, b) => {
+          const durA =
+            a.legs?.[0]?.duration_in_traffic?.value ??
+            a.legs?.[0]?.duration?.value ??
+            99999999;
+          const durB =
+            b.legs?.[0]?.duration_in_traffic?.value ??
+            b.legs?.[0]?.duration?.value ??
+            99999999;
+          return durA - durB;
+        });
+
+        const fastestRoute = sortedRoutes[0];
+        const leg = fastestRoute.legs?.[0];
+        if (leg) {
+          // Use real-time duration in traffic if available, otherwise regular duration
+          timeToDestination =
+            leg.duration_in_traffic?.value ?? leg.duration?.value ?? 1800;
           if (leg.distance?.value) {
             distanceKm = leg.distance.value / 1000;
           }
         }
-      } catch (err) {
-        console.log("Error fetching destination route:", err);
+      }
+    } catch (err) {
+      console.log("Error fetching real-time fastest route:", err);
+    }
+
+    const timesPromises = markers.map(async (marker) => {
+      const timeToUser = 600; // ~10 min driver arrival
+
+      // Pricing structure as requested:
+      // UberGo: ₹22 per kilometer
+      // UberPremier: ₹30 per kilometer
+      let perKm = 22;
+      let baseFare = 50;
+
+      if (marker.title?.toLowerCase().includes("premier")) {
+        perKm = 30; // ₹30/km for UberPremier
+        baseFare = 100;
+      } else if (marker.title?.toLowerCase().includes("auto")) {
+        perKm = 15;
+        baseFare = 30;
       }
 
+      const fare = Math.round(baseFare + distanceKm * perKm);
+      const price = fare.toLocaleString("en-IN");
       const totalTime = Math.round((timeToUser + timeToDestination) / 60);
 
-      // Realistic Indian Rupee pricing according to vehicle tier
-      let baseFare = 60;
-      let perKm = 16;
-      if (marker.title?.toLowerCase().includes("auto")) {
-        baseFare = 35;
-        perKm = 12;
-      } else if (marker.title?.toLowerCase().includes("premier")) {
-        baseFare = 120;
-        perKm = 22;
-      }
-
-      // If outstation (> 100 km), apply standard intercity rate
-      let fare = baseFare + distanceKm * perKm;
-      const price = Math.round(fare).toLocaleString("en-IN");
-
-      return { ...marker, time: totalTime, price };
+      return {
+        ...marker,
+        time: totalTime,
+        price,
+        rate_per_km: perKm,
+      };
     });
 
     return await Promise.all(timesPromises);

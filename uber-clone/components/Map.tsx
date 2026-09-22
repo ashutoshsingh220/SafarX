@@ -51,15 +51,32 @@ const Map = () => {
     const fetchRoute = async () => {
       try {
         const res = await fetch(
-          `https://maps.googleapis.com/maps/api/directions/json?origin=${effectiveLat},${effectiveLon}&destination=${destinationLatitude},${destinationLongitude}&key=${directionsAPI}`,
+          `https://maps.googleapis.com/maps/api/directions/json?origin=${effectiveLat},${effectiveLon}&destination=${destinationLatitude},${destinationLongitude}&departure_time=now&traffic_model=best_guess&alternatives=true&key=${directionsAPI}`,
         );
         const data = await res.json();
 
         if (data.status === "OK" && data.routes?.length > 0) {
-          const route = data.routes[0];
+          // Select fastest route in real-time considering traffic conditions
+          const sortedRoutes = [...data.routes].sort((a, b) => {
+            const durA =
+              a.legs?.[0]?.duration_in_traffic?.value ??
+              a.legs?.[0]?.duration?.value ??
+              99999999;
+            const durB =
+              b.legs?.[0]?.duration_in_traffic?.value ??
+              b.legs?.[0]?.duration?.value ??
+              99999999;
+            return durA - durB;
+          });
+
+          const route = sortedRoutes[0];
           const leg = route.legs?.[0];
-          if (leg?.duration?.text) {
-            setRouteDuration(leg.duration.text);
+          if (leg) {
+            const liveDuration =
+              leg.duration_in_traffic?.text || leg.duration?.text;
+            if (liveDuration) {
+              setRouteDuration(liveDuration);
+            }
           }
 
           if (route.overview_polyline?.points) {
@@ -73,7 +90,7 @@ const Map = () => {
               // Fit map camera to show the full route
               setTimeout(() => {
                 mapRef.current?.fitToCoordinates(decoded, {
-                  edgePadding: { top: 90, right: 60, bottom: 260, left: 60 },
+                  edgePadding: { top: 120, right: 60, bottom: 280, left: 60 },
                   animated: true,
                 });
               }, 400);
@@ -90,14 +107,18 @@ const Map = () => {
 
   useEffect(() => {
     if (Array.isArray(drivers) && drivers.length > 0) {
+      // Filter out auto rickshaws if any exist
+      const cabDrivers = drivers.filter(
+        (d) => !d.title?.toLowerCase().includes("auto"),
+      );
       const newMarkers = generateMarkersFromData({
-        data: drivers,
+        data: cabDrivers.length > 0 ? cabDrivers : drivers,
         userLatitude: effectiveLat,
         userLongitude: effectiveLon,
       });
       setMarkers(newMarkers);
     } else {
-      // Fallback realistic nearby drivers with distinct Indian portraits and vehicles
+      // Cab booking drivers: UberGo and UberPremier only (Auto excluded as requested)
       const fallbackDrivers = [
         {
           id: 1,
@@ -112,6 +133,7 @@ const Map = () => {
           latitude: effectiveLat + 0.003,
           longitude: effectiveLon + 0.002,
           title: "Rahul Sharma (UberGo)",
+          rate_per_km: 22,
         },
         {
           id: 2,
@@ -126,20 +148,7 @@ const Map = () => {
           latitude: effectiveLat - 0.003,
           longitude: effectiveLon - 0.003,
           title: "Amit Verma (UberPremier)",
-        },
-        {
-          id: 3,
-          first_name: "Suresh",
-          last_name: "Patil",
-          profile_image_url:
-            "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&auto=format&fit=crop&q=80",
-          car_image_url:
-            "https://img.icons8.com/color/512/auto-rickshaw.png",
-          car_seats: 3,
-          rating: 4.78,
-          latitude: effectiveLat + 0.001,
-          longitude: effectiveLon - 0.004,
-          title: "Suresh Patil (Local Auto)",
+          rate_per_km: 30,
         },
       ];
       setMarkers(fallbackDrivers as MarkerData[]);
@@ -219,12 +228,14 @@ const Map = () => {
                 coordinates={routeCoordinates}
                 strokeColor="#1A73E8"
                 strokeWidth={7}
+                zIndex={10}
               />
               {/* Vibrant inner Google blue path */}
               <Polyline
                 coordinates={routeCoordinates}
                 strokeColor="#388AF6"
                 strokeWidth={5}
+                zIndex={11}
               />
 
               {/* Midpoint duration badge pill matching Google Maps screenshot */}
@@ -233,6 +244,7 @@ const Map = () => {
                   coordinate={routeMidpoint}
                   anchor={{ x: 0.5, y: 0.5 }}
                   tracksViewChanges={false}
+                  zIndex={20}
                 >
                   <View
                     style={{

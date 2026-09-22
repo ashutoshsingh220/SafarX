@@ -215,21 +215,37 @@ export default function ExplorePlaceScreen() {
     setShowDirections(true);
 
     try {
-      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${effectiveUserLat},${effectiveUserLon}&destination=${destLat},${destLng}&key=${GOOGLE_API_KEY}`;
+      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${effectiveUserLat},${effectiveUserLon}&destination=${destLat},${destLng}&departure_time=now&traffic_model=best_guess&alternatives=true&key=${GOOGLE_API_KEY}`;
       const res = await fetch(url);
       const data = await res.json();
 
       if (data.status === "OK" && data.routes?.length > 0) {
-        const leg = data.routes[0].legs[0];
-        setRouteInfo({
-          duration: leg.duration.text,
-          distance: leg.distance.text,
-          summary: data.routes[0].summary || "Main Highway",
+        // Select fastest route in real-time traffic
+        const sortedRoutes = [...data.routes].sort((a, b) => {
+          const durA =
+            a.legs?.[0]?.duration_in_traffic?.value ??
+            a.legs?.[0]?.duration?.value ??
+            99999999;
+          const durB =
+            b.legs?.[0]?.duration_in_traffic?.value ??
+            b.legs?.[0]?.duration?.value ??
+            99999999;
+          return durA - durB;
         });
 
-        if (data.routes[0].overview_polyline?.points) {
+        const fastestRoute = sortedRoutes[0];
+        const leg = fastestRoute.legs[0];
+        const liveDuration =
+          leg.duration_in_traffic?.text || leg.duration?.text || "1 d 3 hours";
+        setRouteInfo({
+          duration: liveDuration,
+          distance: leg.distance?.text || "1,732 km",
+          summary: fastestRoute.summary || "Fastest Route",
+        });
+
+        if (fastestRoute.overview_polyline?.points) {
           const decoded = decodePolyline(
-            data.routes[0].overview_polyline.points
+            fastestRoute.overview_polyline.points
           );
           setRoutePolyline(decoded);
 
