@@ -25,6 +25,7 @@ declare interface MarkerData {
   time?: number;
   price?: string;
   rate_per_km?: number;
+  distance_km?: number;
 }
 
 declare interface MapProps {

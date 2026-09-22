@@ -111,18 +111,14 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
 
   useEffect(() => {
     if (Array.isArray(drivers) && drivers.length > 0) {
-      // Filter out auto rickshaws if any exist
-      const cabDrivers = drivers.filter(
-        (d) => !d.title?.toLowerCase().includes("auto"),
-      );
       const newMarkers = generateMarkersFromData({
-        data: cabDrivers.length > 0 ? cabDrivers : drivers,
+        data: drivers,
         userLatitude: effectiveLat,
         userLongitude: effectiveLon,
       });
       setMarkers(newMarkers);
     } else {
-      // Cab booking drivers: UberGo and UberPremier only (Auto excluded as requested)
+      // Driver options: UberGo, UberPremier, and UberAuto
       const fallbackDrivers = [
         {
           id: 1,
@@ -153,6 +149,21 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
           longitude: effectiveLon - 0.003,
           title: "Amit Verma (UberPremier)",
           rate_per_km: 30,
+        },
+        {
+          id: 3,
+          first_name: "Suresh",
+          last_name: "Patil",
+          profile_image_url:
+            "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&auto=format&fit=crop&q=80",
+          car_image_url:
+            "https://img.icons8.com/color/512/auto-rickshaw.png",
+          car_seats: 3,
+          rating: 4.78,
+          latitude: effectiveLat + 0.001,
+          longitude: effectiveLon - 0.004,
+          title: "Suresh Patil (UberAuto)",
+          rate_per_km: 18,
         },
       ];
       setMarkers(fallbackDrivers as MarkerData[]);

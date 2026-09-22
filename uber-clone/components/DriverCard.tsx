@@ -38,7 +38,7 @@ const DriverCard = ({ item, selected, setSelected }: DriverCardProps) => {
         <View className="flex flex-row items-center mb-1">
           <View className="bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 mr-2">
             <Text className="text-xs font-JakartaBold text-emerald-700">
-              ₹{item.rate_per_km || (item.title?.includes("Premier") ? 30 : 22)}/km
+              ₹{item.rate_per_km || (item.title?.includes("Premier") ? 30 : item.title?.includes("Auto") ? 18 : 22)}/km
             </Text>
           </View>
           <Text className="text-sm font-JakartaBold text-emerald-600">

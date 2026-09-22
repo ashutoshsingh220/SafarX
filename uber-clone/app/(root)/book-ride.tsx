@@ -72,7 +72,7 @@ const BookRide = () => {
             {/* Mention rate per km as requested */}
             <View className="mt-1">
               <Text className="text-xs font-JakartaSemiBold text-neutral-500">
-                Rate: ₹{driverDetails?.rate_per_km || (driverDetails?.title?.includes("Premier") ? 30 : 22)}/km
+                Rate: ₹{driverDetails?.rate_per_km || (driverDetails?.title?.includes("Premier") ? 30 : driverDetails?.title?.includes("Auto") ? 18 : 22)}/km
               </Text>
             </View>
           </View>
@@ -85,7 +85,7 @@ const BookRide = () => {
                   ₹{driverDetails?.price}
                 </Text>
                 <Text className="text-[11px] font-JakartaMedium text-neutral-500">
-                  (₹{driverDetails?.rate_per_km || (driverDetails?.title?.includes("Premier") ? 30 : 22)}/km rate)
+                  (₹{driverDetails?.rate_per_km || (driverDetails?.title?.includes("Premier") ? 30 : driverDetails?.title?.includes("Auto") ? 18 : 22)}/km rate)
                 </Text>
               </View>
             </View>
