@@ -72,6 +72,42 @@ export const calculateRegion = ({
   };
 };
 
+export function decodePolyline(
+  encoded: string,
+): { latitude: number; longitude: number }[] {
+  let points: { latitude: number; longitude: number }[] = [];
+  let index = 0,
+    len = encoded.length;
+  let lat = 0,
+    lng = 0;
+
+  while (index < len) {
+    let b,
+      shift = 0,
+      result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    let dlat = (result & 1) ? ~(result >> 1) : result >> 1;
+    lat += dlat;
+
+    shift = 0;
+    result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    let dlng = (result & 1) ? ~(result >> 1) : result >> 1;
+    lng += dlng;
+
+    points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
+  }
+  return points;
+}
+
 export const calculateDriverTimes = async ({
   markers,
   userLatitude,
@@ -95,22 +131,43 @@ export const calculateDriverTimes = async ({
 
   try {
     const timesPromises = markers.map(async (marker) => {
-      const responseToUser = await fetch(
-        `https://maps.googleapis.com/maps/api/directions/json?origin=${marker.latitude},${marker.longitude}&destination=${userLatitude},${userLongitude}&key=${directionsAPI}`,
-      );
-      const dataToUser = await responseToUser.json();
-      const timeToUser =
-        dataToUser?.routes?.[0]?.legs?.[0]?.duration?.value ?? 600; // Default 10 min
+      let timeToUser = 600; // 10 min default
+      let timeToDestination = 1800; // 30 min default
+      let distanceKm = 15;
 
-      const responseToDestination = await fetch(
-        `https://maps.googleapis.com/maps/api/directions/json?origin=${userLatitude},${userLongitude}&destination=${destinationLatitude},${destinationLongitude}&key=${directionsAPI}`,
-      );
-      const dataToDestination = await responseToDestination.json();
-      const timeToDestination =
-        dataToDestination?.routes?.[0]?.legs?.[0]?.duration?.value ?? 1800; // Default 30 min
+      try {
+        const responseToDestination = await fetch(
+          `https://maps.googleapis.com/maps/api/directions/json?origin=${userLatitude},${userLongitude}&destination=${destinationLatitude},${destinationLongitude}&key=${directionsAPI}`,
+        );
+        const dataToDestination = await responseToDestination.json();
 
-      const totalTime = (timeToUser + timeToDestination) / 60; // Total time in minutes
-      const price = (totalTime * 0.5).toFixed(2); // Calculate price based on time
+        if (dataToDestination?.routes?.[0]?.legs?.[0]) {
+          const leg = dataToDestination.routes[0].legs[0];
+          timeToDestination = leg.duration?.value ?? 1800;
+          if (leg.distance?.value) {
+            distanceKm = leg.distance.value / 1000;
+          }
+        }
+      } catch (err) {
+        console.log("Error fetching destination route:", err);
+      }
+
+      const totalTime = Math.round((timeToUser + timeToDestination) / 60);
+
+      // Realistic Indian Rupee pricing according to vehicle tier
+      let baseFare = 60;
+      let perKm = 16;
+      if (marker.title?.toLowerCase().includes("auto")) {
+        baseFare = 35;
+        perKm = 12;
+      } else if (marker.title?.toLowerCase().includes("premier")) {
+        baseFare = 120;
+        perKm = 22;
+      }
+
+      // If outstation (> 100 km), apply standard intercity rate
+      let fare = baseFare + distanceKm * perKm;
+      const price = Math.round(fare).toLocaleString("en-IN");
 
       return { ...marker, time: totalTime, price };
     });

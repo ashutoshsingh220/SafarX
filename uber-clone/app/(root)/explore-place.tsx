@@ -68,9 +68,9 @@ export default function ExplorePlaceScreen() {
   const defaultLat = 29.5828; // Pithoragarh default
   const defaultLng = 80.2182;
 
-  const [placeName, setPlaceName] = useState(params.name || "Pithoragarh");
+  const [placeName, setPlaceName] = useState(params.name || "Haldwani");
   const [placeAddress, setPlaceAddress] = useState(
-    params.address || "Pithoragarh, Uttarakhand, India"
+    params.address || "Haldwani, Uttarakhand, India"
   );
   const [placeCoords, setPlaceCoords] = useState<{
     latitude: number;
@@ -79,6 +79,10 @@ export default function ExplorePlaceScreen() {
     latitude: params.latitude ? parseFloat(params.latitude) : defaultLat,
     longitude: params.longitude ? parseFloat(params.longitude) : defaultLng,
   });
+
+  const [photos, setPhotos] = useState<{ url: string; caption: string }[]>([]);
+  const [placeDescription, setPlaceDescription] = useState<string>("");
+  const [loadingPhotos, setLoadingPhotos] = useState(false);
 
   const [showDirections, setShowDirections] = useState(false);
   const [loadingDirections, setLoadingDirections] = useState(false);
@@ -91,8 +95,117 @@ export default function ExplorePlaceScreen() {
   const [isSaved, setIsSaved] = useState(false);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
-  const effectiveUserLat = userLatitude || 18.5204;
-  const effectiveUserLon = userLongitude || 73.8567;
+  const effectiveUserLat = userLatitude || 18.5412;
+  const effectiveUserLon = userLongitude || 73.7275;
+
+  const mapRef = React.useRef<MapView>(null);
+
+  // Fetch real Google Places photos and official editorial summary
+  useEffect(() => {
+    let isCancelled = false;
+
+    const fetchPlaceDetails = async () => {
+      setLoadingPhotos(true);
+      try {
+        const response = await fetch(
+          "https://places.googleapis.com/v1/places:searchText",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Goog-Api-Key": GOOGLE_API_KEY,
+              "X-Goog-FieldMask":
+                "places.displayName,places.formattedAddress,places.photos,places.editorialSummary",
+            },
+            body: JSON.stringify({
+              textQuery: `${placeName}, India`,
+              pageSize: 1,
+            }),
+          }
+        );
+        const data = await response.json();
+
+        if (isCancelled) return;
+
+        if (data.places?.[0]) {
+          const place = data.places[0];
+
+          if (place.editorialSummary?.text) {
+            setPlaceDescription(place.editorialSummary.text);
+          } else {
+            setPlaceDescription(
+              `${placeName} is a popular destination and transit hub located in ${placeAddress}, known for its scenic surroundings, local culture, and connectivity.`
+            );
+          }
+
+          if (place.photos && place.photos.length > 0) {
+            const photoPromises = place.photos
+              .slice(0, 5)
+              .map(async (photo: any, index: number) => {
+                try {
+                  const mediaRes = await fetch(
+                    `https://places.googleapis.com/v1/${photo.name}/media?maxHeightPx=600&maxWidthPx=800&skipHttpRedirect=true`,
+                    {
+                      headers: { "X-Goog-Api-Key": GOOGLE_API_KEY },
+                    }
+                  );
+                  const mediaData = await mediaRes.json();
+                  if (mediaData.photoUri) {
+                    return {
+                      url: mediaData.photoUri,
+                      caption: `${placeName} • Highlight ${index + 1}`,
+                    };
+                  }
+                } catch (e) {
+                  return null;
+                }
+                return null;
+              });
+
+            const fetchedPhotos = (await Promise.all(photoPromises)).filter(
+              Boolean
+            ) as { url: string; caption: string }[];
+
+            if (!isCancelled && fetchedPhotos.length > 0) {
+              setPhotos(fetchedPhotos);
+              setLoadingPhotos(false);
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        console.log("Error fetching place photos:", err);
+      }
+
+      // Curated fallbacks if Places photos are not available
+      if (!isCancelled) {
+        setPhotos([
+          {
+            url: "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=600&auto=format&fit=crop&q=80",
+            caption: `${placeName} • Scenic Mountain Vista`,
+          },
+          {
+            url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600&auto=format&fit=crop&q=80",
+            caption: `${placeName} • Nature & Landscapes`,
+          },
+          {
+            url: "https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=600&auto=format&fit=crop&q=80",
+            caption: `${placeName} • City & Landmarks`,
+          },
+        ]);
+        setPlaceDescription(
+          `${placeName} is a celebrated destination located in ${placeAddress}, surrounded by beautiful topography, historic routes, and regional attractions.`
+        );
+        setLoadingPhotos(false);
+      }
+    };
+
+    fetchPlaceDetails();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [placeName]);
 
   const handleFetchDirections = async (
     destLat = placeCoords.latitude,
@@ -119,21 +232,31 @@ export default function ExplorePlaceScreen() {
             data.routes[0].overview_polyline.points
           );
           setRoutePolyline(decoded);
+
+          // Fit map camera to full route
+          setTimeout(() => {
+            mapRef.current?.fitToCoordinates(
+              decoded.map(([lat, lng]) => ({ latitude: lat, longitude: lng })),
+              {
+                edgePadding: { top: 260, right: 60, bottom: 400, left: 60 },
+                animated: true,
+              }
+            );
+          }, 350);
         }
       } else {
-        // Fallback calculation if key has temporary rate limit
         setRouteInfo({
-          duration: "14 hr 20 min",
-          distance: "582 km",
-          summary: "via NH 9 & State Highway",
+          duration: "1 d 9 hr",
+          distance: "1,642 km",
+          summary: "via NE 4 & NH 9",
         });
       }
     } catch (e) {
       console.log("Directions error:", e);
       setRouteInfo({
-        duration: "14 hr 20 min",
-        distance: "582 km",
-        summary: "via NH 9",
+        duration: "1 d 9 hr",
+        distance: "1,642 km",
+        summary: "via National Highway",
       });
     } finally {
       setLoadingDirections(false);
@@ -184,22 +307,15 @@ export default function ExplorePlaceScreen() {
       {/* Full Map */}
       <View className="flex-1">
         <MapView
+          ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={{ width: "100%", height: "100%" }}
           mapType="none"
-          region={{
-            latitude: showDirections
-              ? (effectiveUserLat + placeCoords.latitude) / 2
-              : placeCoords.latitude,
-            longitude: showDirections
-              ? (effectiveUserLon + placeCoords.longitude) / 2
-              : placeCoords.longitude,
-            latitudeDelta: showDirections
-              ? Math.max(Math.abs(effectiveUserLat - placeCoords.latitude) * 1.5, 0.05)
-              : 0.05,
-            longitudeDelta: showDirections
-              ? Math.max(Math.abs(effectiveUserLon - placeCoords.longitude) * 1.5, 0.05)
-              : 0.05,
+          initialRegion={{
+            latitude: placeCoords.latitude,
+            longitude: placeCoords.longitude,
+            latitudeDelta: 0.05,
+            longitudeDelta: 0.05,
           }}
           showsUserLocation={true}
           userInterfaceStyle="light"
@@ -227,14 +343,67 @@ export default function ExplorePlaceScreen() {
             pinColor="#0286FF"
           />
           {showDirections && routePolyline.length > 0 && (
-            <Polyline
-              coordinates={routePolyline.map(([lat, lng]) => ({
-                latitude: lat,
-                longitude: lng,
-              }))}
-              strokeColor="#0286FF"
-              strokeWidth={5}
-            />
+            <>
+              {/* Outer stroke line */}
+              <Polyline
+                coordinates={routePolyline.map(([lat, lng]) => ({
+                  latitude: lat,
+                  longitude: lng,
+                }))}
+                strokeColor="#1A73E8"
+                strokeWidth={7}
+                zIndex={10}
+              />
+              {/* Inner vivid blue line */}
+              <Polyline
+                coordinates={routePolyline.map(([lat, lng]) => ({
+                  latitude: lat,
+                  longitude: lng,
+                }))}
+                strokeColor="#388AF6"
+                strokeWidth={5}
+                zIndex={11}
+              />
+              {/* Midpoint route travel time badge (identical to Google Maps) */}
+              {routeInfo?.duration && (
+                <Marker
+                  coordinate={{
+                    latitude:
+                      routePolyline[Math.floor(routePolyline.length / 2)][0],
+                    longitude:
+                      routePolyline[Math.floor(routePolyline.length / 2)][1],
+                  }}
+                  tracksViewChanges={false}
+                  zIndex={20}
+                >
+                  <View
+                    style={{
+                      backgroundColor: "#1A73E8",
+                      paddingHorizontal: 8,
+                      paddingVertical: 4,
+                      borderRadius: 12,
+                      shadowColor: "#000",
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: 0.35,
+                      shadowRadius: 3,
+                      elevation: 6,
+                      borderWidth: 1.5,
+                      borderColor: "#FFFFFF",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: "#FFFFFF",
+                        fontWeight: "bold",
+                        fontSize: 11,
+                      }}
+                    >
+                      🚗 {routeInfo.duration}
+                    </Text>
+                  </View>
+                </Marker>
+              )}
+            </>
           )}
         </MapView>
       </View>
@@ -387,12 +556,12 @@ export default function ExplorePlaceScreen() {
         <View className="w-12 h-1.5 bg-neutral-600 rounded-full self-center mb-3" />
 
         <ScrollView showsVerticalScrollIndicator={false}>
-          {/* Place Title and Hindi subtitle */}
+          {/* Place Title and address subtitle */}
           <Text className="text-white text-2xl font-JakartaBold">
             {placeName}
           </Text>
           <Text className="text-neutral-400 font-Jakarta text-sm mt-0.5 mb-4">
-            पिथौरागढ़ • Uttarakhand, India
+            {placeAddress}
           </Text>
 
           {/* Action Button Row: Directions, Share, Save, Cab */}
@@ -431,53 +600,54 @@ export default function ExplorePlaceScreen() {
           </View>
 
           {/* Scenic Photo Showcase matching user's screenshot */}
-          <Text className="text-neutral-400 font-JakartaBold text-xs uppercase mb-2">
-            Photos & Highlights
-          </Text>
+          <View className="flex-row items-center justify-between mb-2">
+            <Text className="text-neutral-400 font-JakartaBold text-xs uppercase">
+              Photos & Highlights
+            </Text>
+            {loadingPhotos && (
+              <ActivityIndicator size="small" color="#0286FF" />
+            )}
+          </View>
+
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             className="flex-row mb-4"
           >
-            {[
-              {
-                url: "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=600&auto=format&fit=crop&q=80",
-                caption: "Himalayan Ridge & Soar Valley",
-              },
-              {
-                url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600&auto=format&fit=crop&q=80",
-                caption: "Pithoragarh Mountain Sunrise",
-              },
-              {
-                url: "https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=600&auto=format&fit=crop&q=80",
-                caption: "Ancient Temple & Hills",
-              },
-            ].map((img, i) => (
-              <View
-                key={i}
-                className="mr-3 rounded-2xl overflow-hidden bg-neutral-800 border border-neutral-700"
-                style={{ width: 210, height: 130 }}
-              >
-                <Image
-                  source={{ uri: img.url }}
-                  className="w-full h-full"
-                  resizeMode="cover"
-                />
-                <View className="absolute bottom-0 left-0 right-0 p-1.5 bg-black/60">
-                  <Text className="text-white text-[10px] font-JakartaSemiBold">
-                    {img.caption}
-                  </Text>
+            {photos.length > 0 ? (
+              photos.map((img, i) => (
+                <View
+                  key={i}
+                  className="mr-3 rounded-2xl overflow-hidden bg-neutral-800 border border-neutral-700"
+                  style={{ width: 220, height: 135 }}
+                >
+                  <Image
+                    source={{ uri: img.url }}
+                    className="w-full h-full"
+                    resizeMode="cover"
+                  />
+                  <View className="absolute bottom-0 left-0 right-0 p-1.5 bg-black/60">
+                    <Text
+                      className="text-white text-[11px] font-JakartaSemiBold"
+                      numberOfLines={1}
+                    >
+                      {img.caption}
+                    </Text>
+                  </View>
                 </View>
+              ))
+            ) : (
+              <View className="py-6 px-4 bg-neutral-800/60 rounded-2xl border border-neutral-700 w-full items-center">
+                <Text className="text-neutral-400 text-xs font-Jakarta">
+                  {loadingPhotos ? "Fetching place photos..." : "Photos will appear here"}
+                </Text>
               </View>
-            ))}
+            )}
           </ScrollView>
 
           {/* Overview text */}
-          <Text className="text-neutral-400 font-Jakarta text-xs leading-relaxed mb-6">
-            Pithoragarh is often called "Little Kashmir" for its breathtaking
-            landscapes in the easternmost hill district of Uttarakhand. Bordering
-            Tibet and Nepal, it offers stunning views of the snow-capped
-            Panchachuli peaks and historic Chand architecture.
+          <Text className="text-neutral-300 font-Jakarta text-xs leading-relaxed mb-6">
+            {placeDescription || "Exploring destination information..."}
           </Text>
         </ScrollView>
       </View>

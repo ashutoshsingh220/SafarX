@@ -1,13 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
-import MapView, { Marker, PROVIDER_GOOGLE, UrlTile } from "react-native-maps";
-import MapViewDirections from "react-native-maps-directions";
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE, UrlTile } from "react-native-maps";
 
 import { icons } from "@/constants";
 import { useFetch } from "@/lib/fetch";
 import {
   calculateDriverTimes,
   calculateRegion,
+  decodePolyline,
   generateMarkersFromData,
 } from "@/lib/map";
 import { useDriverStore, useLocationStore } from "@/store";
@@ -16,6 +16,7 @@ import { Driver, MarkerData } from "@/types/type";
 const directionsAPI = process.env.EXPO_PUBLIC_DIRECTIONS_API_KEY;
 
 const Map = () => {
+  const mapRef = useRef<MapView>(null);
   const {
     userLongitude,
     userLatitude,
@@ -26,14 +27,66 @@ const Map = () => {
 
   const { data: drivers, loading, error } = useFetch<Driver[]>("/(api)/driver");
   const [markers, setMarkers] = useState<MarkerData[]>([]);
+  const [routeCoordinates, setRouteCoordinates] = useState<
+    { latitude: number; longitude: number }[]
+  >([]);
+  const [routeDuration, setRouteDuration] = useState<string | null>(null);
+  const [routeMidpoint, setRouteMidpoint] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
 
   const effectiveLat = userLatitude || 18.5412;
   const effectiveLon = userLongitude || 73.7275;
-  const [directionsError, setDirectionsError] = useState(false);
 
+  // Fetch live route polyline and duration whenever destination or user location changes
   useEffect(() => {
-    setDirectionsError(false);
-  }, [destinationLatitude, destinationLongitude]);
+    if (!destinationLatitude || !destinationLongitude) {
+      setRouteCoordinates([]);
+      setRouteDuration(null);
+      setRouteMidpoint(null);
+      return;
+    }
+
+    const fetchRoute = async () => {
+      try {
+        const res = await fetch(
+          `https://maps.googleapis.com/maps/api/directions/json?origin=${effectiveLat},${effectiveLon}&destination=${destinationLatitude},${destinationLongitude}&key=${directionsAPI}`,
+        );
+        const data = await res.json();
+
+        if (data.status === "OK" && data.routes?.length > 0) {
+          const route = data.routes[0];
+          const leg = route.legs?.[0];
+          if (leg?.duration?.text) {
+            setRouteDuration(leg.duration.text);
+          }
+
+          if (route.overview_polyline?.points) {
+            const decoded = decodePolyline(route.overview_polyline.points);
+            setRouteCoordinates(decoded);
+
+            if (decoded.length > 0) {
+              const midIdx = Math.floor(decoded.length / 2);
+              setRouteMidpoint(decoded[midIdx]);
+
+              // Fit map camera to show the full route
+              setTimeout(() => {
+                mapRef.current?.fitToCoordinates(decoded, {
+                  edgePadding: { top: 90, right: 60, bottom: 260, left: 60 },
+                  animated: true,
+                });
+              }, 400);
+            }
+          }
+        }
+      } catch (err) {
+        console.log("Error fetching map route:", err);
+      }
+    };
+
+    fetchRoute();
+  }, [effectiveLat, effectiveLon, destinationLatitude, destinationLongitude]);
 
   useEffect(() => {
     if (Array.isArray(drivers) && drivers.length > 0) {
@@ -44,42 +97,48 @@ const Map = () => {
       });
       setMarkers(newMarkers);
     } else {
-      // Fallback realistic nearby drivers in area
+      // Fallback realistic nearby drivers with distinct Indian portraits and vehicles
       const fallbackDrivers = [
         {
           id: 1,
           first_name: "Rahul",
           last_name: "Sharma",
-          profile_image_url: "https://ucarecdn.com/dae59f69-2c1f-48c3-a883-017bcf0f9950/-/preview/1000x1000/",
-          car_image_url: "https://ucarecdn.com/a2dc52b2-8bf7-4e40-ba66-3ff4f5610444/-/preview/465x466/",
+          profile_image_url:
+            "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80",
+          car_image_url:
+            "https://img.icons8.com/color/512/car--v1.png",
           car_seats: 4,
-          rating: "4.80",
-          latitude: effectiveLat + 0.004,
-          longitude: effectiveLon + 0.003,
+          rating: 4.85,
+          latitude: effectiveLat + 0.003,
+          longitude: effectiveLon + 0.002,
           title: "Rahul Sharma (UberGo)",
         },
         {
           id: 2,
           first_name: "Amit",
           last_name: "Verma",
-          profile_image_url: "https://ucarecdn.com/6ea6d83d-ef1a-4838-80cf-c444a3f61ab9/-/preview/1000x1000/",
-          car_image_url: "https://ucarecdn.com/a3872f80-c094-409c-82f8-c9ff38429327/-/preview/930x931/",
+          profile_image_url:
+            "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&auto=format&fit=crop&q=80",
+          car_image_url:
+            "https://ucarecdn.com/a3872f80-c094-409c-82f8-c9ff38429327/-/preview/930x931/",
           car_seats: 4,
-          rating: "4.90",
+          rating: 4.92,
           latitude: effectiveLat - 0.003,
-          longitude: effectiveLon - 0.004,
+          longitude: effectiveLon - 0.003,
           title: "Amit Verma (UberPremier)",
         },
         {
           id: 3,
           first_name: "Suresh",
           last_name: "Patil",
-          profile_image_url: "https://ucarecdn.com/dae59f69-2c1f-48c3-a883-017bcf0f9950/-/preview/1000x1000/",
-          car_image_url: "https://ucarecdn.com/a2dc52b2-8bf7-4e40-ba66-3ff4f5610444/-/preview/465x466/",
+          profile_image_url:
+            "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&auto=format&fit=crop&q=80",
+          car_image_url:
+            "https://img.icons8.com/color/512/auto-rickshaw.png",
           car_seats: 3,
-          rating: "4.75",
-          latitude: effectiveLat + 0.002,
-          longitude: effectiveLon - 0.005,
+          rating: 4.78,
+          latitude: effectiveLat + 0.001,
+          longitude: effectiveLon - 0.004,
           title: "Suresh Patil (Local Auto)",
         },
       ];
@@ -114,6 +173,7 @@ const Map = () => {
 
   return (
     <MapView
+      ref={mapRef}
       provider={PROVIDER_GOOGLE}
       style={{ width: "100%", height: "100%", borderRadius: 16 }}
       mapType="none"
@@ -151,24 +211,59 @@ const Map = () => {
             title="Destination"
             image={icons.pin}
           />
-          {!directionsError && (
-            <MapViewDirections
-              origin={{
-                latitude: effectiveLat,
-                longitude: effectiveLon,
-              }}
-              destination={{
-                latitude: destinationLatitude,
-                longitude: destinationLongitude,
-              }}
-              apikey={directionsAPI!}
-              strokeColor="#0286FF"
-              strokeWidth={3}
-              onError={(errorMessage) => {
-                console.log("MapViewDirections handled:", errorMessage);
-                setDirectionsError(true);
-              }}
-            />
+
+          {routeCoordinates.length > 0 && (
+            <>
+              {/* Outer boundary stroke for authentic Google Maps route depth */}
+              <Polyline
+                coordinates={routeCoordinates}
+                strokeColor="#1A73E8"
+                strokeWidth={7}
+              />
+              {/* Vibrant inner Google blue path */}
+              <Polyline
+                coordinates={routeCoordinates}
+                strokeColor="#388AF6"
+                strokeWidth={5}
+              />
+
+              {/* Midpoint duration badge pill matching Google Maps screenshot */}
+              {routeMidpoint && routeDuration && (
+                <Marker
+                  coordinate={routeMidpoint}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                  tracksViewChanges={false}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      backgroundColor: "#1A73E8",
+                      paddingHorizontal: 10,
+                      paddingVertical: 5,
+                      borderRadius: 16,
+                      borderWidth: 1.5,
+                      borderColor: "#FFFFFF",
+                      shadowColor: "#000",
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: 0.35,
+                      shadowRadius: 3,
+                      elevation: 6,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: "#FFFFFF",
+                        fontSize: 12,
+                        fontWeight: "700",
+                      }}
+                    >
+                      🚗 {routeDuration}
+                    </Text>
+                  </View>
+                </Marker>
+              )}
+            </>
           )}
         </>
       )}
