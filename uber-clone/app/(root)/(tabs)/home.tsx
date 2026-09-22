@@ -46,11 +46,11 @@ const Home = () => {
 
   useEffect(() => {
     (async () => {
-      // Set initial user location so map displays immediately
+      // Set initial user location to Symbiosis Institute of Technology, Pune
       setUserLocation({
-        latitude: 18.5204,
-        longitude: 73.8567,
-        address: "Pune, Maharashtra",
+        latitude: 18.5412,
+        longitude: 73.7275,
+        address: "Symbiosis Institute of Technology, Lavale, Pune",
       });
 
       try {
@@ -62,17 +62,23 @@ const Home = () => {
 
         let location = await Location.getCurrentPositionAsync({});
 
-        const address = await Location.reverseGeocodeAsync({
-          latitude: location.coords?.latitude!,
-          longitude: location.coords?.longitude!,
-        });
-
-        if (address && address.length > 0) {
-          setUserLocation({
-            latitude: location.coords?.latitude,
-            longitude: location.coords?.longitude,
-            address: `${address[0].name || ""}, ${address[0].region || address[0].city || ""}`,
+        // Only update if coords are real and not default Android emulator Mountain View (37.422)
+        if (
+          location?.coords &&
+          Math.abs(location.coords.latitude - 37.422) > 1
+        ) {
+          const address = await Location.reverseGeocodeAsync({
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
           });
+
+          if (address && address.length > 0) {
+            setUserLocation({
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+              address: `${address[0].name || ""}, ${address[0].region || address[0].city || ""}`,
+            });
+          }
         }
       } catch (err) {
         console.log("GPS Location notice:", err);

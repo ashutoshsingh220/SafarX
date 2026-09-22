@@ -24,6 +24,8 @@ if (!process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY) {
 LogBox.ignoreLogs([
   "Clerk:",
   "ClerkJS:",
+  "MapViewDirections Error:",
+  "Error on GMAPS route request",
   "Possible unhandled promise rejection",
   "Warning: Failed prop type",
 ]);

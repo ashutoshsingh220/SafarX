@@ -27,8 +27,13 @@ const Map = () => {
   const { data: drivers, loading, error } = useFetch<Driver[]>("/(api)/driver");
   const [markers, setMarkers] = useState<MarkerData[]>([]);
 
-  const effectiveLat = userLatitude || 18.5204;
-  const effectiveLon = userLongitude || 73.8567;
+  const effectiveLat = userLatitude || 18.5412;
+  const effectiveLon = userLongitude || 73.7275;
+  const [directionsError, setDirectionsError] = useState(false);
+
+  useEffect(() => {
+    setDirectionsError(false);
+  }, [destinationLatitude, destinationLongitude]);
 
   useEffect(() => {
     if (Array.isArray(drivers) && drivers.length > 0) {
@@ -128,9 +133,39 @@ const Map = () => {
           latitude: effectiveLat,
           longitude: effectiveLon,
         }}
-        title="Your Current Location"
-        pinColor="#0286FF"
-      />
+        title="Symbiosis Institute of Technology, Pune"
+        description="Your Current Location"
+        pinColor="#EA4335"
+      >
+        <View style={{ alignItems: "center", justifyContent: "center" }}>
+          <View
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 13,
+              backgroundColor: "rgba(234, 67, 53, 0.22)",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <View
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 7,
+                backgroundColor: "#EA4335",
+                borderWidth: 2.5,
+                borderColor: "#FFFFFF",
+                elevation: 4,
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 0.3,
+                shadowRadius: 2,
+              }}
+            />
+          </View>
+        </View>
+      </Marker>
 
       {markers.map((marker) => (
         <Marker
@@ -155,20 +190,25 @@ const Map = () => {
             title="Destination"
             image={icons.pin}
           />
-          <MapViewDirections
-            origin={{
-              latitude: effectiveLat,
-              longitude: effectiveLon,
-            }}
-            destination={{
-              latitude: destinationLatitude,
-              longitude: destinationLongitude,
-            }}
-            apikey={directionsAPI!}
-            strokeColor="#0286FF"
-            strokeWidth={3}
-            onError={(errorMessage) => console.log("MapViewDirections:", errorMessage)}
-          />
+          {!directionsError && (
+            <MapViewDirections
+              origin={{
+                latitude: effectiveLat,
+                longitude: effectiveLon,
+              }}
+              destination={{
+                latitude: destinationLatitude,
+                longitude: destinationLongitude,
+              }}
+              apikey={directionsAPI!}
+              strokeColor="#0286FF"
+              strokeWidth={3}
+              onError={(errorMessage) => {
+                console.log("MapViewDirections handled:", errorMessage);
+                setDirectionsError(true);
+              }}
+            />
+          )}
         </>
       )}
     </MapView>

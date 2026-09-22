@@ -3,9 +3,9 @@ import { create } from "zustand";
 import { DriverStore, LocationStore, MarkerData } from "@/types/type";
 
 export const useLocationStore = create<LocationStore>((set) => ({
-  userLatitude: null,
-  userLongitude: null,
-  userAddress: null,
+  userLatitude: 18.5412,
+  userLongitude: 73.7275,
+  userAddress: "Symbiosis Institute of Technology, Lavale, Pune",
   destinationLatitude: null,
   destinationLongitude: null,
   destinationAddress: null,
