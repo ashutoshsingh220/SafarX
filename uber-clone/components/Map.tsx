@@ -15,7 +15,11 @@ import { Driver, MarkerData } from "@/types/type";
 
 const directionsAPI = process.env.EXPO_PUBLIC_DIRECTIONS_API_KEY;
 
-const Map = () => {
+interface MapProps {
+  currentLocationOnly?: boolean;
+}
+
+const Map = ({ currentLocationOnly = false }: MapProps) => {
   const mapRef = useRef<MapView>(null);
   const {
     userLongitude,
@@ -41,7 +45,7 @@ const Map = () => {
 
   // Fetch live route polyline and duration whenever destination or user location changes
   useEffect(() => {
-    if (!destinationLatitude || !destinationLongitude) {
+    if (currentLocationOnly || !destinationLatitude || !destinationLongitude) {
       setRouteCoordinates([]);
       setRouteDuration(null);
       setRouteMidpoint(null);
@@ -173,12 +177,33 @@ const Map = () => {
     }
   }, [markers, destinationLatitude, destinationLongitude, effectiveLat, effectiveLon]);
 
-  const region = calculateRegion({
-    userLatitude: effectiveLat,
-    userLongitude: effectiveLon,
-    destinationLatitude,
-    destinationLongitude,
-  });
+  useEffect(() => {
+    if (currentLocationOnly && mapRef.current) {
+      mapRef.current.animateToRegion(
+        {
+          latitude: effectiveLat,
+          longitude: effectiveLon,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        },
+        500,
+      );
+    }
+  }, [currentLocationOnly, effectiveLat, effectiveLon]);
+
+  const region = currentLocationOnly
+    ? {
+        latitude: effectiveLat,
+        longitude: effectiveLon,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      }
+    : calculateRegion({
+        userLatitude: effectiveLat,
+        userLongitude: effectiveLon,
+        destinationLatitude,
+        destinationLongitude,
+      });
 
   return (
     <MapView
@@ -197,19 +222,7 @@ const Map = () => {
         zIndex={1}
       />
 
-      {markers.map((marker) => (
-        <Marker
-          key={marker.id}
-          coordinate={{
-            latitude: marker.latitude,
-            longitude: marker.longitude,
-          }}
-          title={marker.title}
-          pinColor="#F59E0B"
-        />
-      ))}
-
-      {destinationLatitude && destinationLongitude && (
+      {!currentLocationOnly && destinationLatitude && destinationLongitude && (
         <>
           <Marker
             key="destination"

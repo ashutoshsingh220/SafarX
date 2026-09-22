@@ -62,8 +62,13 @@ export default function ExplorePlaceScreen() {
     longitude?: string;
   }>();
 
-  const { userLatitude, userLongitude, userAddress, setDestinationLocation } =
-    useLocationStore();
+  const {
+    userLatitude,
+    userLongitude,
+    userAddress,
+    setDestinationLocation,
+    clearDestinationLocation,
+  } = useLocationStore();
 
   const defaultLat = 29.5828; // Pithoragarh default
   const defaultLng = 80.2182;
@@ -280,6 +285,13 @@ export default function ExplorePlaceScreen() {
   };
 
   const handleSelectNewPlace = (place: any) => {
+    if (!place || !place.address) {
+      clearDestinationLocation();
+      setShowDirections(false);
+      setRoutePolyline([]);
+      setRouteInfo(null);
+      return;
+    }
     setPlaceName(place.address.split(",")[0] || place.address);
     setPlaceAddress(place.address);
     if (place.latitude && place.longitude) {
@@ -438,7 +450,10 @@ export default function ExplorePlaceScreen() {
       >
         <View className="bg-white/95 backdrop-blur-md rounded-2xl shadow-lg border border-neutral-200 p-2 flex-row items-center">
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={() => {
+              clearDestinationLocation();
+              router.back();
+            }}
             className="p-2 mr-2 bg-neutral-100 rounded-full"
           >
             <Text className="text-base font-JakartaBold">←</Text>
@@ -523,7 +538,23 @@ export default function ExplorePlaceScreen() {
                   </Text>
                 </View>
                 <TouchableOpacity
-                  onPress={() => setShowDirections(false)}
+                  onPress={() => {
+                    setShowDirections(false);
+                    setRoutePolyline([]);
+                    setRouteInfo(null);
+                    clearDestinationLocation();
+                    if (mapRef.current) {
+                      mapRef.current.animateToRegion(
+                        {
+                          latitude: effectiveUserLat,
+                          longitude: effectiveUserLon,
+                          latitudeDelta: 0.03,
+                          longitudeDelta: 0.03,
+                        },
+                        500
+                      );
+                    }
+                  }}
                   className="bg-neutral-800 p-2 rounded-full"
                 >
                   <Text className="text-gray-400 text-xs font-JakartaBold">✕</Text>

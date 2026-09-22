@@ -1,7 +1,9 @@
-﻿import React from "react";
+import React from "react";
 import { View } from "react-native";
 import { GooglePlacesAutocompleteInput } from "@/src/features/smarttrip/components/GooglePlacesAutocompleteInput";
 import { GoogleInputProps } from "@/types/type";
+
+import { useLocationStore } from "@/store";
 
 const GoogleTextInput = ({
   icon,
@@ -10,6 +12,8 @@ const GoogleTextInput = ({
   textInputBackgroundColor,
   handlePress,
 }: GoogleInputProps) => {
+  const { destinationAddress, clearDestinationLocation } = useLocationStore();
+
   return (
     <View
       style={{ zIndex: 1000 }}
@@ -17,7 +21,7 @@ const GoogleTextInput = ({
     >
       <GooglePlacesAutocompleteInput
         placeholder={initialLocation || "Where do you want to go?"}
-        initialValue=""
+        initialValue={destinationAddress || ""}
         icon="🔍"
         zIndex={1000}
         containerClassName="relative"
@@ -28,6 +32,8 @@ const GoogleTextInput = ({
               longitude: place.longitude || 80.2182,
               address: place.address,
             });
+          } else {
+            clearDestinationLocation();
           }
         }}
       />

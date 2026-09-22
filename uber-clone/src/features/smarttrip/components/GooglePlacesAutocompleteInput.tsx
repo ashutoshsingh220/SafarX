@@ -58,10 +58,14 @@ export const GooglePlacesAutocompleteInput = ({
     if (!input.trim() || input.trim().length < 2) {
       setSuggestions([]);
       setIsOpen(false);
+      setLoading(false);
       return;
     }
 
     setLoading(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
     try {
       const response = await fetch(
         "https://places.googleapis.com/v1/places:autocomplete",
@@ -75,8 +79,10 @@ export const GooglePlacesAutocompleteInput = ({
             input: input.trim(),
             includedRegionCodes: ["in"],
           }),
+          signal: controller.signal,
         }
       );
+      clearTimeout(timeoutId);
 
       const data = await response.json();
       if (data.suggestions && Array.isArray(data.suggestions)) {
@@ -99,10 +105,11 @@ export const GooglePlacesAutocompleteInput = ({
         setIsOpen(false);
       }
     } catch (err) {
-      console.log("Autocomplete fetch error:", err);
+      console.log("Autocomplete fetch error or timeout:", err);
       setSuggestions([]);
       setIsOpen(false);
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };
@@ -151,9 +158,13 @@ export const GooglePlacesAutocompleteInput = ({
   };
 
   const handleClear = () => {
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+    }
     setQuery("");
     setSuggestions([]);
     setIsOpen(false);
+    setLoading(false);
     if (onChangeText) onChangeText("");
     onSelectPlace({ address: "" });
   };
@@ -196,10 +207,14 @@ export const GooglePlacesAutocompleteInput = ({
           }}
           autoCorrect={false}
         />
-        {loading && <ActivityIndicator size="small" color="#0286FF" className="mr-1" />}
-        {query.length > 0 && !loading && (
-          <TouchableOpacity onPress={handleClear} className="p-1">
-            <Text className="text-gray-400 font-JakartaBold text-xs">✕</Text>
+        {loading && <ActivityIndicator size="small" color="#0286FF" className="mr-2" />}
+        {query.length > 0 && (
+          <TouchableOpacity
+            onPress={handleClear}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            className="p-1 rounded-full bg-neutral-200"
+          >
+            <Text className="text-gray-600 font-JakartaBold text-xs px-1">✕</Text>
           </TouchableOpacity>
         )}
       </View>

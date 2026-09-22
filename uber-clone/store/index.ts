@@ -48,6 +48,17 @@ export const useLocationStore = create<LocationStore>((set) => ({
     const { selectedDriver, clearSelectedDriver } = useDriverStore.getState();
     if (selectedDriver) clearSelectedDriver();
   },
+
+  clearDestinationLocation: () => {
+    set(() => ({
+      destinationLatitude: null,
+      destinationLongitude: null,
+      destinationAddress: null,
+    }));
+
+    const { selectedDriver, clearSelectedDriver } = useDriverStore.getState();
+    if (selectedDriver) clearSelectedDriver();
+  },
 }));
 
 export const useDriverStore = create<DriverStore>((set) => ({

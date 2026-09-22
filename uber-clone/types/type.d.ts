@@ -124,6 +124,7 @@ declare interface LocationStore {
     longitude: number;
     address: string;
   }) => void;
+  clearDestinationLocation: () => void;
 }
 
 declare interface DriverStore {

@@ -1,8 +1,8 @@
 import { useUser } from "@clerk/clerk-expo";
 import { useAuth } from "@clerk/clerk-expo";
 import * as Location from "expo-location";
-import { router } from "expo-router";
-import { useState, useEffect } from "react";
+import { router, useFocusEffect } from "expo-router";
+import { useState, useEffect, useCallback } from "react";
 import {
   Text,
   View,
@@ -25,7 +25,15 @@ const Home = () => {
   const { user } = useUser();
   const { signOut } = useAuth();
 
-  const { setUserLocation, setDestinationLocation } = useLocationStore();
+  const { setUserLocation, setDestinationLocation, clearDestinationLocation } =
+    useLocationStore();
+
+  // Clear lingering destination when user returns/focuses Home
+  useFocusEffect(
+    useCallback(() => {
+      clearDestinationLocation();
+    }, [clearDestinationLocation])
+  );
 
   const handleSignOut = () => {
     try {
@@ -157,7 +165,7 @@ const Home = () => {
                 Your current location
               </Text>
               <View className="flex flex-row items-center bg-transparent h-[300px]">
-                <Map />
+                <Map currentLocationOnly={true} />
               </View>
             </>
 
