@@ -127,45 +127,6 @@ const Map = () => {
         flipY={false}
         zIndex={1}
       />
-      <Marker
-        key="user-current-location"
-        coordinate={{
-          latitude: effectiveLat,
-          longitude: effectiveLon,
-        }}
-        title="Symbiosis Institute of Technology, Pune"
-        description="Your Current Location"
-        pinColor="#EA4335"
-      >
-        <View style={{ alignItems: "center", justifyContent: "center" }}>
-          <View
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 13,
-              backgroundColor: "rgba(234, 67, 53, 0.22)",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <View
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                backgroundColor: "#EA4335",
-                borderWidth: 2.5,
-                borderColor: "#FFFFFF",
-                elevation: 4,
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 1 },
-                shadowOpacity: 0.3,
-                shadowRadius: 2,
-              }}
-            />
-          </View>
-        </View>
-      </Marker>
 
       {markers.map((marker) => (
         <Marker
