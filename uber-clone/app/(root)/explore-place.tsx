@@ -396,7 +396,7 @@ export default function ExplorePlaceScreen() {
           ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={{ width: "100%", height: "100%" }}
-          mapType="standard"
+          mapType="none"
           initialRegion={{
             latitude: placeCoords.latitude,
             longitude: placeCoords.longitude,
@@ -406,6 +406,14 @@ export default function ExplorePlaceScreen() {
           showsUserLocation={true}
           userInterfaceStyle="light"
         >
+          <UrlTile
+            urlTemplate="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+            maximumZ={22}
+            flipY={false}
+            tileSize={256}
+            shouldReplaceMapContent={true}
+            zIndex={1}
+          />
           <Marker
             coordinate={{
               latitude: placeCoords.latitude,
