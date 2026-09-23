@@ -156,6 +156,8 @@ const Home = () => {
 
             <GoogleTextInput
               icon={icons.search}
+              initialLocation="Where do you want to go?"
+              initialValue=""
               containerStyle="bg-white shadow-md shadow-neutral-300"
               handlePress={handleDestinationPress}
             />

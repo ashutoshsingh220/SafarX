@@ -35,6 +35,7 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
     { latitude: number; longitude: number }[]
   >([]);
   const [routeDuration, setRouteDuration] = useState<string | null>(null);
+  const [routeDistance, setRouteDistance] = useState<string | null>(null);
   const [routeMidpoint, setRouteMidpoint] = useState<{
     latitude: number;
     longitude: number;
@@ -48,6 +49,7 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
     if (currentLocationOnly || !destinationLatitude || !destinationLongitude) {
       setRouteCoordinates([]);
       setRouteDuration(null);
+      setRouteDistance(null);
       setRouteMidpoint(null);
       return;
     }
@@ -60,8 +62,11 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
         const data = await res.json();
 
         if (data.status === "OK" && data.routes?.length > 0) {
-          // Select fastest route in real-time considering traffic conditions
+          // Select shortest distance route just as Google Maps provides
           const sortedRoutes = [...data.routes].sort((a, b) => {
+            const distA = a.legs?.[0]?.distance?.value ?? 999999999;
+            const distB = b.legs?.[0]?.distance?.value ?? 999999999;
+            if (distA !== distB) return distA - distB;
             const durA =
               a.legs?.[0]?.duration_in_traffic?.value ??
               a.legs?.[0]?.duration?.value ??
@@ -80,6 +85,9 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
               leg.duration_in_traffic?.text || leg.duration?.text;
             if (liveDuration) {
               setRouteDuration(liveDuration);
+            }
+            if (leg.distance?.text) {
+              setRouteDistance(leg.distance.text);
             }
           }
 
@@ -275,7 +283,7 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
                         fontWeight: "700",
                       }}
                     >
-                      🚗 {routeDuration}
+                      🚗 {routeDuration}{routeDistance ? ` (${routeDistance})` : ""}
                     </Text>
                   </View>
                 </Marker>

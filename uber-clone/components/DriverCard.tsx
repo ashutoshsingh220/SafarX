@@ -58,6 +58,17 @@ const DriverCard = ({ item, selected, setSelected }: DriverCardProps) => {
           <Text className="text-xs font-JakartaRegular text-general-800">
             {item.car_seats} seats
           </Text>
+
+          {item.distance_km ? (
+            <>
+              <Text className="text-xs font-JakartaRegular text-general-800 mx-1.5">
+                •
+              </Text>
+              <Text className="text-xs font-JakartaRegular text-general-800">
+                {typeof item.distance_km === "number" ? item.distance_km.toLocaleString("en-IN") : item.distance_km} km
+              </Text>
+            </>
+          ) : null}
         </View>
       </View>
 

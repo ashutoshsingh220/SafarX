@@ -225,8 +225,11 @@ export default function ExplorePlaceScreen() {
       const data = await res.json();
 
       if (data.status === "OK" && data.routes?.length > 0) {
-        // Select fastest route in real-time traffic
+        // Select shortest distance route just as Google Maps provides
         const sortedRoutes = [...data.routes].sort((a, b) => {
+          const distA = a.legs?.[0]?.distance?.value ?? 999999999;
+          const distB = b.legs?.[0]?.distance?.value ?? 999999999;
+          if (distA !== distB) return distA - distB;
           const durA =
             a.legs?.[0]?.duration_in_traffic?.value ??
             a.legs?.[0]?.duration?.value ??
@@ -238,19 +241,19 @@ export default function ExplorePlaceScreen() {
           return durA - durB;
         });
 
-        const fastestRoute = sortedRoutes[0];
-        const leg = fastestRoute.legs[0];
+        const shortestRoute = sortedRoutes[0];
+        const leg = shortestRoute.legs[0];
         const liveDuration =
           leg.duration_in_traffic?.text || leg.duration?.text || "1 d 3 hours";
         setRouteInfo({
           duration: liveDuration,
-          distance: leg.distance?.text || "1,732 km",
-          summary: fastestRoute.summary || "Fastest Route",
+          distance: leg.distance?.text || "1,558 km",
+          summary: shortestRoute.summary || "Shortest Route",
         });
 
-        if (fastestRoute.overview_polyline?.points) {
+        if (shortestRoute.overview_polyline?.points) {
           const decoded = decodePolyline(
-            fastestRoute.overview_polyline.points
+            shortestRoute.overview_polyline.points
           );
           setRoutePolyline(decoded);
 

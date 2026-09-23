@@ -141,8 +141,11 @@ export const calculateDriverTimes = async ({
       const dataToDestination = await responseToDestination.json();
 
       if (dataToDestination?.routes?.length > 0) {
-        // Algorithm: select the fastest route in real-time by duration_in_traffic
+        // Algorithm: select the shortest distance route just as Google Maps provides
         const sortedRoutes = [...dataToDestination.routes].sort((a, b) => {
+          const distA = a.legs?.[0]?.distance?.value ?? 999999999;
+          const distB = b.legs?.[0]?.distance?.value ?? 999999999;
+          if (distA !== distB) return distA - distB;
           const durA =
             a.legs?.[0]?.duration_in_traffic?.value ??
             a.legs?.[0]?.duration?.value ??
@@ -154,19 +157,19 @@ export const calculateDriverTimes = async ({
           return durA - durB;
         });
 
-        const fastestRoute = sortedRoutes[0];
-        const leg = fastestRoute.legs?.[0];
+        const shortestRoute = sortedRoutes[0];
+        const leg = shortestRoute.legs?.[0];
         if (leg) {
           // Use real-time duration in traffic if available, otherwise regular duration
           timeToDestination =
             leg.duration_in_traffic?.value ?? leg.duration?.value ?? 1800;
           if (leg.distance?.value) {
-            distanceKm = leg.distance.value / 1000;
+            distanceKm = Math.round((leg.distance.value / 1000) * 10) / 10;
           }
         }
       }
     } catch (err) {
-      console.log("Error fetching real-time fastest route:", err);
+      console.log("Error fetching real-time shortest route:", err);
     }
 
     // High-precision fallback distance calculation if Directions API didn't provide leg.distance
