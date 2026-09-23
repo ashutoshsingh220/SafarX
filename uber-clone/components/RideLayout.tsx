@@ -59,6 +59,7 @@ const RideLayout = ({
             </BottomSheetView>
           ) : (
             <BottomSheetScrollView
+              keyboardShouldPersistTaps="handled"
               style={{
                 flex: 1,
                 padding: 20,

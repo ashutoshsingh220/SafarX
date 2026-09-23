@@ -266,19 +266,77 @@ export default function ExplorePlaceScreen() {
           }, 350);
         }
       } else {
+        const R = 6371;
+        const dLat = ((destLat - effectiveUserLat) * Math.PI) / 180;
+        const dLon = ((destLng - effectiveUserLon) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((effectiveUserLat * Math.PI) / 180) *
+            Math.cos((destLat * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distKm = Math.round(R * c * 1.25);
+        const hrs = Math.floor(distKm / 65);
+        const mins = Math.round((distKm % 65) * (60 / 65));
+        const durationStr =
+          hrs >= 24
+            ? `${Math.floor(hrs / 24)} d ${hrs % 24} hr`
+            : `${hrs} hr ${mins} min`;
+
         setRouteInfo({
-          duration: "1 d 9 hr",
-          distance: "1,642 km",
-          summary: "via NE 4 & NH 9",
+          duration: durationStr,
+          distance: `${distKm.toLocaleString("en-IN")} km`,
+          summary: "Fastest Highway Route",
         });
+
+        const interpolated: [number, number][] = [];
+        const steps = 15;
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          interpolated.push([
+            effectiveUserLat + (destLat - effectiveUserLat) * t,
+            effectiveUserLon + (destLng - effectiveUserLon) * t,
+          ]);
+        }
+        setRoutePolyline(interpolated);
       }
     } catch (e) {
-      console.log("Directions error:", e);
+      console.log("Directions notice:", e);
+      const R = 6371;
+      const dLat = ((destLat - effectiveUserLat) * Math.PI) / 180;
+      const dLon = ((destLng - effectiveUserLon) * Math.PI) / 180;
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((effectiveUserLat * Math.PI) / 180) *
+          Math.cos((destLat * Math.PI) / 180) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const distKm = Math.round(R * c * 1.25);
+      const hrs = Math.floor(distKm / 65);
+      const mins = Math.round((distKm % 65) * (60 / 65));
+      const durationStr =
+        hrs >= 24
+          ? `${Math.floor(hrs / 24)} d ${hrs % 24} hr`
+          : `${hrs} hr ${mins} min`;
+
       setRouteInfo({
-        duration: "1 d 9 hr",
-        distance: "1,642 km",
-        summary: "via National Highway",
+        duration: durationStr,
+        distance: `${distKm.toLocaleString("en-IN")} km`,
+        summary: "Fastest Highway Route",
       });
+
+      const interpolated: [number, number][] = [];
+      const steps = 15;
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        interpolated.push([
+          effectiveUserLat + (destLat - effectiveUserLat) * t,
+          effectiveUserLon + (destLng - effectiveUserLon) * t,
+        ]);
+      }
+      setRoutePolyline(interpolated);
     } finally {
       setLoadingDirections(false);
     }

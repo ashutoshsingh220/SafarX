@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
+  Pressable,
 } from "react-native";
 
 const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_PLACES_API_KEY || "";
@@ -21,6 +22,8 @@ interface Suggestion {
   fullText: string;
   mainText: string;
   secondaryText: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 interface GooglePlacesAutocompleteInputProps {
@@ -49,6 +52,7 @@ export const GooglePlacesAutocompleteInput = ({
   const [loading, setLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const debounceTimer = useRef<any>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setQuery(initialValue);
@@ -62,11 +66,17 @@ export const GooglePlacesAutocompleteInput = ({
       return;
     }
 
-    setLoading(true);
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    abortControllerRef.current = controller;
+
+    setLoading(true);
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     try {
+      // 1. Try Autocomplete API
       const response = await fetch(
         "https://places.googleapis.com/v1/places:autocomplete",
         {
@@ -82,10 +92,9 @@ export const GooglePlacesAutocompleteInput = ({
           signal: controller.signal,
         }
       );
-      clearTimeout(timeoutId);
 
       const data = await response.json();
-      if (data.suggestions && Array.isArray(data.suggestions)) {
+      if (data.suggestions && Array.isArray(data.suggestions) && data.suggestions.length > 0) {
         const list: Suggestion[] = data.suggestions
           .filter((s: any) => s.placePrediction)
           .map((s: any) => ({
@@ -100,12 +109,50 @@ export const GooglePlacesAutocompleteInput = ({
           }));
         setSuggestions(list);
         setIsOpen(list.length > 0);
+        clearTimeout(timeoutId);
+        setLoading(false);
+        return;
+      }
+    } catch (err: any) {
+      console.log("Autocomplete fetch fallback:", err?.message || err);
+    }
+
+    // 2. Fallback to searchText API if autocomplete returned nothing or timed out
+    try {
+      const searchRes = await fetch(
+        "https://places.googleapis.com/v1/places:searchText",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GOOGLE_API_KEY,
+            "X-Goog-FieldMask":
+              "places.id,places.displayName,places.formattedAddress,places.location",
+          },
+          body: JSON.stringify({
+            textQuery: input.trim(),
+            languageCode: "en",
+          }),
+        }
+      );
+      const searchData = await searchRes.json();
+      if (searchData.places && Array.isArray(searchData.places)) {
+        const list: Suggestion[] = searchData.places.map((p: any) => ({
+          placeId: p.id,
+          fullText: p.formattedAddress || p.displayName?.text || "",
+          mainText: p.displayName?.text || p.formattedAddress || "",
+          secondaryText: p.formattedAddress || "",
+          latitude: p.location?.latitude,
+          longitude: p.location?.longitude,
+        }));
+        setSuggestions(list);
+        setIsOpen(list.length > 0);
       } else {
         setSuggestions([]);
         setIsOpen(false);
       }
     } catch (err) {
-      console.log("Autocomplete fetch error or timeout:", err);
+      console.log("SearchText error:", err);
       setSuggestions([]);
       setIsOpen(false);
     } finally {
@@ -132,6 +179,16 @@ export const GooglePlacesAutocompleteInput = ({
     setIsOpen(false);
     setSuggestions([]);
 
+    // If coordinates are already present from searchText
+    if (item.latitude && item.longitude) {
+      onSelectPlace({
+        address: item.fullText,
+        latitude: item.latitude,
+        longitude: item.longitude,
+      });
+      return;
+    }
+
     // Fetch place details for exact lat/lon
     try {
       const res = await fetch(
@@ -145,15 +202,38 @@ export const GooglePlacesAutocompleteInput = ({
         }
       );
       const details = await res.json();
-      const lat = details.location?.latitude;
-      const lon = details.location?.longitude;
+      let lat = details.location?.latitude;
+      let lon = details.location?.longitude;
+      if (!lat || !lon) {
+        const geoRes = await fetch(
+          `https://maps.googleapis.com/maps/api/geocode/json?place_id=${item.placeId}&key=${GOOGLE_API_KEY}`
+        );
+        const geoData = await geoRes.json();
+        if (geoData.results?.[0]?.geometry?.location) {
+          lat = geoData.results[0].geometry.location.lat;
+          lon = geoData.results[0].geometry.location.lng;
+        }
+      }
       onSelectPlace({
         address: item.fullText,
         latitude: lat,
         longitude: lon,
       });
     } catch (e) {
-      onSelectPlace({ address: item.fullText });
+      try {
+        const geoRes = await fetch(
+          `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(item.fullText)}&key=${GOOGLE_API_KEY}`
+        );
+        const geoData = await geoRes.json();
+        const loc = geoData.results?.[0]?.geometry?.location;
+        onSelectPlace({
+          address: item.fullText,
+          latitude: loc?.lat,
+          longitude: loc?.lng,
+        });
+      } catch (err) {
+        onSelectPlace({ address: item.fullText });
+      }
     }
   };
 

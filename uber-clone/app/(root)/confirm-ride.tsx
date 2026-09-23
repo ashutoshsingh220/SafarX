@@ -88,7 +88,7 @@ const ConfirmRide = () => {
       perKm = 18;
       baseFare = 30;
     }
-    const realTimePrice = driver.price || Math.round(baseFare + distanceKm * perKm).toLocaleString("en-IN");
+    const realTimePrice = Math.round(baseFare + distanceKm * perKm).toLocaleString("en-IN");
     return {
       ...driver,
       price: realTimePrice,
