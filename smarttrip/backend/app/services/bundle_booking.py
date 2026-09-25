@@ -61,7 +61,7 @@ async def create_bundle_booking(
         leg_dict["operator"] = f"{leg.operator} (Ref: {identifier})"
         processed_legs.append(MultimodalLegOut(**leg_dict))
 
-    qr_payload = f"SMARTTRIP:{pnr}:{request.user_id}:{plan.total_fare}:{plan.primary_mode}"
+    qr_payload = f"SAFARX:{pnr}:{request.user_id}:{plan.total_fare}:{plan.primary_mode}"
 
     # Persist to database if session is provided
     if db is not None:

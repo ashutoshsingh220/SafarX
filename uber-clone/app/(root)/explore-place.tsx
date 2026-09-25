@@ -371,7 +371,7 @@ export default function ExplorePlaceScreen() {
   const handleShare = async () => {
     try {
       await Share.share({
-        message: `Check out ${placeName} (${placeAddress}) on SmartTrip AI!`,
+        message: `Check out ${placeName} (${placeAddress}) on SafarX!`,
       });
     } catch (err) {
       console.log(err);

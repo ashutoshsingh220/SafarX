@@ -46,7 +46,7 @@ export default function BundleScreen() {
               <Text className="text-3xl font-JakartaExtraBold text-black tracking-wider">
                 {confirmedBooking.pnr}
               </Text>
-              <Text className="text-xs font-Jakarta text-gray-400 mt-1">SmartTrip Unified PNR</Text>
+              <Text className="text-xs font-Jakarta text-gray-400 mt-1">SafarX Unified PNR</Text>
             </View>
 
             <View className="mb-4">

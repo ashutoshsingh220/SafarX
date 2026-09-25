@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi import Security, Request
 
 app = FastAPI(
-    title="SmartTrip AI API",
+    title="SafarX Autonomous Transit API",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -40,7 +40,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Server"] = "SmartTrip-Secure-Gateway"
+    response.headers["Server"] = "SafarX-Gateway"
     return response
 
 # Global Sanitized Exception Handler (Protects internal server paths & stack traces from leaking)

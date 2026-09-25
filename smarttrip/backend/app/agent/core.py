@@ -199,7 +199,7 @@ class TravelAgent:
         config = types.GenerateContentConfig(
             tools=[types.Tool(function_declarations=GEMINI_TOOLS[0]["function_declarations"])],
             system_instruction=(
-                "You are SmartTrip AI. Always use search_routes before recommending an itinerary. "
+                "You are SafarX. Always use search_routes before recommending an itinerary. "
                 "Present one bundle price and explain vehicle modes clearly."
             ),
         )

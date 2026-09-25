@@ -62,7 +62,7 @@ const SignIn = () => {
         "Auth service currently in dev mode.";
       Alert.alert(
         "Sign In Notice",
-        `${msg}\n\nContinue in Guest / Demo mode to explore SmartTrip AI?`,
+        `${msg}\n\nContinue in Guest / Demo mode to explore SafarX?`,
         [
           { text: "Cancel", style: "cancel" },
           {

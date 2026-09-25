@@ -576,7 +576,7 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
             connecting_note = (
                 f"IRCTC Notice: No direct railway track exists to Pithoragarh hill station. "
                 f"Nearest broad-gauge railheads: Tanakpur (TPU) & Kathgodam (KGM). "
-                f"SmartTrip recommendation: Express train to Tanakpur/Kathgodam + onward UTC mountain coach."
+                f"SafarX recommendation: Express train to Tanakpur/Kathgodam + onward UTC mountain coach."
             )
             connecting_itin = {
                 "transit_hub": "Tanakpur / Kathgodam Railhead",
@@ -835,7 +835,7 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
         DirectCabInventoryItem(
             cab_id="cab-sedan",
             vehicle_type="AC Sedan (Dzire / Etios)",
-            operator="SmartTrip Outstation Sedan",
+            operator="SafarX Outstation Sedan",
             duration_str=f"{cab_dur_hours}h {cab_dur_mins:02d}m",
             distance_km=cab_road_dist,
             fare=sedan_fare,
@@ -849,7 +849,7 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
         DirectCabInventoryItem(
             cab_id="cab-suv",
             vehicle_type="Spacious SUV (Innova / Ertiga)",
-            operator="SmartTrip Outstation Premier SUV",
+            operator="SafarX Outstation Premier SUV",
             duration_str=f"{cab_dur_hours}h {cab_dur_mins:02d}m",
             distance_km=cab_road_dist,
             fare=suv_fare,

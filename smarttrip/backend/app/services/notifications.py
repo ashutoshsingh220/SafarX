@@ -21,5 +21,5 @@ async def send_booking_confirmation(device_token: str | None, booking_id: str) -
         return "not_requested"
     if settings.USE_MOCK_PUSH:
         return "mock_queued"
-    await asyncio.to_thread(_send_fcm, device_token, "Booking confirmed", f"SmartTrip booking {booking_id} is confirmed.")
+    await asyncio.to_thread(_send_fcm, device_token, "Booking confirmed", f"SafarX booking {booking_id} is confirmed.")
     return "sent"

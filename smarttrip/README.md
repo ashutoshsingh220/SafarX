@@ -1,6 +1,6 @@
-# 🚀 SmartTrip AI Application Workspace
+# 🚀 SafarX Application Workspace
 
-This directory contains the core implementation of **SmartTrip AI** (backend API, frontend client, Docker orchestration, and ML services).
+This directory contains the core implementation of **SafarX** (backend API, Docker orchestration, and ML services).
 
 > 📖 **Full Documentation**: For complete architecture breakdown, tech stack summary, dynamic pricing details, and project status, view the main repository [README](../README.md).
 

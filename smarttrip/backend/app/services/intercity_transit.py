@@ -1,4 +1,4 @@
-﻿import math
+import math
 from typing import Literal, TypedDict
 from app.services.transit_hubs import haversine_km, HubInfo
 
@@ -115,7 +115,7 @@ def calculate_direct_outstation_cab(
 
     return {
         "mode": "CAB",
-        "operator": "SmartTrip Outstation Private AC Sedan",
+        "operator": "SafarX Outstation Private AC Sedan",
         "distance_km": road_dist_km,
         "duration_minutes": duration_minutes,
         "fare": round(fare, 0),

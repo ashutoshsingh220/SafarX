@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "uber",
-    "slug": "uber",
+    "name": "SafarX",
+    "slug": "safarx",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "safarx",
     "userInterfaceStyle": "automatic",
     "splash": {
       "image": "./assets/images/splash.png",
@@ -22,10 +22,10 @@
       },
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyBPJDpVUMkQJHfa-stLsXLQFuBAHvBIOFI"
+          "apiKey": "YOUR_GOOGLE_MAPS_API_KEY"
         }
       },
-      "package": "com.anonymous.uber"
+      "package": "com.safarx.app"
     },
     "web": {
       "bundler": "metro",

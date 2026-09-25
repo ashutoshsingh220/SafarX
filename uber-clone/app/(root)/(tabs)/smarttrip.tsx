@@ -7,9 +7,9 @@ export default function SmartTripTabScreen() {
   return (
     <SafeAreaView className="flex-1 bg-neutral-100 p-4">
       <ScrollView className="flex-1">
-        <Text className="text-3xl font-JakartaBold mb-2">SmartTrip AI</Text>
+        <Text className="text-3xl font-JakartaBold mb-2">SafarX</Text>
         <Text className="text-gray-500 font-Jakarta mb-6">
-          Next-generation door-to-door travel assistant & AI companion.
+          Next-generation door-to-door transit engine & travel companion.
         </Text>
 
         <TouchableOpacity

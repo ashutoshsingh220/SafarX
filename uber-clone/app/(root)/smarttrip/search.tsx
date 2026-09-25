@@ -250,7 +250,7 @@ export default function TravelSearchScreen() {
           </TouchableOpacity>
           <View>
             <Text className="text-lg font-JakartaBold text-neutral-900">
-              SmartTrip Multi-Transport
+              SafarX Multimodal Transit
             </Text>
             <Text className="text-[11px] font-Jakarta text-neutral-500">
               IRCTC Trains • AC Buses • Flights • Outstation Cabs

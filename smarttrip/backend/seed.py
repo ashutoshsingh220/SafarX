@@ -26,7 +26,7 @@ async def seed_data():
         # Seed Buses
         buses = []
         for i in range(1, 41):
-            buses.append(Bus(operator_name="SmartTrip Express", bus_number=f"MH-12-ST-{1000+i}", capacity=40, base_fare=1500.0))
+            buses.append(Bus(operator_name="SafarX Express", bus_number=f"MH-12-SX-{1000+i}", capacity=40, base_fare=1500.0))
         session.add_all(buses)
 
         await session.commit()

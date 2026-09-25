@@ -127,7 +127,7 @@ def calculate_feeder_trip(
     else:  # SHUTTLE
         avg_speed_kmh = 22.0
         fare = 50.0  # Shared corridor flat fare
-        operator = "SmartTrip Shared Feeder"
+        operator = "SafarX Shared Feeder"
         desc = "Scheduled high-frequency shared feeder"
 
     if base_duration_mins is not None:

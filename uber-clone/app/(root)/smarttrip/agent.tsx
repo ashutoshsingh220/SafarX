@@ -15,7 +15,7 @@ export default function AgentScreen() {
       addAgentMessage({
         id: "init",
         role: "assistant",
-        content: "Hi there! 👋 I'm your SmartTrip AI Assistant. Where would you like to travel?",
+        content: "Hi there! 👋 I'm your SafarX Assistant. Where would you like to travel?",
         timestamp: Date.now(),
       });
     }
@@ -72,7 +72,7 @@ export default function AgentScreen() {
         <TouchableOpacity onPress={() => router.back()} className="mr-4">
           <Text className="text-2xl">←</Text>
         </TouchableOpacity>
-        <Text className="text-xl font-JakartaBold">SmartTrip AI Agent</Text>
+        <Text className="text-xl font-JakartaBold">SafarX Assistant</Text>
       </View>
 
       <ScrollView 

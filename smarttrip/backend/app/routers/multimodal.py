@@ -53,7 +53,7 @@ async def book_multimodal_bundle(
     request: MultimodalBookingRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Execute 1-click bundle booking and issue all-in-one SmartTrip PNR."""
+    """Execute 1-click bundle booking and issue all-in-one SafarX PNR."""
     try:
         response = await create_bundle_booking(request, db=db)
         return response

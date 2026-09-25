@@ -317,7 +317,7 @@ async def search_journeys(db: AsyncSession | None, request: SearchRequest) -> li
                 duration_seconds=feeder_distance.duration_seconds,
                 distance_meters=feeder_distance.distance_meters,
                 fare=feeder_fare,
-                operator="SmartTrip Feeder",
+                operator="SafarX Feeder",
                 vehicle_id=f"feeder-{boarding_point.id}",
                 polyline=feeder_distance.polyline,
                 vehicle_icon="shuttle",

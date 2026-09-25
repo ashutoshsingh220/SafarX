@@ -1,4 +1,4 @@
-"""Create the initial SmartTrip spatial schema.
+"""Create the initial SafarX spatial schema.
 
 Revision ID: 0001_initial_schema
 Revises:

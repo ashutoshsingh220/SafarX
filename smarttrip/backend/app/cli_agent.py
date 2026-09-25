@@ -11,14 +11,14 @@ from app.database import async_session
 async def run(message: str) -> None:
     async with async_session() as db:
         response = await TravelAgent().plan(AgentPlanRequest(message=message), db)
-    print(f"SmartTrip AI: {response.answer}")
+    print(f"SafarX: {response.answer}")
     print(f"Tools used: {', '.join(response.tools_used)}")
     for journey in response.journeys:
         print(f"- {journey.journey_id}: ₹{journey.total_fare:.0f} | {journey.summary}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Ask the SmartTrip AI travel agent for a journey.")
+    parser = argparse.ArgumentParser(description="Ask the SafarX travel agent for a journey.")
     parser.add_argument(
         "message",
         nargs="?",
