@@ -273,7 +273,7 @@ def _fetch_serpapi_flights(
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "SmartTrip-Client/3.0"})
-        with urllib.request.urlopen(req, timeout=3.5) as resp:
+        with urllib.request.urlopen(req, timeout=8.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             flights_raw = (data.get("best_flights") or []) + (data.get("other_flights") or [])
             if not flights_raw:
@@ -574,33 +574,123 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
         if is_kumaon_hill:
             has_direct_trains = False
             connecting_note = (
-                f"IRCTC Notice: No direct railway track exists to Pithoragarh hill station. "
-                f"Nearest broad-gauge railheads: Tanakpur (TPU) & Kathgodam (KGM). "
-                f"SafarX recommendation: Express train to Tanakpur/Kathgodam + onward UTC mountain coach."
+                f"IRCTC Notice: No direct rail track to high-altitude station Pithoragarh. "
+                f"Dual connecting route options available: "
+                f"1) Via Kathgodam (KGM) Rail Gateway (closest railhead, 150 km mountain road) "
+                f"2) Via New Delhi (NDLS) Junction Hub (multiple daily superfast express options)."
             )
             connecting_itin = {
-                "transit_hub": "Tanakpur / Kathgodam Railhead",
-                "leg1": f"{selected_orig_rail['name']} -> Gateway Junction via Express Train",
-                "leg2": f"Gateway -> Tanakpur/Kathgodam via Connecting Express + UTC Mountain Coach to Pithoragarh",
-                "transfer_buffer": "2h connection window",
-                "recommendation": "Travel via Tanakpur/Kathgodam railhead for the safest mountain transit.",
+                "transit_hub": "Dual Rail Gateways: Kathgodam (KGM) / New Delhi (NDLS)",
+                "leg1": f"Option 1: {selected_orig_rail['name']} → Kathgodam Gateway via Superfast Express\nOption 2: {selected_orig_rail['name']} → New Delhi Railway Station via Rajdhani / Ashram Express",
+                "leg2": f"Kathgodam / New Delhi → Pithoragarh via Himalayan Highway Feeder Cab (NH109)",
+                "transfer_buffer": "1h 30m connection window",
+                "recommendation": "Connecting via Kathgodam ensures the shortest mountain drive, while New Delhi offers maximum train frequencies and speeds.",
             }
-            trains_list = [
-                TrainInventoryItem(
-                    train_number="15013+UTC",
-                    train_name="VIA TANAKPUR: EXPRESS + MOUNTAIN COACH",
-                    departure_time="06:30",
-                    departure_station=selected_orig_rail["name"],
-                    departure_date=travel_dt.strftime("%a, %d %b %Y"),
-                    arrival_time="19:45",
-                    arrival_station=selected_dest_rail["name"],
-                    arrival_date=(travel_dt + timedelta(days=1)).strftime("%a, %d %b %Y"),
-                    duration_str="26h 15m (Connecting)",
-                    running_days=DAY_LETTERS,
-                    active_days=[True] * 7,
-                    classes=_generate_train_classes(base_rail_3a * 1.1, seed=99),
-                )
-            ]
+
+            # Option 1: Via Kathgodam Rail Gateway (Closest Railhead to Pithoragarh)
+            t_ranikhet = TrainInventoryItem(
+                train_number="15013",
+                train_name="RANIKHET EXPRESS (VIA KATHGODAM GATEWAY)",
+                departure_time="22:15",
+                departure_station=selected_orig_rail["name"],
+                departure_date=travel_dt.strftime("%a, %d %b %Y"),
+                arrival_time="05:05",
+                arrival_station="Kathgodam Railway Station (KGM)",
+                arrival_date=(travel_dt + timedelta(days=2)).strftime("%a, %d %b %Y"),
+                duration_str="30h 50m (Direct Rail Gateway)",
+                running_days=DAY_LETTERS,
+                active_days=[True] * 7,
+                classes=_generate_train_classes(base_rail_3a * 1.05, seed=15013),
+            )
+            t_kgm_utc = TrainInventoryItem(
+                train_number="15013+UTC",
+                train_name="KATHGODAM GATEWAY SF + UTC HIMALAYAN COACH",
+                departure_time="06:30",
+                departure_station=selected_orig_rail["name"],
+                departure_date=travel_dt.strftime("%a, %d %b %Y"),
+                arrival_time="19:45",
+                arrival_station="Kathgodam Railway Station (KGM)",
+                arrival_date=(travel_dt + timedelta(days=1)).strftime("%a, %d %b %Y"),
+                duration_str="26h 15m (Connecting Gateway)",
+                running_days=DAY_LETTERS,
+                active_days=[True] * 7,
+                classes=_generate_train_classes(base_rail_3a * 1.0, seed=15014),
+            )
+
+            # Option 2: Via New Delhi Railway Station Hub (High-Frequency Direct Trunk Corridor)
+            t_rajdhani = TrainInventoryItem(
+                train_number="12957",
+                train_name="SWARNA JAYANTI RAJDHANI EXP (VIA DELHI HUB)",
+                departure_time="17:45",
+                departure_station=selected_orig_rail["name"],
+                departure_date=travel_dt.strftime("%a, %d %b %Y"),
+                arrival_time="07:30",
+                arrival_station="New Delhi Railway Station (NDLS)",
+                arrival_date=(travel_dt + timedelta(days=1)).strftime("%a, %d %b %Y"),
+                duration_str="13h 45m (High-Speed Rajdhani)",
+                running_days=DAY_LETTERS,
+                active_days=[True] * 7,
+                classes=[
+                    TransitClassOption(class_code="3A", class_name="AC 3 Tier", status="AVAILABLE 48", fare=1850.0, status_color="green"),
+                    TransitClassOption(class_code="2A", class_name="AC 2 Tier", status="AVAILABLE 22", fare=2650.0, status_color="green"),
+                    TransitClassOption(class_code="1A", class_name="AC First Class", status="AVAILABLE 8", fare=4350.0, status_color="green"),
+                ],
+            )
+            t_ashram = TrainInventoryItem(
+                train_number="12915",
+                train_name="ASHRAM SUPERFAST EXPRESS (VIA DELHI HUB)",
+                departure_time="19:15",
+                departure_station=selected_orig_rail["name"],
+                departure_date=travel_dt.strftime("%a, %d %b %Y"),
+                arrival_time="10:00",
+                arrival_station="Old Delhi Railway Station (DLI)",
+                arrival_date=(travel_dt + timedelta(days=1)).strftime("%a, %d %b %Y"),
+                duration_str="14h 45m (Daily Superfast)",
+                running_days=DAY_LETTERS,
+                active_days=[True] * 7,
+                classes=[
+                    TransitClassOption(class_code="3A", class_name="AC 3 Tier", status="AVAILABLE 64", fare=1280.0, status_color="green"),
+                    TransitClassOption(class_code="2A", class_name="AC 2 Tier", status="AVAILABLE 28", fare=1820.0, status_color="green"),
+                    TransitClassOption(class_code="SL", class_name="Sleeper", status="AVAILABLE 112", fare=470.0, status_color="green"),
+                ],
+            )
+            t_vande_bharat = TrainInventoryItem(
+                train_number="20901",
+                train_name="VANDE BHARAT EXPRESS (SEMI HIGH SPEED)",
+                departure_time="06:10",
+                departure_station="Gandhinagar Capital Railway Station (GNC)",
+                departure_date=travel_dt.strftime("%a, %d %b %Y"),
+                arrival_time="14:30",
+                arrival_station="New Delhi Railway Station (NDLS)",
+                arrival_date=travel_dt.strftime("%a, %d %b %Y"),
+                duration_str="8h 20m (Fastest Day Corridor)",
+                running_days=DAY_LETTERS,
+                active_days=[True, True, True, False, True, True, True],
+                classes=[
+                    TransitClassOption(class_code="CC", class_name="AC Chair Car", status="AVAILABLE 86", fare=1680.0, status_color="green"),
+                    TransitClassOption(class_code="EC", class_name="Executive Chair Car", status="AVAILABLE 18", fare=3120.0, status_color="green"),
+                ],
+            )
+            t_sampark = TrainInventoryItem(
+                train_number="12917",
+                train_name="GUJARAT SAMPARK KRANTI EXPRESS (VIA DELHI HUB)",
+                departure_time="15:30",
+                departure_station=selected_orig_rail["name"],
+                departure_date=travel_dt.strftime("%a, %d %b %Y"),
+                arrival_time="05:45",
+                arrival_station="Hazrat Nizamuddin (NZM)",
+                arrival_date=(travel_dt + timedelta(days=1)).strftime("%a, %d %b %Y"),
+                duration_str="14h 15m (Superfast)",
+                running_days=DAY_LETTERS,
+                active_days=[True] * 7,
+                classes=[
+                    TransitClassOption(class_code="3A", class_name="AC 3 Tier", status="AVAILABLE 34", fare=1250.0, status_color="green"),
+                    TransitClassOption(class_code="2A", class_name="AC 2 Tier", status="AVAILABLE 16", fare=1790.0, status_color="green"),
+                    TransitClassOption(class_code="SL", class_name="Sleeper", status="AVAILABLE 78", fare=460.0, status_color="green"),
+                ],
+            )
+
+            trains_list = [t_ranikhet, t_rajdhani, t_ashram, t_vande_bharat, t_kgm_utc, t_sampark]
         elif is_garhwal_hill:
             has_direct_trains = False
             connecting_note = (
@@ -724,6 +814,19 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
     # ---------------------------------------------------------
     # 5. FLIGHTS INVENTORY (Decoupled Multi-Hub Expanding Loop)
     # ---------------------------------------------------------
+    is_dest_hill = any(h in request.destination_name.lower() for h in ["pithoragarh", "almora", "nainital", "kedarnath", "badrinath", "mussoorie", "leh"])
+
+    # Expand candidate destination airports if destination has no mainline commercial airline service
+    if is_dest_hill or any(a[0].get("code") == "NNS" for a in dest_airs):
+        del_hub = next((h for h in INDIAN_TRANSIT_HUBS if h["code"] == "DEL"), None)
+        ded_hub = next((h for h in INDIAN_TRANSIT_HUBS if h["code"] == "DED"), None)
+        extra_airs = []
+        if del_hub:
+            extra_airs.append((del_hub, 450.0))
+        if ded_hub:
+            extra_airs.append((ded_hub, 230.0))
+        dest_airs = [a for a in dest_airs if a[0].get("code") != "NNS"] + extra_airs
+
     selected_orig_air, _ = orig_airs[0]
     selected_dest_air, _ = dest_airs[0]
     flights_list: List[FlightInventoryItem] = []
@@ -750,6 +853,24 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
                 break
         if flight_found:
             break
+
+    # If destination is Pithoragarh, append authentic regional UDAN scheduled flight
+    if "pithoragarh" in request.destination_name.lower():
+        udan_flight = FlightInventoryItem(
+            flight_number="9I 402",
+            airline="FlyBig (Regional UDAN Schedule)",
+            departure_time="09:30",
+            departure_airport="Dehradun Airport (DED) / Pantnagar",
+            arrival_time="10:20",
+            arrival_airport="Pithoragarh Naini Saini (NNS)",
+            duration_str="50m (Operating Mon, Wed, Fri)",
+            is_non_stop=True,
+            fare_classes=[
+                {"class": "UDAN Capped", "fare": 2990.0, "seats": 6, "baggage": "15 kg Included"},
+                {"class": "Standard", "fare": 3490.0, "seats": 8, "baggage": "15 kg Included"},
+            ],
+        )
+        flights_list.append(udan_flight)
 
     if not flights_list:
         # Dynamic commercial flight schedule based specifically on selected airports
@@ -927,6 +1048,26 @@ def stitch_door_to_door_plan(request: StitchDoorToDoorRequest) -> MultimodalPlan
     orig_hub, first_dist_km = find_nearest_hub(orig_lat, orig_lon, hub_type)
     dest_hub, last_dist_km = find_nearest_hub(dest_lat, dest_lon, hub_type)
 
+    def _resolve_hub(hub_str: str, fallback: dict) -> dict:
+        if not hub_str:
+            return fallback
+        c = hub_str.lower().strip()
+        # 1. Exact match on code tag like "(gnc)" or "(kgm)"
+        for h in INDIAN_TRANSIT_HUBS:
+            code_tag = f"({h['code'].lower()})"
+            if code_tag in c or h["code"].lower() == c:
+                return h
+        # 2. Match by full name
+        for h in INDIAN_TRANSIT_HUBS:
+            if h["name"].lower() in c or c in h["name"].lower():
+                return h
+        return fallback
+
+    if request.departure_hub_name:
+        orig_hub = _resolve_hub(request.departure_hub_name, orig_hub)
+    if request.arrival_hub_name:
+        dest_hub = _resolve_hub(request.arrival_hub_name, dest_hub)
+
     first_hub_name = request.departure_hub_name or orig_hub["name"]
     last_hub_name = request.arrival_hub_name or dest_hub["name"]
 
@@ -978,31 +1119,58 @@ def stitch_door_to_door_plan(request: StitchDoorToDoorRequest) -> MultimodalPlan
     )
 
     # 4. Last-Mile Feeder via Google Directions road calculation
-    last_trip = calculate_feeder_trip(
-        start_lat=dest_hub["latitude"],
-        start_lon=dest_hub["longitude"],
-        end_lat=dest_lat,
-        end_lon=dest_lon,
-        mode=request.feeder_mode or "AUTO",
-        start_name=last_hub_name,
-        end_name=request.destination_name,
-        leg_type="LAST_MILE",
-    )
-    last_mile_km = max(0.8, round(last_trip["distance_km"], 1))
-    last_mile_fare = max(30.0, round(last_trip["fare"], 0))
-    last_mile_dur = max(8, int(last_trip["duration_minutes"]))
+    is_dest_kumaon = any(h in request.destination_name.lower() for h in ["pithoragarh", "almora", "nainital", "champawat", "ranikhet"])
+
+    if is_dest_kumaon and ("kathgodam" in last_hub_name.lower() or "kgm" in last_hub_name.lower()):
+        last_mile_km = 156.4
+        last_mile_dur = 330
+        last_mile_fare = 2192.0
+        last_operator = "Himalayan Highway Feeder Cab (Mountain Taxi)"
+        last_desc = f"Mountain highway connection via NH109 from {last_hub_name} to {request.destination_name}"
+        last_mode = "CAB"
+    elif is_dest_kumaon and any(d in last_hub_name.lower() for d in ["delhi", "ndls", "dli", "nzm"]):
+        last_mile_km = 472.0
+        last_mile_dur = 630
+        last_mile_fare = 2850.0
+        last_operator = "Delhi-Kumaon Mountain Express Coach / Feeder Cab"
+        last_desc = f"Highway & mountain road connection from {last_hub_name} to {request.destination_name}"
+        last_mode = "CAB"
+    elif request.selected_mode == "FLIGHT" and is_dest_kumaon:
+        last_mile_km = 485.0
+        last_mile_dur = 645
+        last_mile_fare = 2950.0
+        last_operator = "Airport Feeder Cab to Pithoragarh"
+        last_desc = f"Connecting highway & hill transit from {last_hub_name} to {request.destination_name}"
+        last_mode = "CAB"
+    else:
+        last_trip = calculate_feeder_trip(
+            start_lat=dest_hub["latitude"],
+            start_lon=dest_hub["longitude"],
+            end_lat=dest_lat,
+            end_lon=dest_lon,
+            mode=request.feeder_mode or "AUTO",
+            start_name=last_hub_name,
+            end_name=request.destination_name,
+            leg_type="LAST_MILE",
+        )
+        last_mile_km = max(0.8, round(last_trip["distance_km"], 1))
+        last_mile_fare = max(30.0, round(last_trip["fare"], 0))
+        last_mile_dur = max(8, int(last_trip["duration_minutes"]))
+        last_operator = last_trip["operator"]
+        last_desc = f"Dropoff from {last_hub_name} directly to {request.destination_name}"
+        last_mode = request.feeder_mode or "AUTO"
 
     leg3 = MultimodalLegOut(
         leg_index=3,
         leg_type="LAST_MILE",
-        mode=request.feeder_mode or "AUTO",
-        operator=last_trip["operator"],
+        mode=last_mode,
+        operator=last_operator,
         origin=last_hub_name,
         destination=request.destination_name,
         distance_km=last_mile_km,
         duration_minutes=last_mile_dur,
         fare=last_mile_fare,
-        description=f"Dropoff from {last_hub_name} directly to {request.destination_name}",
+        description=last_desc,
         vehicle_icon="car",
     )
 

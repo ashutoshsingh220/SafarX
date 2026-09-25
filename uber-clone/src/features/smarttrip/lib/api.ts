@@ -5,9 +5,9 @@ const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
 const CANDIDATE_API_URLS = [
-  Platform.OS === "android" ? "http://10.0.2.2:8000" : "http://localhost:8000",
   "http://127.0.0.1:8000",
   "http://localhost:8000",
+  Platform.OS === "android" ? "http://10.0.2.2:8000" : "http://localhost:8000",
   API_BASE_URL,
 ];
 
@@ -329,9 +329,9 @@ export async function fetchCorridorInventory(params: {
   travel_date?: string;
 }): Promise<any> {
   const candidateUrls = [
-    Platform.OS === "android" ? "http://10.0.2.2:8000/api/v1/multimodal/inventory" : "http://localhost:8000/api/v1/multimodal/inventory",
     "http://127.0.0.1:8000/api/v1/multimodal/inventory",
     "http://localhost:8000/api/v1/multimodal/inventory",
+    Platform.OS === "android" ? "http://10.0.2.2:8000/api/v1/multimodal/inventory" : "http://localhost:8000/api/v1/multimodal/inventory",
     `${API_BASE_URL}/api/v1/multimodal/inventory`,
   ];
 
@@ -374,20 +374,22 @@ export async function fetchCorridorInventory(params: {
     destLower.includes("almora") ||
     destLower.includes("kedarnath") ||
     destLower.includes("badrinath") ||
-    destLower.includes("leh");
+    destLower.includes("leh") ||
+    destLower.includes("nainital") ||
+    destLower.includes("champawat");
 
   const hasDirectTrains = !isHillStation;
   const connectingNote = isHillStation
-    ? `IRCTC Notice: No direct rail track to high-altitude station ${destCity}. Connecting journey via rail gateway + mountain road feeder.`
+    ? `IRCTC Notice: No direct rail track to high-altitude station ${destCity}. Dual connecting route options available: 1) Via Kathgodam (KGM) Rail Gateway (closest railhead, 156 km mountain road) 2) Via New Delhi (NDLS) Junction Hub (multiple daily superfast express options).`
     : undefined;
 
   const connectingItin = isHillStation
     ? {
-        transit_hub: "Kathgodam / Haridwar Rail Gateway",
-        leg1: `${origCity} → Kathgodam Gateway via Superfast Express`,
-        leg2: `Kathgodam Gateway → ${destCity} via Himalayan Highway Feeder Cab`,
+        transit_hub: "Dual Rail Gateways: Kathgodam (KGM) / New Delhi (NDLS)",
+        leg1: `Option 1: ${origCity} → Kathgodam Gateway via Superfast Express\nOption 2: ${origCity} → New Delhi Railway Station via Rajdhani / Ashram Express`,
+        leg2: `Kathgodam / New Delhi → ${destCity} via Himalayan Highway Feeder Cab (NH109)`,
         transfer_buffer: "1h 30m connection window",
-        recommendation: "Connecting via Kathgodam/Haridwar ensures smooth road connection into high altitude districts.",
+        recommendation: "Connecting via Kathgodam ensures the shortest mountain drive (156 km), while New Delhi offers maximum train frequencies and speeds.",
       }
     : undefined;
 
@@ -637,6 +639,225 @@ export async function fetchCorridorInventory(params: {
         benefits: ["Zero Station Transfers", "Direct Doorstep Pickup & Drop", "AC Comfort with Boot Space", "Includes Fuel & Driver Allowance"],
       },
     ];
+  } else if (isHillStation) {
+    fallbackTrains = [
+      {
+        train_number: "15013",
+        train_name: "RANIKHET EXPRESS (VIA KATHGODAM GATEWAY)",
+        departure_time: "22:15",
+        departure_station: `${origCity} Capital (GNC)`,
+        departure_date: params.travel_date || "15-Oct-2026",
+        arrival_time: "05:05",
+        arrival_station: "Kathgodam Railway Station (KGM)",
+        arrival_date: "Day 3",
+        duration_str: "30h 50m (Direct Rail Gateway)",
+        running_days: ["M", "T", "W", "T", "F", "S", "S"],
+        active_days: [true, true, true, true, true, true, true],
+        classes: [
+          { class_code: "3A", class_name: "AC 3 Tier", status: "AVAILABLE 34", fare: 1720, status_color: "green" },
+          { class_code: "2A", class_name: "AC 2 Tier", status: "AVAILABLE 12", fare: 2480, status_color: "green" },
+          { class_code: "SL", class_name: "Sleeper", status: "AVAILABLE 76", fare: 650, status_color: "green" },
+        ],
+      },
+      {
+        train_number: "15013+UTC",
+        train_name: "KATHGODAM GATEWAY SF + UTC HIMALAYAN COACH",
+        departure_time: "06:30",
+        departure_station: `${origCity} Capital (GNC)`,
+        departure_date: params.travel_date || "15-Oct-2026",
+        arrival_time: "19:45",
+        arrival_station: "Kathgodam Railway Station (KGM)",
+        arrival_date: "Next Day",
+        duration_str: "26h 15m (Connecting Gateway)",
+        running_days: ["M", "T", "W", "T", "F", "S", "S"],
+        active_days: [true, true, true, true, true, true, true],
+        classes: [
+          { class_code: "3A", class_name: "AC 3 Tier", status: "AVAILABLE 22", fare: 1640, status_color: "green" },
+          { class_code: "SL", class_name: "Sleeper", status: "RAC 14", fare: 620, status_color: "orange" },
+        ],
+      },
+      {
+        train_number: "12957",
+        train_name: "SWARNA JAYANTI RAJDHANI EXP (VIA DELHI HUB)",
+        departure_time: "17:45",
+        departure_station: `${origCity} Capital (GNC)`,
+        departure_date: params.travel_date || "15-Oct-2026",
+        arrival_time: "07:30",
+        arrival_station: "New Delhi Railway Station (NDLS)",
+        arrival_date: "Next Day",
+        duration_str: "13h 45m (High-Speed Rajdhani)",
+        running_days: ["M", "T", "W", "T", "F", "S", "S"],
+        active_days: [true, true, true, true, true, true, true],
+        classes: [
+          { class_code: "3A", class_name: "AC 3 Tier", status: "AVAILABLE 48", fare: 1850, status_color: "green" },
+          { class_code: "2A", class_name: "AC 2 Tier", status: "AVAILABLE 22", fare: 2650, status_color: "green" },
+          { class_code: "1A", class_name: "AC First Class", status: "AVAILABLE 8", fare: 4350, status_color: "green" },
+        ],
+      },
+      {
+        train_number: "12915",
+        train_name: "ASHRAM SUPERFAST EXPRESS (VIA DELHI HUB)",
+        departure_time: "19:15",
+        departure_station: `${origCity} Capital (GNC)`,
+        departure_date: params.travel_date || "15-Oct-2026",
+        arrival_time: "10:00",
+        arrival_station: "Old Delhi Railway Station (DLI)",
+        arrival_date: "Next Day",
+        duration_str: "14h 45m (Daily Superfast)",
+        running_days: ["M", "T", "W", "T", "F", "S", "S"],
+        active_days: [true, true, true, true, true, true, true],
+        classes: [
+          { class_code: "3A", class_name: "AC 3 Tier", status: "AVAILABLE 36", fare: 1420, status_color: "green" },
+          { class_code: "2A", class_name: "AC 2 Tier", status: "AVAILABLE 14", fare: 2040, status_color: "green" },
+          { class_code: "SL", class_name: "Sleeper", status: "AVAILABLE 92", fare: 540, status_color: "green" },
+        ],
+      },
+      {
+        train_number: "20901",
+        train_name: "VANDE BHARAT EXPRESS (VIA DELHI HUB)",
+        departure_time: "14:05",
+        departure_station: `${origCity} Capital (GNC)`,
+        departure_date: params.travel_date || "15-Oct-2026",
+        arrival_time: "20:35",
+        arrival_station: "New Delhi Railway Station (NDLS)",
+        arrival_date: "Same Day",
+        duration_str: "6h 30m (Semi-High Speed)",
+        running_days: ["M", "T", "W", "T", "F", "S", "S"],
+        active_days: [true, true, true, true, true, false, true],
+        classes: [
+          { class_code: "CC", class_name: "AC Chair Car", status: "AVAILABLE 56", fare: 1665, status_color: "green" },
+          { class_code: "EC", class_name: "Exec Chair Car", status: "AVAILABLE 18", fare: 3125, status_color: "green" },
+        ],
+      },
+      {
+        train_number: "12917",
+        train_name: "GUJARAT SAMPARK KRANTI (VIA DELHI HUB)",
+        departure_time: "17:30",
+        departure_station: "Ahmedabad Junction (ADI)",
+        departure_date: params.travel_date || "15-Oct-2026",
+        arrival_time: "10:35",
+        arrival_station: "Hazrat Nizamuddin (NZM)",
+        arrival_date: "Next Day",
+        duration_str: "17h 05m (Trunk Express)",
+        running_days: ["M", "T", "W", "T", "F", "S", "S"],
+        active_days: [true, false, false, false, true, false, false],
+        classes: [
+          { class_code: "3A", class_name: "AC 3 Tier", status: "AVAILABLE 26", fare: 1390, status_color: "green" },
+          { class_code: "2A", class_name: "AC 2 Tier", status: "AVAILABLE 11", fare: 1990, status_color: "green" },
+          { class_code: "SL", class_name: "Sleeper", status: "AVAILABLE 84", fare: 520, status_color: "green" },
+        ],
+      },
+    ];
+
+    fallbackBuses = [
+      {
+        bus_id: "UTC-VOLVO-1",
+        operator_name: "Uttarakhand Transport Corp (UTC) Volvo",
+        bus_type: "Volvo 9600 AC Multi-Axle Sleeper",
+        departure_time: "20:30",
+        boarding_point: `${origCity} ISBT / Anand Vihar ISBT`,
+        arrival_time: "08:00",
+        dropping_point: `${destCity} Central Bus Station (Roadways)`,
+        duration_str: "11h 30m (Direct Hill Service)",
+        available_seats: 12,
+        fare: 1150,
+        seat_types: [
+          { type: "Upper Sleeper", fare: 1150, available: 6 },
+          { type: "Lower Sleeper", fare: 1280, available: 6 },
+        ],
+      },
+      {
+        bus_id: "UTC-JANRATH-2",
+        operator_name: "UTC Janrath 2x2 AC",
+        bus_type: "Janrath AC 2x2 Pushback",
+        departure_time: "21:45",
+        boarding_point: "Haldwani / Kathgodam Gateway Depot",
+        arrival_time: "07:30",
+        dropping_point: `${destCity} Bus Depot`,
+        duration_str: "9h 45m (Mountain Highway)",
+        available_seats: 18,
+        fare: 760,
+        seat_types: [
+          { type: "AC Seater", fare: 760, available: 18 },
+        ],
+      },
+    ];
+
+    fallbackFlights = [
+      {
+        flight_number: "AI 2716",
+        airline: "Air India (Commercial Hub)",
+        departure_time: "07:00",
+        departure_airport: "Ahmedabad Airport (AMD)",
+        arrival_time: "08:35",
+        arrival_airport: "New Delhi IGI Airport (DEL)",
+        duration_str: "1h 35m (Non-stop)",
+        is_non_stop: true,
+        fare_classes: [
+          { class: "Economy Saver", fare: 3267, seats: 7, baggage: "15 kg" },
+          { class: "Flexi Plus", fare: 4290, seats: 12, baggage: "25 kg" },
+        ],
+      },
+      {
+        flight_number: "6E 2340",
+        airline: "IndiGo (Commercial Gateway)",
+        departure_time: "09:30",
+        departure_airport: "Ahmedabad Airport (AMD)",
+        arrival_time: "11:15",
+        arrival_airport: "New Delhi IGI Airport (DEL)",
+        duration_str: "1h 45m (Non-stop)",
+        is_non_stop: true,
+        fare_classes: [
+          { class: "Saver", fare: 3120, seats: 5, baggage: "15 kg" },
+          { class: "Super 6E", fare: 4890, seats: 9, baggage: "20 kg" },
+        ],
+      },
+      {
+        flight_number: "9I 402",
+        airline: "FlyBig (UDAN Regional Scheduled)",
+        departure_time: "10:15",
+        departure_airport: "Dehradun Jolly Grant (DED)",
+        arrival_time: "11:10",
+        arrival_airport: "Pithoragarh Naini Saini (NNS)",
+        duration_str: "55m (Direct Regional)",
+        is_non_stop: true,
+        fare_classes: [
+          { class: "UDAN Capped", fare: 2500, seats: 9, baggage: "15 kg" },
+          { class: "Standard Regional", fare: 3499, seats: 5, baggage: "15 kg" },
+        ],
+      },
+    ];
+
+    fallbackCabs = [
+      {
+        cab_id: "cab-himalayan-sedan",
+        vehicle_type: "Mountain AC Sedan (Dzire / Etios)",
+        operator: "Himalayan Highway Feeder Cab (Mountain Taxi)",
+        duration_str: "5h 15m (from Kathgodam Gateway)",
+        distance_km: 156.4,
+        fare: 2192,
+        benefits: [
+          "Himalayan Certified Mountain Drivers",
+          "Pickup directly at Kathgodam / Haldwani Station",
+          "Scenic NH109 Hill Highway Dropoff",
+          "Includes Mountain Road Tolls & State Taxes",
+        ],
+      },
+      {
+        cab_id: "cab-himalayan-suv",
+        vehicle_type: "Mountain 4WD SUV (Innova / Bolero Neo)",
+        operator: "Himalayan Highway Feeder Premier SUV",
+        duration_str: "5h 15m (from Kathgodam Gateway)",
+        distance_km: 156.4,
+        fare: 3150,
+        benefits: [
+          "High Ground Clearance for Hill Roads",
+          "6-7 Passenger Seating with Luggage Carrier",
+          "Direct Doorstep Drop anywhere in Pithoragarh",
+          "All Hill Tolls & Driver Night Allowance Included",
+        ],
+      },
+    ];
   } else {
     fallbackTrains = [
       {
@@ -742,9 +963,9 @@ export async function stitchDoorToDoorPlan(params: {
   duration_minutes?: number;
 }): Promise<any> {
   const urls = [
-    Platform.OS === "android" ? "http://10.0.2.2:8000/api/v1/multimodal/stitch" : "http://localhost:8000/api/v1/multimodal/stitch",
     "http://127.0.0.1:8000/api/v1/multimodal/stitch",
     "http://localhost:8000/api/v1/multimodal/stitch",
+    Platform.OS === "android" ? "http://10.0.2.2:8000/api/v1/multimodal/stitch" : "http://localhost:8000/api/v1/multimodal/stitch",
     `${API_BASE_URL}/api/v1/multimodal/stitch`,
   ];
 
@@ -796,17 +1017,58 @@ export async function stitchDoorToDoorPlan(params: {
     };
   }
 
+  const isDestKumaon = ["pithoragarh", "almora", "nainital", "champawat", "ranikhet"].some(h =>
+    (params.destination_name || "").toLowerCase().includes(h)
+  );
+  const isKathgodamArrival =
+    (params.arrival_hub_name || "").toLowerCase().includes("kathgodam") ||
+    (params.arrival_hub_name || "").toLowerCase().includes("kgm");
+  const isDelhiArrival = ["delhi", "ndls", "dli", "nzm"].some(d =>
+    (params.arrival_hub_name || "").toLowerCase().includes(d)
+  );
+
+  let lastMileFare = 45;
+  let lastMileKm = 8.2;
+  let lastMileDur = 24;
+  let lastMileMode = "AUTO";
+  let lastMileOp = "SmartTrip Local Auto";
+  let lastMileDesc = "Dropoff from arrival hub directly to final destination address";
+
+  if (isDestKumaon && isKathgodamArrival) {
+    lastMileFare = 2192;
+    lastMileKm = 156.4;
+    lastMileDur = 315;
+    lastMileMode = "CAB";
+    lastMileOp = "Himalayan Highway Feeder Cab (Mountain Taxi)";
+    lastMileDesc = `Mountain highway connection via NH109 from ${params.arrival_hub_name} to ${params.destination_name}`;
+  } else if (isDestKumaon && isDelhiArrival) {
+    lastMileFare = 2850;
+    lastMileKm = 472.0;
+    lastMileDur = 630;
+    lastMileMode = "CAB";
+    lastMileOp = "Delhi-Kumaon Mountain Express Coach / Feeder Cab";
+    lastMileDesc = `Highway & mountain road connection from ${params.arrival_hub_name} to ${params.destination_name}`;
+  } else if (params.selected_mode === "FLIGHT" && isDestKumaon) {
+    lastMileFare = 2950;
+    lastMileKm = 485.0;
+    lastMileDur = 645;
+    lastMileMode = "CAB";
+    lastMileOp = "Airport Feeder Cab to Pithoragarh";
+    lastMileDesc = `Connecting highway & hill transit from ${params.arrival_hub_name} to ${params.destination_name}`;
+  }
+
   const firstMileFare = params.feeder_mode === "CAB" ? 180 : 65;
-  const lastMileFare = 45;
   const totalFare = firstMileFare + params.selected_fare + lastMileFare;
+  const longHaulDur = params.duration_minutes || (params.selected_mode === "FLIGHT" ? 105 : 960);
+  const totalDur = 42 + longHaulDur + lastMileDur;
 
   return {
     plan_id: `plan-stitch-${params.selected_item_id}-${Date.now()}`,
     badge: params.selected_mode === "TRAIN" ? "CHEAPEST" : (params.selected_mode === "FLIGHT" ? "FASTEST" : "BEST_VALUE"),
     primary_mode: params.selected_mode,
     total_fare: totalFare,
-    total_duration_minutes: (params.duration_minutes || 960) + 90,
-    total_distance_km: 1460.0,
+    total_duration_minutes: totalDur,
+    total_distance_km: Math.round(18.5 + 1420.0 + lastMileKm),
     legs: [
       {
         leg_index: 1,
@@ -818,7 +1080,7 @@ export async function stitchDoorToDoorPlan(params: {
         distance_km: 18.5,
         duration_minutes: 42,
         fare: firstMileFare,
-        description: "Direct pickup from doorstep to departure hub",
+        description: `Direct pickup from doorstep to ${params.departure_hub_name}`,
         vehicle_icon: "car",
       },
       {
@@ -829,7 +1091,7 @@ export async function stitchDoorToDoorPlan(params: {
         origin: params.departure_hub_name,
         destination: params.arrival_hub_name,
         distance_km: 1420.0,
-        duration_minutes: params.duration_minutes || 960,
+        duration_minutes: longHaulDur,
         fare: params.selected_fare,
         description: `Confirmed ticket in ${params.selected_class} class`,
         vehicle_icon: params.selected_mode === "TRAIN" ? "train" : (params.selected_mode === "FLIGHT" ? "flight" : "bus"),
@@ -837,18 +1099,18 @@ export async function stitchDoorToDoorPlan(params: {
       {
         leg_index: 3,
         leg_type: "LAST_MILE",
-        mode: "AUTO",
-        operator: "SmartTrip Local Auto",
+        mode: lastMileMode,
+        operator: lastMileOp,
         origin: params.arrival_hub_name,
         destination: params.destination_name,
-        distance_km: 8.2,
-        duration_minutes: 24,
+        distance_km: lastMileKm,
+        duration_minutes: lastMileDur,
         fare: lastMileFare,
-        description: "Dropoff from arrival hub directly to final destination address",
+        description: lastMileDesc,
         vehicle_icon: "car",
       },
     ],
-    summary: `Door-to-door via local feeder, then ${params.selected_item_name} (${params.selected_class}), and final dropoff to your destination.`,
+    summary: `Door-to-door via local feeder, then ${params.selected_item_name} (${params.selected_class}), and ${lastMileOp} to ${params.destination_name}.`,
   };
 }
 

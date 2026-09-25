@@ -230,6 +230,7 @@ INDIAN_TRANSIT_HUBS: list[HubInfo] = [
     {"name": "Jodhpur Airport", "code": "JDH", "city": "Jodhpur", "state": "Rajasthan", "hub_type": "AIRPORT", "latitude": 26.2511, "longitude": 73.0489},
     {"name": "Maharana Pratap Airport", "code": "UDR", "city": "Udaipur", "state": "Rajasthan", "hub_type": "AIRPORT", "latitude": 24.6178, "longitude": 73.8961},
     # Railway Stations
+    {"name": "Gandhinagar Capital Railway Station", "code": "GNC", "city": "Gandhinagar", "state": "Gujarat", "hub_type": "RAILWAY_STATION", "latitude": 23.2345, "longitude": 72.6394},
     {"name": "Ahmedabad Junction", "code": "ADI", "city": "Ahmedabad", "state": "Gujarat", "hub_type": "RAILWAY_STATION", "latitude": 23.0234, "longitude": 72.6011},
     {"name": "Surat Railway Station", "code": "ST", "city": "Surat", "state": "Gujarat", "hub_type": "RAILWAY_STATION", "latitude": 21.2045, "longitude": 72.8407},
     {"name": "Vadodara Junction", "code": "BRC", "city": "Vadodara", "state": "Gujarat", "hub_type": "RAILWAY_STATION", "latitude": 22.3108, "longitude": 73.1812},
@@ -237,6 +238,7 @@ INDIAN_TRANSIT_HUBS: list[HubInfo] = [
     {"name": "Jodhpur Junction", "code": "JU", "city": "Jodhpur", "state": "Rajasthan", "hub_type": "RAILWAY_STATION", "latitude": 26.2845, "longitude": 73.0180},
     {"name": "Kota Junction", "code": "KOTA", "city": "Kota", "state": "Rajasthan", "hub_type": "RAILWAY_STATION", "latitude": 25.2138, "longitude": 75.8648},
     # Bus Terminals
+    {"name": "Gandhinagar Central Bus Stand (GSRTC)", "code": "GND-GSRTC", "city": "Gandhinagar", "state": "Gujarat", "hub_type": "BUS_TERMINAL", "latitude": 23.2185, "longitude": 72.6450},
     {"name": "Geeta Mandir Central Bus Terminus", "code": "AMD-GM", "city": "Ahmedabad", "state": "Gujarat", "hub_type": "BUS_TERMINAL", "latitude": 23.0140, "longitude": 72.5920},
     {"name": "Surat Central Bus Station", "code": "ST-CS", "city": "Surat", "state": "Gujarat", "hub_type": "BUS_TERMINAL", "latitude": 21.2020, "longitude": 72.8390},
     {"name": "Sindhi Camp Central Bus Stand", "code": "JAI-SC", "city": "Jaipur", "state": "Rajasthan", "hub_type": "BUS_TERMINAL", "latitude": 26.9230, "longitude": 75.7980},
@@ -392,6 +394,7 @@ KNOWN_LOCALITY_COORDINATES: dict[str, tuple[float, float]] = {
     "durgapur": (23.5204, 87.3119),
 
     # Gujarat & Rajasthan
+    "gandhinagar": (23.2156, 72.6369),
     "ahmedabad": (23.0225, 72.5714),
     "surat": (21.1702, 72.8311),
     "vadodara": (22.3072, 73.1812),
@@ -478,6 +481,7 @@ CITY_AIRPORT_CODES: dict[str, str] = {
     "kochi": "COK",
     "visakhapatnam": "VTZ",
     # Gujarat & Rajasthan
+    "gandhinagar": "AMD",
     "ahmedabad": "AMD",
     "surat": "STV",
     "jaipur": "JAI",
