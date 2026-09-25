@@ -1,6 +1,6 @@
-# <div align="center">🚀 SafarX</div>
-
 <div align="center">
+  <img src="docs/logo/safarx_logo.png" width="180" alt="SafarX Logo" />
+  <h1>SafarX</h1>
   <h3>Next-Generation Multimodal Door-to-Door Travel Assistant & Autonomous Transit Engine</h3>
   <p>Seamlessly uniting Indian Railways, live commercial flights, intercity bus networks, outstation cabs, and first/last-mile feeder connections into a single unified journey with Google Maps intelligence and Gemini 2.0 Flash agentic reasoning.</p>
 </div>
