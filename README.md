@@ -1,4 +1,4 @@
-# <div align="center">🚀 SmartTrip AI</div>
+# <div align="center">🚀 SafarX</div>
 
 <div align="center">
   <h3>Next-Generation Multimodal Door-to-Door Travel Assistant & Autonomous Transit Engine</h3>
@@ -50,7 +50,7 @@ Intercity travel in India has historically suffered from extreme fragmentation:
 3. **Hardcoded Corridors**: Conventional apps fail or recommend bizarre detours (e.g. routing Goa to Pune via Delhi) when direct routes aren't easily indexed.
 4. **Last-Mile Abandonment**: Deboarding at unfamiliar junctions leaves travelers stranded without pre-booked reliable local transport.
 
-**SmartTrip AI solves this end-to-end** through an autonomous multimodal engine that fuses **Google Maps Geocoding & Directions API**, **SerpApi Google Flights telemetry**, **Indian Railways direct trunk junctions**, and **Decoupled Multi-Hub Nearest-Neighbor (k-NN) Expanding Fallback Loops**.
+**SafarX solves this end-to-end** through an autonomous multimodal engine that fuses **Google Maps Geocoding & Directions API**, **SerpApi Google Flights telemetry**, **Indian Railways direct trunk junctions**, and **Decoupled Multi-Hub Nearest-Neighbor (k-NN) Expanding Fallback Loops**.
 
 ---
 
@@ -175,8 +175,8 @@ All three legs are bundled into a single checkout flow, providing travelers with
 
 ### Step 1: Clone the Repository
 ```bash
-git clone https://github.com/ashutoshsingh220/SmartTripAI.git
-cd SmartTripAI
+git clone https://github.com/ashutoshsingh220/SafarX.git
+cd SafarX
 ```
 
 ---
