@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE, UrlTile } from "react-native-maps";
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { GooglePlacesAutocompleteInput } from "@/src/features/smarttrip/components/GooglePlacesAutocompleteInput";
 import { useLocationStore } from "@/store";
 
@@ -399,7 +399,7 @@ export default function ExplorePlaceScreen() {
           ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={{ width: "100%", height: "100%" }}
-          mapType="none"
+          mapType="standard"
           initialRegion={{
             latitude: placeCoords.latitude,
             longitude: placeCoords.longitude,
@@ -407,16 +407,9 @@ export default function ExplorePlaceScreen() {
             longitudeDelta: 0.05,
           }}
           showsUserLocation={true}
+          showsMyLocationButton={true}
           userInterfaceStyle="light"
         >
-          <UrlTile
-            urlTemplate="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
-            maximumZ={22}
-            flipY={false}
-            tileSize={256}
-            shouldReplaceMapContent={true}
-            zIndex={1}
-          />
           <Marker
             coordinate={{
               latitude: placeCoords.latitude,
