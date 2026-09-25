@@ -2,7 +2,7 @@
   <img src="docs/logo/safarx_logo.png" width="180" alt="SafarX Logo" />
   <h1>SafarX</h1>
   <h3>Next-Generation Multimodal Door-to-Door Travel Assistant & Autonomous Transit Engine</h3>
-  <p>Seamlessly uniting Indian Railways, live commercial flights, intercity bus networks, outstation cabs, and first/last-mile feeder connections into a single unified journey with Google Maps intelligence and Gemini 2.0 Flash agentic reasoning.</p>
+  <p>Seamlessly uniting Indian Railways, live commercial flights, intercity bus networks, outstation cabs, and first/last-mile feeder connections into a single unified journey with Google Maps intelligence and Groq LLaMA 3.3 AI conversational reasoning.</p>
 </div>
 
 <div align="center">
@@ -10,10 +10,13 @@
 [![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React Native](https://img.shields.io/badge/React%20Native-Expo%2051-61DAFB?style=for-the-badge&logo=react&logoColor=white)](https://reactnative.dev/)
-[![Google Gemini](https://img.shields.io/badge/Google%20Gemini-2.0%20Flash-8E75B2?style=for-the-badge&logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
+[![Groq Cloud](https://img.shields.io/badge/Groq%20Cloud-LLaMA%203.3-F55036?style=for-the-badge&logo=groq&logoColor=white)](https://groq.com/)
 [![Google Maps](https://img.shields.io/badge/Google%20Maps-Geocoding%20%26%20Directions-4285F4?style=for-the-badge&logo=googlemaps&logoColor=white)](https://developers.google.com/maps)
 [![SerpApi](https://img.shields.io/badge/SerpApi-Live%20Google%20Flights-00C49F?style=for-the-badge&logo=googleflights&logoColor=white)](https://serpapi.com/)
-[![PostGIS](https://img.shields.io/badge/PostGIS-15--3.3-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://postgis.net/)
+[![RapidAPI](https://img.shields.io/badge/RapidAPI-IRCTC%20Railways-0055FF?style=for-the-badge&logo=rapidapi&logoColor=white)](https://rapidapi.com/)
+[![Clerk](https://img.shields.io/badge/Clerk-Authentication-6C47FF?style=for-the-badge&logo=clerk&logoColor=white)](https://clerk.com/)
+[![Stripe](https://img.shields.io/badge/Stripe-Payments-635BFF?style=for-the-badge&logo=stripe&logoColor=white)](https://stripe.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://postgis.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 </div>
@@ -61,7 +64,7 @@ flowchart TD
     subgraph MobileClient["📱 Mobile Client (React Native / Expo 51)"]
         SearchUI["Multimodal Search Screen<br/>(Train, Flight, Bus, Cab)"]
         MapEngine["Google Maps Native Polyline & Marker Engine"]
-        AgentChat["Gemini 2.0 Agentic Chatbot"]
+        AgentChat["Groq LLaMA 3.3 AI Travel Assistant"]
         StitchView["Dynamic 3-Leg Stitching Sheet"]
     end
 
@@ -150,17 +153,20 @@ All three legs are bundled into a single checkout flow, providing travelers with
 
 ---
 
-## 💻 Tech Stack
+## 💻 Tech Stack & Used APIs
 
-| Domain | Technologies |
-| :--- | :--- |
-| **Mobile Client** | React Native, Expo 51, TypeScript, TailwindCSS / NativeWind, React Navigation |
-| **Backend Framework** | FastAPI (Python 3.11+), Uvicorn, Pydantic v2, SQLAlchemy (AsyncIO) |
-| **AI & LLM Services** | Google Gemini 2.0 Flash (`google-generativeai`), Tool / Function Calling |
-| **Geospatial & Mapping**| Google Maps Platform (Geocoding API, Directions API, Places API), PostGIS 3.3, OSRM |
-| **Flight & Rail Data** | SerpApi (Google Flights Engine), RapidAPI (Indian Railways / IRCTC Engine) |
-| **Data Storage & Cache**| PostgreSQL 15, Redis 7 (In-Memory Telemetry & API Caching) |
-| **DevOps & Containers** | Docker, Docker Compose, ADB Reverse TCP Forwarding |
+| Domain | Used APIs & Technologies | Implementation / Purpose |
+| :--- | :--- | :--- |
+| **Mobile Client** | React Native, Expo 51, TypeScript, NativeWind | Cross-platform passenger mobile interface |
+| **Backend Framework** | FastAPI (Python 3.11+), Uvicorn, Pydantic v2 | High-performance async REST API & routing engine |
+| **AI Conversational Engine** | **Groq Cloud API** (`LLaMA 3.3 70B Versatile`) | Ultra-fast sub-second LLM inference assistant for intelligent travel planning and queries |
+| **Mapping & Navigation** | **Google Maps Platform** (Maps SDK, Places API, Directions API, Geocoding) | Native vector map rendering, address autocomplete, live route polylines & real road telemetry |
+| **Flight Telemetry** | **SerpApi** (Google Flights Engine) | Real-time commercial domestic flight schedules, airlines & live INR pricing |
+| **Railways Connectivity** | **RapidAPI IRCTC / Indian Railways Engine** | Direct train schedules, trunk corridor matching & multi-class tariffs |
+| **User Authentication** | **Clerk** (`@clerk/clerk-expo`) | User registration, social login, secure session management |
+| **Payment Processing** | **Stripe** (`@stripe/stripe-react-native`) | In-app secure payment gateway & checkout |
+| **Data & Cache Layer** | **PostgreSQL 15**, **Redis 7** | Spatial data persistence & in-memory caching |
+| **DevOps & Containers** | Docker, Docker Compose, ADB Reverse TCP Forwarding | Local containerization and Android USB/emulator debugging |
 
 ---
 
@@ -209,14 +215,15 @@ cd SafarX
    # Google Maps Platform (Geocoding & Directions)
    GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
 
+   # Groq Cloud AI Engine (LLaMA 3.3 Fast Inference)
+   GROQ_API_KEY=your_groq_api_key_here
+   GROQ_MODEL=llama-3.3-70b-versatile
+
    # Google Flights Telemetry (SerpApi)
    SERPAPI_API_KEY=your_serpapi_api_key_here
 
    # Indian Railways Live Engine (RapidAPI IRCTC)
    RAPIDAPI_KEY=your_rapidapi_key_here
-
-   # Google Gemini 2.0 Flash AI Agent
-   GEMINI_API_KEY=your_gemini_api_key_here
    ```
 
 4. **Start the FastAPI backend server**:
@@ -241,10 +248,29 @@ cd SafarX
    ```
 
 3. **Configure Mobile Environment Variables**:
+   Copy the provided `.env.example` template:
    ```bash
    cp .env.example .env
    ```
-   Ensure `EXPO_PUBLIC_API_BASE_URL` is set to `http://localhost:8000`.
+   Open `.env` and configure your API keys:
+   ```ini
+   # Clerk Authentication
+   EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+
+   # Google Maps Platform
+   EXPO_PUBLIC_PLACES_API_KEY=your_google_places_api_key
+   EXPO_PUBLIC_DIRECTIONS_API_KEY=your_google_directions_api_key
+
+   # Groq Cloud AI Engine
+   EXPO_PUBLIC_GROQ_API_KEY=your_groq_api_key
+   EXPO_PUBLIC_GROQ_MODEL=llama-3.3-70b-versatile
+
+   # Stripe Payments
+   EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=your_stripe_publishable_key
+
+   # Backend API Base URL
+   EXPO_PUBLIC_API_BASE_URL=http://localhost:8000
+   ```
 
 4. **Launch the Expo Metro Bundler**:
    ```bash

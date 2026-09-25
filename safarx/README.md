@@ -8,7 +8,7 @@ This directory contains the core implementation of **SafarX** (backend API, Dock
 
 ## 🛠️ Folder Contents
 
-- **`backend/`**: FastAPI application (Python 3.11/3.12) with spatial search, Gemini 2.0 Flash AI agent, S1–S5 pricing engine, ML models, and WebSocket real-time telemetry.
+- **`backend/`**: FastAPI application (Python 3.11/3.12) with spatial search, Groq AI conversational agent, S1–S5 pricing engine, ML models, and WebSocket real-time telemetry.
 - **`frontend/`**: Cross-platform mobile app built with Flutter and Riverpod state management.
 - **`docs/`**: Operational documentation including OSRM configuration guide (`OSRM_SETUP.md`).
 - **`scripts/`**: Automation scripts for downloading and building OSRM map data (`setup_osrm.ps1` / `setup_osrm.sh`).
@@ -47,7 +47,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ---
 
-### 3. Testing the Gemini AI Agent CLI
+### 3. Testing the Groq AI Agent CLI
 
 ```bash
 cd backend
