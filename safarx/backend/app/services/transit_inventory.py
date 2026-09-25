@@ -273,7 +273,7 @@ def _fetch_serpapi_flights(
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "SmartTrip-Client/3.0"})
-        with urllib.request.urlopen(req, timeout=8.0) as resp:
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             flights_raw = (data.get("best_flights") or []) + (data.get("other_flights") or [])
             if not flights_raw:
@@ -833,9 +833,9 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
 
     # Check candidate airport pairs for live commercial flights via SerpApi
     flight_found = False
-    for a_orig, _ in orig_airs:
+    for a_orig, _ in orig_airs[:1]:
         o_air_code = a_orig.get("code") or CITY_AIRPORT_CODES.get(a_orig["city"].lower(), "BOM")
-        for a_dest, _ in dest_airs:
+        for a_dest, _ in dest_airs[:2]:
             d_air_code = a_dest.get("code") or CITY_AIRPORT_CODES.get(a_dest["city"].lower(), "DEL")
 
             serp_flights = _fetch_serpapi_flights(
