@@ -185,7 +185,7 @@ cd SafarX
 
 1. **Navigate to the backend directory and set up a virtual environment**:
    ```bash
-   cd smarttrip/backend
+   cd safarx/backend
    python -m venv venv
    
    # On Windows:

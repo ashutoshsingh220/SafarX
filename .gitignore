@@ -25,7 +25,7 @@ firebase-adminsdk*.json
 *.pkl
 
 # Downloaded and generated OSRM map data can be very large.
-smarttrip/backend/data/*.osm*
+safarx/backend/data/*.osm*
 
 # Python
 __pycache__/
