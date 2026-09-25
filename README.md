@@ -122,10 +122,10 @@ flowchart TD
 
 ### 1. Decoupled Multi-Hub Nearest-Neighbor (k-NN) Expanding Fallbacks
 * **Complete Mode Independence**: Unavailability or connection requirements in one mode (e.g. no direct commercial flight to a smaller town) **NEVER** alters or distorts other modes. Trains and Buses remain 100% direct at their local terminals.
-* **Expanding Radial Rings ($R_1 \to R_2 \to R_3$)**:
-  * **Flights**: Checks candidate airport pairs ($O_{air} \times D_{air}$). If Ring 1 (local airstrip) has no active commercial flights, it automatically expands to Ring 2 (regional commercial airport), stitching an airport feeder cab for the remaining road distance.
-  * **Trains**: Checks candidate railway junctions ($O_{rail} \times D_{rail}$). For example, traveling from **Goa to Hadapsar, Pune** matches Madgaon Junction to Hadapsar Railway Station directly on the **Goa Express (12779)**.
-  * **Buses**: Connects closest authentic ISBT terminals (e.g. Nerul LP / Vashi Bus Terminal $\to$ Darbhanga Bus Stand Delhi More).
+* **Expanding Radial Rings (Ring 1 → Ring 2 → Ring 3)**:
+  * **Flights**: Checks candidate airport pairs (Origin Airport × Destination Airport). If Ring 1 (local airstrip) has no active commercial flights, it automatically expands to Ring 2 (regional commercial airport), stitching an airport feeder cab for the remaining road distance.
+  * **Trains**: Checks candidate railway junctions (Origin Station × Destination Station). For example, traveling from **Goa to Hadapsar, Pune** matches Madgaon Junction to Hadapsar Railway Station directly on the **Goa Express (12779)**.
+  * **Buses**: Connects closest authentic ISBT terminals (e.g. Nerul LP / Vashi Bus Terminal → Darbhanga Bus Stand Delhi More).
   * **Cabs**: Point-to-point road trip calculated directly via Google Directions API.
 
 ```mermaid
@@ -146,9 +146,19 @@ flowchart LR
 * **Live Highway Telemetry**: Driving distances, traffic conditions, and driving durations are derived directly from Google Directions API (`mode=driving`), replacing theoretical straight-line approximations.
 
 ### 3. Dynamic Door-to-Door 3-Leg Journey Stitching
-When a user selects any train, flight, or bus ticket:
-$$\text{Total Fare} = \text{Fare}_{\text{First-Mile Auto/Cab}} + \text{Fare}_{\text{Intercity Ticket}} + \text{Fare}_{\text{Last-Mile Auto/Cab}}$$
-$$\text{Total Duration} = \text{Duration}_{\text{First-Mile}} + \text{Duration}_{\text{Intercity}} + \text{Duration}_{\text{Last-Mile}}$$
+Rather than requiring travelers to manually book multiple disconnected tickets, SafarX automatically links three distinct journey legs into a synchronized, single-ticket itinerary:
+
+* 🚗 **Leg 1 (First-Mile Feeder)**: Doorstep pickup via local cab/auto to the departure railway station, airport, or bus terminal.
+* 🚆 / ✈️ / 🚌 **Leg 2 (Long-Haul Trunk)**: Intercity express journey via Indian Railways, commercial flight, or intercity sleeper bus.
+* 🚕 **Leg 3 (Last-Mile Feeder)**: Pre-arranged local cab/auto connection from arrival junction to final destination.
+
+#### 📊 Unified Cost & Duration Calculation
+
+| Metric | Formula Breakdown | Description |
+| :--- | :--- | :--- |
+| **Total Fare** | `First-Mile Cab Fare + Intercity Ticket Fare + Last-Mile Cab Fare` | Transparent combined pricing with zero hidden surcharges |
+| **Total Duration** | `First-Mile Transfer + Intercity Travel Time + Last-Mile Dropoff` | Complete doorstep-to-doorstep journey duration with realistic buffer times |
+
 All three legs are bundled into a single checkout flow, providing travelers with a guaranteed all-in-one digital boarding pass with a scannable QR code.
 
 ---
