@@ -78,3 +78,88 @@ export interface MultimodalBooking {
   created_at: string;
 }
 
+export interface TransitClassOption {
+  class_code: string;
+  class_name: string;
+  status: string;
+  fare: number;
+  status_color?: "green" | "orange" | "red" | string;
+}
+
+export interface TrainInventoryItem {
+  train_number: string;
+  train_name: string;
+  departure_time: string;
+  departure_station: string;
+  departure_date: string;
+  arrival_time: string;
+  arrival_station: string;
+  arrival_date: string;
+  duration_str: string;
+  running_days: string[];
+  active_days: boolean[];
+  classes: TransitClassOption[];
+}
+
+export interface BusInventoryItem {
+  bus_id: string;
+  operator_name: string;
+  bus_type: string;
+  departure_time: string;
+  boarding_point: string;
+  arrival_time: string;
+  dropping_point: string;
+  duration_str: string;
+  available_seats: number;
+  fare: number;
+  seat_types: { type: string; fare: number; available: number }[];
+}
+
+export interface FlightInventoryItem {
+  flight_number: string;
+  airline: string;
+  departure_time: string;
+  departure_airport: string;
+  arrival_time: string;
+  arrival_airport: string;
+  duration_str: string;
+  is_non_stop: boolean;
+  fare_classes: { class: string; fare: number; seats: number; baggage?: string }[];
+}
+
+export interface DirectCabInventoryItem {
+  cab_id: string;
+  vehicle_type: string;
+  operator: string;
+  duration_str: string;
+  distance_km: number;
+  fare: number;
+  benefits: string[];
+}
+
+export interface CorridorInventory {
+  origin: string;
+  destination: string;
+  travel_date: string;
+  corridor_title: string;
+  has_direct_trains?: boolean;
+  connecting_train_note?: string;
+  connecting_itinerary?: {
+    transit_hub?: string;
+    leg1?: string;
+    leg2?: string;
+    transfer_buffer?: string;
+    recommendation?: string;
+  };
+  trains: TrainInventoryItem[];
+  buses: BusInventoryItem[];
+  flights: FlightInventoryItem[];
+  cabs: DirectCabInventoryItem[];
+  feeder_options: {
+    auto_rate_per_km?: number;
+    cab_rate_per_km?: number;
+  };
+}
+
+
+

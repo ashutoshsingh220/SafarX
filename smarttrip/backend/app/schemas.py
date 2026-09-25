@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Any
 from datetime import datetime
 
 class LocationBase(BaseModel):
@@ -176,4 +176,114 @@ class MultimodalBookingResponse(BaseModel):
     legs: List[MultimodalLegOut]
     qr_code_payload: str
     created_at: datetime
+
+
+class TransitClassOption(BaseModel):
+    class_code: str  # "3A", "2A", "1A", "3E", "SL", "2S"
+    class_name: str
+    status: str  # "AVAILABLE 42", "RAC 14", "WL 18"
+    fare: float
+    status_color: str = "green"  # "green", "orange", "red"
+
+
+class TrainInventoryItem(BaseModel):
+    train_number: str
+    train_name: str
+    departure_time: str
+    departure_station: str
+    departure_date: str
+    arrival_time: str
+    arrival_station: str
+    arrival_date: str
+    duration_str: str
+    running_days: List[str]  # ["M", "T", "W", "T", "F", "S", "S"]
+    active_days: List[bool]
+    classes: List[TransitClassOption]
+
+
+class BusInventoryItem(BaseModel):
+    bus_id: str
+    operator_name: str
+    bus_type: str
+    departure_time: str
+    boarding_point: str
+    arrival_time: str
+    dropping_point: str
+    duration_str: str
+    available_seats: int
+    fare: float
+    seat_types: List[dict[str, Any]] = []
+
+
+class FlightInventoryItem(BaseModel):
+    flight_number: str
+    airline: str
+    departure_time: str
+    departure_airport: str
+    arrival_time: str
+    arrival_airport: str
+    duration_str: str
+    is_non_stop: bool = True
+    fare_classes: List[dict[str, Any]] = []
+
+
+class DirectCabInventoryItem(BaseModel):
+    cab_id: str
+    vehicle_type: str
+    operator: str
+    duration_str: str
+    distance_km: float
+    fare: float
+    benefits: List[str] = []
+
+
+class CorridorInventoryRequest(BaseModel):
+    origin_name: str
+    origin_lat: float
+    origin_lon: float
+    destination_name: str
+    destination_lat: float
+    destination_lon: float
+    travel_date: Optional[str] = None  # "YYYY-MM-DD" or formatted date
+
+
+class CorridorInventoryResponse(BaseModel):
+    origin: str
+    destination: str
+    travel_date: str
+    corridor_title: str
+    has_direct_trains: bool = True
+    connecting_train_note: Optional[str] = None
+    connecting_itinerary: Optional[dict[str, Any]] = None
+    trains: List[TrainInventoryItem]
+    buses: List[BusInventoryItem]
+    flights: List[FlightInventoryItem]
+    cabs: List[DirectCabInventoryItem]
+    feeder_options: dict[str, Any] = {}
+
+
+
+class StitchDoorToDoorRequest(BaseModel):
+    origin_name: str
+    origin_lat: float
+    origin_lon: float
+    destination_name: str
+    destination_lat: float
+    destination_lon: float
+    feeder_mode: Optional[Literal["AUTO", "CAB"]] = "AUTO"
+    selected_mode: Literal["TRAIN", "BUS", "FLIGHT", "DIRECT_CAB"]
+    selected_item_id: str
+    selected_item_name: str
+    selected_class: str
+    selected_fare: float
+    departure_hub_name: Optional[str] = ""
+    departure_hub_lat: Optional[float] = None
+    departure_hub_lon: Optional[float] = None
+    arrival_hub_name: Optional[str] = ""
+    arrival_hub_lat: Optional[float] = None
+    arrival_hub_lon: Optional[float] = None
+    departure_time: Optional[str] = None
+    arrival_time: Optional[str] = None
+    duration_minutes: Optional[int] = None
+
 

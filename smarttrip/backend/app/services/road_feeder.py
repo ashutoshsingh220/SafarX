@@ -1,6 +1,17 @@
-﻿import math
-from typing import Literal, TypedDict
+import json
+import logging
+import math
+import os
+import urllib.parse
+import urllib.request
+from typing import Literal, Optional, TypedDict
+from dotenv import load_dotenv
 from app.services.transit_hubs import haversine_km
+
+load_dotenv()
+logger = logging.getLogger(__name__)
+
+_GOOGLE_DIRECTIONS_CACHE: dict[str, tuple[float, int]] = {}
 
 
 class FeederEstimate(TypedDict):
@@ -10,6 +21,55 @@ class FeederEstimate(TypedDict):
     mode: str
     operator: str
     description: str
+
+
+def calculate_road_trip_google(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+) -> Optional[tuple[float, int]]:
+    """Calculate authentic driving road distance (km) and driving duration (minutes) via Google Directions API."""
+    if not (start_lat and start_lon and end_lat and end_lon):
+        return None
+
+    # Round coordinates to 4 decimal places (~11m precision) for stable caching
+    cache_key = f"{round(start_lat, 4)},{round(start_lon, 4)}->{round(end_lat, 4)},{round(end_lon, 4)}"
+    if cache_key in _GOOGLE_DIRECTIONS_CACHE:
+        return _GOOGLE_DIRECTIONS_CACHE[cache_key]
+
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY") or os.getenv("EXPO_PUBLIC_GOOGLE_API_KEY")
+    if not api_key:
+        return None
+
+    try:
+        url = (
+            f"https://maps.googleapis.com/maps/api/directions/json"
+            f"?origin={start_lat},{start_lon}"
+            f"&destination={end_lat},{end_lon}"
+            f"&mode=driving"
+            f"&key={api_key}"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "SmartTrip/3.0"})
+        with urllib.request.urlopen(req, timeout=4.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        if data.get("status") == "OK" and data.get("routes"):
+            route = data["routes"][0]
+            legs = route.get("legs", [])
+            if legs:
+                total_meters = sum(l.get("distance", {}).get("value", 0) for l in legs)
+                total_secs = sum(l.get("duration", {}).get("value", 0) for l in legs)
+                dist_km = round(total_meters / 1000.0, 1)
+                dur_mins = max(5, int(total_secs / 60))
+                result = (dist_km, dur_mins)
+                _GOOGLE_DIRECTIONS_CACHE[cache_key] = result
+                logger.info(f"Google Directions: {cache_key} -> {dist_km} km, {dur_mins} mins")
+                return result
+    except Exception as exc:
+        logger.warning(f"Google Directions API call failed for {cache_key}: {exc}")
+
+    return None
 
 
 def calculate_feeder_trip(
@@ -23,9 +83,15 @@ def calculate_feeder_trip(
     leg_type: Literal["FIRST_MILE", "LAST_MILE"] = "FIRST_MILE",
 ) -> FeederEstimate:
     """Calculate realistic road distance, duration, and tariff for first/last-mile feeder."""
-    straight_dist_km = haversine_km(start_lat, start_lon, end_lat, end_lon)
-    # Urban road winding factor (approx 1.25x to 1.35x of straight-line)
-    road_distance_km = max(1.0, round(straight_dist_km * 1.3, 1))
+    # 1. Attempt live Google Directions calculation
+    google_res = calculate_road_trip_google(start_lat, start_lon, end_lat, end_lon)
+    if google_res:
+        road_distance_km, base_duration_mins = google_res
+    else:
+        straight_dist_km = haversine_km(start_lat, start_lon, end_lat, end_lon)
+        # Urban road winding factor (approx 1.25x to 1.35x of straight-line)
+        road_distance_km = max(1.0, round(straight_dist_km * 1.3, 1))
+        base_duration_mins = None
 
     # Average city travel speed: ~25 km/h for auto, ~30 km/h for cab, ~18 km/h for e-rickshaw
     if mode == "AUTO":
@@ -64,7 +130,17 @@ def calculate_feeder_trip(
         operator = "SmartTrip Shared Feeder"
         desc = "Scheduled high-frequency shared feeder"
 
-    duration_minutes = max(10, int((road_distance_km / avg_speed_kmh) * 60) + 5)
+    if base_duration_mins is not None:
+        if mode == "AUTO":
+            duration_minutes = max(8, int(base_duration_mins * 1.05))
+        elif mode == "E_RICKSHAW":
+            duration_minutes = max(10, int(base_duration_mins * 1.40))
+        elif mode == "CAB":
+            duration_minutes = max(8, base_duration_mins)
+        else:  # SHUTTLE
+            duration_minutes = max(12, int(base_duration_mins * 1.15))
+    else:
+        duration_minutes = max(10, int((road_distance_km / avg_speed_kmh) * 60) + 5)
 
     return {
         "distance_km": road_distance_km,

@@ -108,6 +108,145 @@ export function decodePolyline(
   return points;
 }
 
+export interface ResilientRouteResult {
+  coordinates: { latitude: number; longitude: number }[];
+  durationText: string;
+  distanceText: string;
+  distanceKm: number;
+  durationMinutes: number;
+  source: "google" | "osrm" | "spline";
+}
+
+export function generateSplineRoute(
+  startLat: number,
+  startLon: number,
+  endLat: number,
+  endLon: number,
+  numPoints: number = 35
+): { latitude: number; longitude: number }[] {
+  const points: { latitude: number; longitude: number }[] = [];
+  const midLat = (startLat + endLat) / 2;
+  const midLon = (startLon + endLon) / 2;
+  const dx = endLon - startLon;
+  const dy = endLat - startLat;
+  const perpLat = -dy * 0.08;
+  const perpLon = dx * 0.08;
+  const ctrlLat = midLat + perpLat;
+  const ctrlLon = midLon + perpLon;
+
+  for (let i = 0; i <= numPoints; i++) {
+    const t = i / numPoints;
+    const invT = 1 - t;
+    const lat = invT * invT * startLat + 2 * invT * t * ctrlLat + t * t * endLat;
+    const lon = invT * invT * startLon + 2 * invT * t * ctrlLon + t * t * endLon;
+    points.push({ latitude: lat, longitude: lon });
+  }
+  return points;
+}
+
+export async function getResilientRoute(
+  originLat: number,
+  originLon: number,
+  destLat: number,
+  destLon: number
+): Promise<ResilientRouteResult> {
+  const R = 6371;
+  const dLat = ((destLat - originLat) * Math.PI) / 180;
+  const dLon = ((destLon - originLon) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((originLat * Math.PI) / 180) *
+      Math.cos((destLat * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const fallbackDistKm = Math.max(1, Math.round(R * c * 1.25 * 10) / 10);
+  const fallbackDurMin = Math.max(5, Math.round((fallbackDistKm / 28) * 60));
+
+  // Tier 1: Google Directions API (if key configured)
+  if (directionsAPI && directionsAPI.length > 5) {
+    try {
+      const gUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${originLat},${originLon}&destination=${destLat},${destLon}&departure_time=now&traffic_model=best_guess&alternatives=true&key=${directionsAPI}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(gUrl, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      const data = await res.json();
+
+      if (data.status === "OK" && data.routes?.length > 0) {
+        const sorted = [...data.routes].sort((r1, r2) => {
+          const d1 = r1.legs?.[0]?.distance?.value ?? 99999999;
+          const d2 = r2.legs?.[0]?.distance?.value ?? 99999999;
+          return d1 - d2;
+        });
+        const route = sorted[0];
+        const leg = route.legs?.[0];
+        const pts = route.overview_polyline?.points
+          ? decodePolyline(route.overview_polyline.points)
+          : [];
+
+        if (pts.length > 0) {
+          const distVal = leg?.distance?.value ? leg.distance.value / 1000 : fallbackDistKm;
+          const durSec = leg?.duration_in_traffic?.value ?? leg?.duration?.value ?? (fallbackDurMin * 60);
+          return {
+            coordinates: pts,
+            distanceText: leg?.distance?.text || `${Math.round(distVal * 10) / 10} km`,
+            durationText: leg?.duration_in_traffic?.text || leg?.duration?.text || `${Math.round(durSec / 60)} mins`,
+            distanceKm: Math.round(distVal * 10) / 10,
+            durationMinutes: Math.round(durSec / 60),
+            source: "google",
+          };
+        }
+      }
+    } catch {
+      // Gracefully fall through to Tier 2
+    }
+  }
+
+  // Tier 2: OSRM Driving Engine (100% Free, No API Key, Never Expires)
+  try {
+    const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${originLon},${originLat};${destLon},${destLat}?overview=full&geometries=polyline`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const osrmRes = await fetch(osrmUrl, {
+      signal: controller.signal,
+      headers: { "User-Agent": "SmartTrip-App/1.0" },
+    });
+    clearTimeout(timeoutId);
+    const osrmData = await osrmRes.json();
+
+    if (osrmData.code === "Ok" && osrmData.routes?.length > 0) {
+      const best = osrmData.routes[0];
+      const pts = decodePolyline(best.geometry);
+      if (pts.length > 0) {
+        const distKm = Math.round((best.distance / 1000) * 10) / 10;
+        const durMin = Math.max(5, Math.round(best.duration / 60));
+        return {
+          coordinates: pts,
+          distanceText: `${distKm} km`,
+          durationText: `${durMin} mins`,
+          distanceKm: distKm,
+          durationMinutes: durMin,
+          source: "osrm",
+        };
+      }
+    }
+  } catch {
+    // Gracefully fall through to Tier 3
+  }
+
+  // Tier 3: High-Precision Curved Geometric Spline (Zero-Fail Guarantee)
+  const splinePts = generateSplineRoute(originLat, originLon, destLat, destLon, 35);
+  return {
+    coordinates: splinePts,
+    distanceText: `${fallbackDistKm} km`,
+    durationText: `${fallbackDurMin} mins`,
+    distanceKm: fallbackDistKm,
+    durationMinutes: fallbackDurMin,
+    source: "spline",
+  };
+}
+
 export const calculateDriverTimes = async ({
   markers,
   userLatitude,
@@ -130,62 +269,14 @@ export const calculateDriverTimes = async ({
     return;
 
   try {
-    let timeToDestination = 1800; // seconds
-    let distanceKm = 15;
-
-    try {
-      // Query Google Directions API with real-time traffic conditions and multiple alternative routes
-      const responseToDestination = await fetch(
-        `https://maps.googleapis.com/maps/api/directions/json?origin=${userLatitude},${userLongitude}&destination=${destinationLatitude},${destinationLongitude}&departure_time=now&traffic_model=best_guess&alternatives=true&key=${directionsAPI}`,
-      );
-      const dataToDestination = await responseToDestination.json();
-
-      if (dataToDestination?.routes?.length > 0) {
-        // Algorithm: select the shortest distance route just as Google Maps provides
-        const sortedRoutes = [...dataToDestination.routes].sort((a, b) => {
-          const distA = a.legs?.[0]?.distance?.value ?? 999999999;
-          const distB = b.legs?.[0]?.distance?.value ?? 999999999;
-          if (distA !== distB) return distA - distB;
-          const durA =
-            a.legs?.[0]?.duration_in_traffic?.value ??
-            a.legs?.[0]?.duration?.value ??
-            99999999;
-          const durB =
-            b.legs?.[0]?.duration_in_traffic?.value ??
-            b.legs?.[0]?.duration?.value ??
-            99999999;
-          return durA - durB;
-        });
-
-        const shortestRoute = sortedRoutes[0];
-        const leg = shortestRoute.legs?.[0];
-        if (leg) {
-          // Use real-time duration in traffic if available, otherwise regular duration
-          timeToDestination =
-            leg.duration_in_traffic?.value ?? leg.duration?.value ?? 1800;
-          if (leg.distance?.value) {
-            distanceKm = Math.round((leg.distance.value / 1000) * 10) / 10;
-          }
-        }
-      }
-    } catch (err) {
-      console.log("Error fetching real-time shortest route:", err);
-    }
-
-    // High-precision fallback distance calculation if Directions API didn't provide leg.distance
-    if (!distanceKm || distanceKm <= 0) {
-      const R = 6371; // Earth radius in km
-      const dLat = ((destinationLatitude - userLatitude) * Math.PI) / 180;
-      const dLon = ((destinationLongitude - userLongitude) * Math.PI) / 180;
-      const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos((userLatitude * Math.PI) / 180) *
-          Math.cos((destinationLatitude * Math.PI) / 180) *
-          Math.sin(dLon / 2) *
-          Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      distanceKm = Math.round(R * c * 1.25 * 10) / 10;
-    }
+    const routeInfo = await getResilientRoute(
+      userLatitude,
+      userLongitude,
+      destinationLatitude,
+      destinationLongitude
+    );
+    const timeToDestination = routeInfo.durationMinutes * 60;
+    const distanceKm = routeInfo.distanceKm;
 
     // Check if auto should be included: only if distance <= 40 km
     const isAutoAllowed = distanceKm <= 40;

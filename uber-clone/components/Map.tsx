@@ -9,6 +9,7 @@ import {
   calculateRegion,
   decodePolyline,
   generateMarkersFromData,
+  getResilientRoute,
 } from "@/lib/map";
 import { useDriverStore, useLocationStore } from "@/store";
 import { Driver, MarkerData } from "@/types/type";
@@ -56,58 +57,27 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
 
     const fetchRoute = async () => {
       try {
-        const res = await fetch(
-          `https://maps.googleapis.com/maps/api/directions/json?origin=${effectiveLat},${effectiveLon}&destination=${destinationLatitude},${destinationLongitude}&departure_time=now&traffic_model=best_guess&alternatives=true&key=${directionsAPI}`,
+        const routeResult = await getResilientRoute(
+          effectiveLat,
+          effectiveLon,
+          destinationLatitude,
+          destinationLongitude
         );
-        const data = await res.json();
 
-        if (data.status === "OK" && data.routes?.length > 0) {
-          // Select shortest distance route just as Google Maps provides
-          const sortedRoutes = [...data.routes].sort((a, b) => {
-            const distA = a.legs?.[0]?.distance?.value ?? 999999999;
-            const distB = b.legs?.[0]?.distance?.value ?? 999999999;
-            if (distA !== distB) return distA - distB;
-            const durA =
-              a.legs?.[0]?.duration_in_traffic?.value ??
-              a.legs?.[0]?.duration?.value ??
-              99999999;
-            const durB =
-              b.legs?.[0]?.duration_in_traffic?.value ??
-              b.legs?.[0]?.duration?.value ??
-              99999999;
-            return durA - durB;
-          });
+        if (routeResult.coordinates.length > 0) {
+          setRouteCoordinates(routeResult.coordinates);
+          setRouteDuration(routeResult.durationText);
+          setRouteDistance(routeResult.distanceText);
 
-          const route = sortedRoutes[0];
-          const leg = route.legs?.[0];
-          if (leg) {
-            const liveDuration =
-              leg.duration_in_traffic?.text || leg.duration?.text;
-            if (liveDuration) {
-              setRouteDuration(liveDuration);
-            }
-            if (leg.distance?.text) {
-              setRouteDistance(leg.distance.text);
-            }
-          }
+          const midIdx = Math.floor(routeResult.coordinates.length / 2);
+          setRouteMidpoint(routeResult.coordinates[midIdx]);
 
-          if (route.overview_polyline?.points) {
-            const decoded = decodePolyline(route.overview_polyline.points);
-            setRouteCoordinates(decoded);
-
-            if (decoded.length > 0) {
-              const midIdx = Math.floor(decoded.length / 2);
-              setRouteMidpoint(decoded[midIdx]);
-
-              // Fit map camera to show the full route
-              setTimeout(() => {
-                mapRef.current?.fitToCoordinates(decoded, {
-                  edgePadding: { top: 120, right: 60, bottom: 280, left: 60 },
-                  animated: true,
-                });
-              }, 400);
-            }
-          }
+          setTimeout(() => {
+            mapRef.current?.fitToCoordinates(routeResult.coordinates, {
+              edgePadding: { top: 120, right: 60, bottom: 280, left: 60 },
+              animated: true,
+            });
+          }, 400);
         }
       } catch (err) {
         console.log("Error fetching map route:", err);

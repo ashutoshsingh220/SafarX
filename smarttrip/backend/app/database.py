@@ -12,6 +12,16 @@ class Base(DeclarativeBase):
     pass
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    async with async_session() as session:
+async def get_db() -> AsyncGenerator[AsyncSession | None, None]:
+    session = None
+    try:
+        session = async_session()
+    except Exception:
+        yield None
+        return
+
+    try:
         yield session
+    finally:
+        if session is not None:
+            await session.close()

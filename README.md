@@ -2,7 +2,7 @@
 
 <div align="center">
   <h3>Next-Generation Multimodal Door-to-Door Travel Assistant & Autonomous Transit Engine</h3>
-  <p>Seamlessly fusing spatial routing, Google Maps explorer telemetry, Gemini 2.0 Flash agentic intelligence, transparent cross-subsidized pricing, and real-time transit telemetry.</p>
+  <p>Seamlessly uniting Indian Railways, live commercial flights, intercity bus networks, outstation cabs, and first/last-mile feeder connections into a single unified journey with Google Maps intelligence and Gemini 2.0 Flash agentic reasoning.</p>
 </div>
 
 <div align="center">
@@ -11,10 +11,10 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React Native](https://img.shields.io/badge/React%20Native-Expo%2051-61DAFB?style=for-the-badge&logo=react&logoColor=white)](https://reactnative.dev/)
 [![Google Gemini](https://img.shields.io/badge/Google%20Gemini-2.0%20Flash-8E75B2?style=for-the-badge&logo=google&logoColor=white)](https://deepmind.google/technologies/gemini/)
-[![Google Maps](https://img.shields.io/badge/Google%20Maps-Platform-4285F4?style=for-the-badge&logo=googlemaps&logoColor=white)](https://developers.google.com/maps)
+[![Google Maps](https://img.shields.io/badge/Google%20Maps-Geocoding%20%26%20Directions-4285F4?style=for-the-badge&logo=googlemaps&logoColor=white)](https://developers.google.com/maps)
+[![SerpApi](https://img.shields.io/badge/SerpApi-Live%20Google%20Flights-00C49F?style=for-the-badge&logo=googleflights&logoColor=white)](https://serpapi.com/)
 [![PostGIS](https://img.shields.io/badge/PostGIS-15--3.3-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://postgis.net/)
-[![XGBoost](https://img.shields.io/badge/XGBoost-2.0+-11B4DA?style=for-the-badge&logo=xgboost&logoColor=white)](https://xgboost.readthedocs.io/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 </div>
 
@@ -23,24 +23,34 @@
 ## 📱 Live Mobile Interface Showcase
 
 <div align="center">
-  <p><em>Real-time screenshots captured from the standalone Android build (Pixel 8)</em></p>
+  <p><em>Real-time screenshots captured from the live Android emulator build (Pixel 8)</em></p>
 </div>
 
-| 1. High-Fidelity Street Maps | 2. Google Maps Place Explorer | 3. Live Directions & ETAs | 4. Connected Trip Planner |
+### Part 1: All-India Multimodal Transit Corridors
+
+| 🚆 Indian Railways Corridors | ✈️ Live Commercial Flights | 🚌 Intercity Express Buses | 🚖 Outstation Private Cabs |
 | :---: | :---: | :---: | :---: |
-| <img src="docs/screenshots/01_home_screen_map.png" width="215" alt="Home Screen Map" /> | <img src="docs/screenshots/04_place_explorer_overview.png" width="215" alt="Place Explorer Overview" /> | <img src="docs/screenshots/02_place_explorer_directions.png" width="215" alt="Live Directions" /> | <img src="docs/screenshots/03_trip_planner_multimodal.png" width="215" alt="Trip Planner" /> |
-| **Native Vector Map Tiles**<br/>• Real-time driver markers (UberGo, Premier, Auto)<br/>• Sub-meter GPS positioning<br/>• Crisp topographic street layer | **Intelligent Place Explorer**<br/>• Category filters (Dining, Hotels, Sights)<br/>• Multilingual script details<br/>• High-res photo & highlight gallery | **Google Directions Telemetry**<br/>• Dynamic distance & duration calculations<br/>• Overview polyline tracing<br/>• Instant Cab & Door-to-Door booking buttons | **Connected Uber-Style Inputs**<br/>• Green pickup dot &rarr; Black destination pin<br/>• Clean placeholders without sample text<br/>• Dynamic local feeder selectors (Auto / Cab) |
+| <img src="docs/screenshots/05_trains_corridor.png" width="220" alt="Indian Railways Corridors" /> | <img src="docs/screenshots/06_flights_live.png" width="220" alt="Live Commercial Flights" /> | <img src="docs/screenshots/07_buses_intercity.png" width="220" alt="Intercity Express Buses" /> | <img src="docs/screenshots/08_cabs_outstation.png" width="220" alt="Outstation Cabs" /> |
+| **Direct Trunk Rail**<br/>• IRCTC-calibrated live train schedules<br/>• Pawan & Goa Express corridors<br/>• Multi-class tariffs (3A, 2A, Sleeper)<br/>• Real-time RAC/WL probability | **Live Google Flights**<br/>• Live commercial airline rates (IndiGo, Akasa)<br/>• Non-stop & connecting flight detection<br/>• Real-time INR fare tiers (Saver, Flexi)<br/>• Baggage & seat inclusion filters | **Regional Bus Networks**<br/>• Multi-axle Volvo & BharatBenz sleepers<br/>• Doorstep pickup & ISBT dropoffs<br/>• Upper/Lower sleeper seat selection<br/>• Real road highway durations | **Door-to-Door Private Cabs**<br/>• Zero-transfer non-stop journeys<br/>• AC Sedan & Premier SUV options<br/>• Live Google Directions road telemetry<br/>• Includes toll, fuel & driver allowances |
+
+### Part 2: Dynamic Door-to-Door Stitching & Digital Boarding Pass
+
+| 📍 1-Click Multimodal Bundle Review | 🎟️ Verified Digital Boarding Pass | 🗺️ Google Maps Navigation & Routing |
+| :---: | :---: | :---: |
+| <img src="docs/screenshots/09_bundle_review.png" width="240" alt="Bundle Review" /> | <img src="docs/screenshots/10_digital_ticket.png" width="240" alt="Digital Boarding Pass" /> | <img src="docs/screenshots/02_place_explorer_directions.png" width="240" alt="Google Maps Routing" /> |
+| **Synchronized 3-Leg Journey**<br/>1️⃣ **First-Mile**: Auto/Cab doorstep pickup<br/>2️⃣ **Long-Haul**: Selected Train/Flight/Bus ticket<br/>3️⃣ **Last-Mile**: Auto/Cab drop to destination<br/>• Transparent combined pricing breakdown | **Single All-in-One PNR**<br/>• Scannable secure QR code<br/>• Unified multimodal travel itinerary<br/>• Real-time journey countdown<br/>• Emergency SOS & 1-tap support | **Google Directions Telemetry**<br/>• Live route polyline rendering<br/>• Sub-meter GPS positioning<br/>• Dynamic distance & duration calculations<br/>• Live driver & feeder tracking |
 
 ---
 
-## 📌 Executive Summary & Problem Statement
+## 📌 Problem Statement & Engineering Solution
 
-Modern intercity transit in growing economies is notoriously fragmented. Travelers must independently juggle:
-1. **First-mile feeder transport** (auto-rickshaws, cabs, or walking to transit hubs)
-2. **Long-haul trunk carriers** (intercity express buses, Indian Railways trains, or domestic flights)
-3. **Last-mile arrival transfers** to their ultimate destination
+Intercity travel in India has historically suffered from extreme fragmentation:
+1. **First-Mile Disconnect**: Commuters must guess local auto/cab fares and buffer times to reach railway stations or airports.
+2. **Disconnected Modes**: Searching flights, trains, and buses requires toggling between 4+ different apps with inconsistent schedules.
+3. **Hardcoded Corridors**: Conventional apps fail or recommend bizarre detours (e.g. routing Goa to Pune via Delhi) when direct routes aren't easily indexed.
+4. **Last-Mile Abandonment**: Deboarding at unfamiliar junctions leaves travelers stranded without pre-booked reliable local transport.
 
-**SmartTrip AI** solves this disconnect by synthesizing all segments into a unified, single-ticket **door-to-door itinerary**. It couples high-precision geospatial routing with an autonomous **Gemini 2.0 Flash AI agent**, a transparent **cross-subsidized pricing engine (S1–S5)** that caps feeder fares, and a **tri-model machine learning suite** that accurately predicts real-world arrival times.
+**SmartTrip AI solves this end-to-end** through an autonomous multimodal engine that fuses **Google Maps Geocoding & Directions API**, **SerpApi Google Flights telemetry**, **Indian Railways direct trunk junctions**, and **Decoupled Multi-Hub Nearest-Neighbor (k-NN) Expanding Fallback Loops**.
 
 ---
 
@@ -48,221 +58,219 @@ Modern intercity transit in growing economies is notoriously fragmented. Travele
 
 ```mermaid
 flowchart TD
-    subgraph Client["📱 Mobile Client (React Native / Expo)"]
-        UI[Native Map & Search UI]
-        Chat[Gemini AI Chat Interface]
-        Track[Live WebSocket Tracker]
+    subgraph MobileClient["📱 Mobile Client (React Native / Expo 51)"]
+        SearchUI["Multimodal Search Screen<br/>(Train, Flight, Bus, Cab)"]
+        MapEngine["Google Maps Native Polyline & Marker Engine"]
+        AgentChat["Gemini 2.0 Agentic Chatbot"]
+        StitchView["Dynamic 3-Leg Stitching Sheet"]
     end
 
-    subgraph Gateway["⚡ FastAPI Gateway (:8000)"]
-        Router[API Router & Auth Middleware]
-        AgentService[Agentic Service Layer]
-        PricingEngine[S1-S5 Pricing Engine]
-        Telemetry[WebSocket Telemetry Hub]
+    subgraph APIGateway["⚡ FastAPI High-Performance Gateway (:8000)"]
+        Router["Async FastAPI Router & CORS"]
+        GeocodeCache["Google Geocode In-Memory Cache"]
+        DirectionsCache["Google Directions In-Memory Cache"]
+        SerpApiCache["SerpApi Live Flights Cache"]
     end
 
-    subgraph AI["🧠 AI & Machine Learning"]
-        Gemini[Google Gemini 2.0 Flash<br/>Function-Calling Agent]
-        XGBoost[XGBoost Last-Mile ETA Regressor]
-        KMeans[K-Means Spatial Density Clustering]
-        RF[RandomForest Itinerary Ranker]
+    subgraph SpatialBrain["🗺️ Geospatial Intelligence & Fallback Engine"]
+        GoogleGeo["Google Maps Geocoding API<br/>(Sub-km Coordinate Resolution)"]
+        GoogleDir["Google Maps Directions API<br/>(Real Highway Distance & ETAs)"]
+        HubRegistry["Certified Transit Hubs Registry<br/>(AAI Airports, IRCTC Junctions, ISBTs)"]
+        KNN["Decoupled Multi-Hub k-NN Engine<br/>(Expanding Radial Rings R1 → R2 → R3)"]
     end
 
-    subgraph Spatial["🗺️ Spatial & Routing Services"]
-        OSRM[OSRM Route Engine]
-        GMaps[Google Maps Platform<br/>Places & Directions APIs]
-        PostGIS[(PostgreSQL 15 + PostGIS 3.3<br/>Spatial Geometry Store)]
-        Redis[(Redis 7 Cache)]
+    subgraph TransitServices["🚆 Live Transit Inventory & Aggregation"]
+        SerpApi["SerpApi Google Flights Engine<br/>(IndiGo, Akasa, Air India)"]
+        RapidAPI["RapidAPI IRCTC Live Engine<br/>(Pawan Exp, Goa Exp, Rajdhani)"]
+        BusEngine["InterCity Express Bus Service<br/>(Zingbus, IntrCity, VRL)"]
+        CabEngine["Outstation Direct Cab Engine<br/>(Sedan & Premier SUV)"]
     end
 
-    UI -->|REST / HTTPS| Router
-    Chat -->|Agentic Query| Router
-    Track <-->|Bidirectional WS| Telemetry
+    subgraph Database["🗄️ Persistence & Telemetry Layer"]
+        PostgreSQL[("PostgreSQL 15 + PostGIS<br/>Spatial Storage")]
+        RedisCache[("Redis 7 In-Memory Cache")]
+    end
 
-    Router --> AgentService
-    Router --> PricingEngine
-    AgentService <--> Gemini
-    AgentService --> Spatial
+    SearchUI -->|HTTP / JSON| Router
+    MapEngine -->|Directions Request| Router
+    AgentChat -->|Function Calling| Router
 
-    PricingEngine --> PostGIS
-    PricingEngine --> XGBoost
-    PricingEngine --> RF
+    Router --> GeocodeCache
+    Router --> DirectionsCache
+    Router --> SerpApiCache
 
-    Router --> OSRM
-    Router --> GMaps
-    Router --> PostGIS
-    Telemetry <--> Redis
+    GeocodeCache --> GoogleGeo
+    DirectionsCache --> GoogleDir
+    Router --> HubRegistry
+    HubRegistry --> KNN
+
+    KNN -->|Mode: Flight| SerpApi
+    KNN -->|Mode: Train| RapidAPI
+    KNN -->|Mode: Bus| BusEngine
+    KNN -->|Mode: Cab| CabEngine
+
+    Router --> PostgreSQL
+    Router --> RedisCache
 ```
 
 ---
 
-## ✨ Core Capabilities & Engineering Highlights
+## 🧠 Key Technical Highlights
 
-### 1. 🤖 Autonomous Gemini 2.0 Flash Travel Agent
-- **Natural Language Planning**: Handles ambiguous, conversational transit requests (*"Plan me a trip from Susgaon Pune to Pithoragarh with minimum walking"*).
-- **Structured Tool Calling**: Operates with Google GenAI function declarations:
-  - `search_routes`: Multi-modal queries across cabs, buses, express trains, and flights.
-  - `price_bundle`: Dynamically computes S1–S5 financial subsidies.
-  - `book_route`: Dispatches booking confirmation intents.
-- **Resilient Fallback**: Includes deterministic offline mock capabilities for zero-latency local development.
+### 1. Decoupled Multi-Hub Nearest-Neighbor (k-NN) Expanding Fallbacks
+* **Complete Mode Independence**: Unavailability or connection requirements in one mode (e.g. no direct commercial flight to a smaller town) **NEVER** alters or distorts other modes. Trains and Buses remain 100% direct at their local terminals.
+* **Expanding Radial Rings ($R_1 \to R_2 \to R_3$)**:
+  * **Flights**: Checks candidate airport pairs ($O_{air} \times D_{air}$). If Ring 1 (local airstrip) has no active commercial flights, it automatically expands to Ring 2 (regional commercial airport), stitching an airport feeder cab for the remaining road distance.
+  * **Trains**: Checks candidate railway junctions ($O_{rail} \times D_{rail}$). For example, traveling from **Goa to Hadapsar, Pune** matches Madgaon Junction to Hadapsar Railway Station directly on the **Goa Express (12779)**.
+  * **Buses**: Connects closest authentic ISBT terminals (e.g. Nerul LP / Vashi Bus Terminal $\to$ Darbhanga Bus Stand Delhi More).
+  * **Cabs**: Point-to-point road trip calculated directly via Google Directions API.
 
-### 2. 💸 S1–S5 Algorithmic Pricing Engine
-SmartTrip AI implements proprietary algorithmic fare rules to eliminate price gouging on last-mile segments:
-- **S1 (High-Demand Corridor Cap)**: Caps high-density feeder corridor trips at ₹50.
-- **S2 (Commission Cross-Subsidization)**: Reinvests up to 50% of the trunk bus/train commission directly into subsidizing the user's last-mile cab (`min(50% trunk commission, 40% feeder fare)`).
-- **S3 (Unified Bundle Pricing)**: Fuses intercity transport and feeder transfer into a single transparent price.
-- **S4 (SmartTrip Plus Subscription)**: Reduces pre-subsidy feeder fares to ₹20 for subscribed users.
-- **S5 (Early Bird Incentive)**: Unlocks an additional 10% discount on last-mile transfers booked $\ge 6$ hours in advance.
+```mermaid
+flowchart LR
+    Origin["User Origin<br/>(e.g., Hadapsar, Pune)"] --> GGeo["Google Maps Geocoding API"]
+    GGeo --> Coords["Exact GPS Coordinates<br/>(18.5089° N, 73.9259° E)"]
+    
+    Coords --> Ring1["Ring 1: Immediate Hubs<br/>(< 25 km)"]
+    Ring1 -->|Train Found| DirectRail["Pune / Hadapsar Rail Station<br/>(Direct Train)"]
+    Ring1 -->|Airport Found| LocalAir["Pune Airport (PNQ)<br/>(Live Flight)"]
+    
+    Coords -.->|If No Commercial Flight| Ring2["Ring 2: Regional Gateways<br/>(25 - 150 km)"]
+    Ring2 --> RegAir["Mumbai Airport (BOM)<br/>(+ Airport Feeder Cab)"]
+```
 
-### 3. 🗺️ Google Maps Place Explorer & Precision Navigation
-- **High-Definition Street Rendering**: Built with direct tile server feeds and native Android SDK configuration, providing fluid pan-and-zoom vector graphics.
-- **Place Details & Category Discovery**: Instant discovery chips for dining, lodging, sight-seeing, and fuel stations.
-- **Live Google Directions Engine**: Polyline encoding/decoding with real-time distance and driving duration telemetry.
+### 2. Google Maps Primary Geographic Brain
+* **Universal Resolution**: Any Indian address, town, or railway station name is resolved to GPS coordinates via Google Geocoding API with memory caching.
+* **Live Highway Telemetry**: Driving distances, traffic conditions, and driving durations are derived directly from Google Directions API (`mode=driving`), replacing theoretical straight-line approximations.
 
-### 4. 🧠 Tri-Model Predictive ML Suite
-- **Spatial Demand Clustering (`KMeans`)**: Dynamically groups traveler coordinates into high-efficiency shuttle aggregation points.
-- **ETA Predictor (`XGBoost`)**: Supervised regression model trained on historical traffic metrics, hour-of-day, and road classification to predict precise arrival windows.
-- **Journey Option Ranker (`RandomForest`)**: Ranks multimodal options against a multi-objective loss function (cost, duration, physical transfers, comfort).
-
-### 5. 📡 Real-Time Telemetry & Driver Simulation
-- **Bidirectional WebSockets**: Stream vehicle telemetry (`/ws/track/{journey_id}`) with live GPS lat/long updates.
-- **Driver Simulator**: Built-in test script (`driver_simulator.py`) for stress-testing WebSocket connections and route progression.
+### 3. Dynamic Door-to-Door 3-Leg Journey Stitching
+When a user selects any train, flight, or bus ticket:
+$$\text{Total Fare} = \text{Fare}_{\text{First-Mile Auto/Cab}} + \text{Fare}_{\text{Intercity Ticket}} + \text{Fare}_{\text{Last-Mile Auto/Cab}}$$
+$$\text{Total Duration} = \text{Duration}_{\text{First-Mile}} + \text{Duration}_{\text{Intercity}} + \text{Duration}_{\text{Last-Mile}}$$
+All three legs are bundled into a single checkout flow, providing travelers with a guaranteed all-in-one digital boarding pass with a scannable QR code.
 
 ---
 
-## 🧰 Comprehensive Tech Stack
+## 💻 Tech Stack
 
 | Domain | Technologies |
-|---|---|
-| **Mobile Frontend** | React Native, Expo 51, Expo Router v3, NativeWind (TailwindCSS), Zustand, Lucide Icons |
-| **Maps & Geospatial** | React Native Maps, Google Maps Platform (Places New, Directions, Geocoding), OSRM |
-| **Backend Framework** | Python 3.11 / 3.12, FastAPI, Asyncio, Pydantic v2, Uvicorn |
-| **Agentic AI** | Google Gemini 2.0 Flash (`google-genai` SDK), Native Function Calling |
-| **Database & GIS** | PostgreSQL 15, PostGIS 3.3, GeoAlchemy2, SQLAlchemy 2.0 (Async), Alembic |
-| **Caching & Messaging** | Redis 7, Starlette WebSockets |
-| **Machine Learning** | Scikit-learn, XGBoost 2.0+, NumPy, Pandas |
-| **Auth & Payments** | Clerk Authentication, Stripe React Native SDK |
-| **DevOps & Tooling** | Docker, Docker Compose, Android Studio JBR, ADB |
+| :--- | :--- |
+| **Mobile Client** | React Native, Expo 51, TypeScript, TailwindCSS / NativeWind, React Navigation |
+| **Backend Framework** | FastAPI (Python 3.11+), Uvicorn, Pydantic v2, SQLAlchemy (AsyncIO) |
+| **AI & LLM Services** | Google Gemini 2.0 Flash (`google-generativeai`), Tool / Function Calling |
+| **Geospatial & Mapping**| Google Maps Platform (Geocoding API, Directions API, Places API), PostGIS 3.3, OSRM |
+| **Flight & Rail Data** | SerpApi (Google Flights Engine), RapidAPI (Indian Railways / IRCTC Engine) |
+| **Data Storage & Cache**| PostgreSQL 15, Redis 7 (In-Memory Telemetry & API Caching) |
+| **DevOps & Containers** | Docker, Docker Compose, ADB Reverse TCP Forwarding |
 
 ---
 
-## 📂 Repository Layout
-
-```text
-SmartTripAI/
-├── README.md                       # Main repository architecture and documentation
-├── docs/
-│   └── screenshots/                # High-res mobile screenshots captured from emulator
-├── smarttrip/                      # Backend Service Workspace
-│   ├── backend/
-│   │   ├── alembic/                # Database migrations
-│   │   ├── app/                    # Core FastAPI routes, agent logic, and pricing engine
-│   │   │   ├── api/                # API route controllers
-│   │   │   ├── core/               # App configuration and settings
-│   │   │   ├── models/             # SQLAlchemy ORM and PostGIS spatial schemas
-│   │   │   └── services/           # Gemini AI agent, pricing engine, OSRM client, ML
-│   │   ├── cli_agent.py            # CLI terminal chat with Gemini travel agent
-│   │   ├── seed.py                 # PostGIS seed script for stops, corridors, and buses
-│   │   └── Dockerfile              # Production Python container definition
-│   └── docker-compose.yml          # Multi-container orchestration (API, PostGIS, Redis, OSRM)
-└── uber-clone/                     # Frontend Mobile Application Workspace
-    ├── android/                    # Standalone Android native project configuration
-    ├── app/                        # File-based Expo Router navigation tree
-    │   ├── (auth)/                 # Clerk authentication screens (sign-in, sign-up)
-    │   └── (root)/                 # Authenticated application flows
-    │       ├── (tabs)/             # Tab navigation (Home, SmartTrip, Profile)
-    │       ├── explore-place.tsx   # Google Maps Place Explorer screen
-    │       └── smarttrip/          # Multimodal Trip Planner & Agent screens
-    ├── components/                 # Reusable UI widgets (Map, Input, RideCard)
-    └── store/                      # Zustand reactive global state stores
-```
-
----
-
-## 🚀 Quickstart Guide
+## 🚀 Quickstart & Setup Guide
 
 ### Prerequisites
-- **Docker Desktop** (with Docker Compose v2)
-- **Python 3.11+**
-- **Node.js 18+** & **npm**
-- **Android Studio** (for local Android emulator testing)
+* **Python 3.11+** installed
+* **Node.js 18+** and `npm` / `npx` installed
+* **Android Studio & Emulator** (or physical Android device with USB debugging)
 
 ---
 
-### Step 1: Launch Backend Infrastructure
-
+### Step 1: Clone the Repository
 ```bash
-cd smarttrip/backend
-
-# Set up Python virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1   # On Windows (or source .venv/bin/activate on macOS/Linux)
-
-# Install backend dependencies
-pip install -r requirements.txt
-
-# Start FastAPI server
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-- **Interactive Swagger Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
-
-*(Optional: Run full multi-container stack via Docker Compose)*
-```bash
-cd smarttrip
-docker compose up -d --build
-docker compose exec api alembic upgrade head
-docker compose exec api python seed.py
+git clone https://github.com/ashutoshsingh220/SmartTripAI.git
+cd SmartTripAI
 ```
 
 ---
 
-### Step 2: Launch Mobile Application (`uber-clone`)
+### Step 2: Backend Configuration & Startup
 
-In a new terminal window:
+1. **Navigate to the backend directory and set up a virtual environment**:
+   ```bash
+   cd smarttrip/backend
+   python -m venv venv
+   
+   # On Windows:
+   .\venv\Scripts\activate
+   # On macOS/Linux:
+   source venv/bin/activate
+   ```
 
-```bash
-cd uber-clone
+2. **Install Python dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-# Install npm dependencies
-npm install
+3. **Configure Environment Variables**:
+   Copy the provided `.env.example` template:
+   ```bash
+   cp .env.example .env
+   ```
+   Open `.env` and provide your API keys:
+   ```ini
+   # Google Maps Platform (Geocoding & Directions)
+   GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
 
-# Connect Android emulator ports to development servers
-adb reverse tcp:8081 tcp:8081
-adb reverse tcp:8000 tcp:8000
+   # Google Flights Telemetry (SerpApi)
+   SERPAPI_API_KEY=your_serpapi_api_key_here
 
-# Start Metro Bundler for standalone development client
-npx expo start --dev-client
-```
+   # Indian Railways Live Engine (RapidAPI IRCTC)
+   RAPIDAPI_KEY=your_rapidapi_key_here
 
-> **Note**: Press `a` in the Metro terminal or open the installed **Ryde / Uber** app on your Android emulator to load the live bundle.
+   # Google Gemini 2.0 Flash AI Agent
+   GEMINI_API_KEY=your_gemini_api_key_here
+   ```
+
+4. **Start the FastAPI backend server**:
+   ```bash
+   python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+   > Backend will be live at `http://127.0.0.1:8000`. Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
 
 ---
 
-### Step 3: Run Interactive AI Agent in Terminal
+### Step 3: Mobile App Setup (React Native / Expo)
 
-To test the Gemini 2.0 Flash travel agent directly from your command line:
+1. **Open a new terminal and enable port forwarding to the Android device**:
+   ```bash
+   adb reverse tcp:8000 tcp:8000
+   ```
 
-```bash
-cd smarttrip/backend
-python cli_agent.py
-```
+2. **Navigate to the mobile directory and install packages**:
+   ```bash
+   cd ../../uber-clone
+   npm install
+   ```
 
-```text
-============================================================
-           SmartTrip AI - Conversational Terminal
-============================================================
-You: I want to travel from Susgaon to Bangalore tomorrow morning.
-Agent: I found 3 multimodal options combining a local cab feeder with an express bus/train...
-```
+3. **Configure Mobile Environment Variables**:
+   ```bash
+   cp .env.example .env
+   ```
+   Ensure `EXPO_PUBLIC_API_BASE_URL` is set to `http://localhost:8000`.
+
+4. **Launch the Expo Metro Bundler**:
+   ```bash
+   npx expo start -c
+   ```
+   > Press **`a`** in the terminal to launch the application directly on your running Android emulator.
 
 ---
 
-## 👨‍💻 Authors & Acknowledgements
+## 🔒 Security & Credential Protection
 
-Developed with passion by **Ashutosh Singh** and team contributors.
+> [!IMPORTANT]
+> This repository strictly adheres to industry security best practices:
+> - **Zero Key Leaks**: Live API keys (`.env` files, `.key`, `.pem`, credentials) are strictly excluded from git tracking via comprehensive `.gitignore` rules.
+> - **Public Template Files**: Only sanitized `.env.example` templates with empty placeholders are tracked in version control.
+> - **Safe Local Fallbacks**: If external API keys are omitted, the backend automatically transitions to calibrated simulation models, ensuring no unhandled crashes.
 
-- **GitHub**: [@ashutoshsingh220](https://github.com/ashutoshsingh220)
-- **Repository**: [SmartTripAI](https://github.com/ashutoshsingh220/SmartTripAI)
-- **License**: MIT License
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+  <b>Built with ❤️ by Ashutosh Singh</b><br/>
+  <i>Engineered for seamless, reliable, and intelligent transit across India.</i>
+</div>

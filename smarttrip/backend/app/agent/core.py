@@ -71,33 +71,77 @@ def _tomorrow_night() -> datetime:
 
 
 def extract_mock_search_request(request: AgentPlanRequest) -> SearchRequest:
-    """Parse the demo city's natural-language query without an external model."""
-    message = request.message.casefold()
-    if "bangalore" not in message and "bengaluru" not in message:
-        raise ValueError("The mock agent currently supports trips to Bangalore only")
-    from_city = "Pune" if "pune" in message or "susgaon" in message else "Pune"
-    travel_date = _tomorrow_night() if "tomorrow" in message else datetime.now() + timedelta(days=1)
+    """Parse origin and destination cities from user natural-language queries."""
+    msg = request.message.strip()
+    msg_lower = msg.casefold()
+
+    from_city = "Pune"
+    to_city = "Ahmedabad"
+
+    # Strip phrases like 'i want to go to', 'i want to travel from', etc.
+    cleaned = re.sub(
+        r"^(?:can you\s+)?(?:please\s+)?(?:i\s+want\s+to\s+|i\s+need\s+to\s+|i\s+would\s+like\s+to\s+)?(?:go\s+to\s+|go\s+from\s+|go\s+|travel\s+to\s+|travel\s+from\s+|travel\s+|book\s+|plan\s+)?(?:a\s+trip\s+)?(?:from\s+)?",
+        "",
+        msg_lower,
+    ).strip()
+
+    match = re.search(r"([a-zA-Z\s]+?)\s+(?:to|->)\s+([a-zA-Z\s]+)", cleaned)
+    if match:
+        f_city = match.group(1).strip()
+        t_city = match.group(2).strip()
+        t_city = re.sub(r"(\s+tomorrow|\s+today|\s+tonight|\s+now|\s+next\s+week|\s+please).*$", "", t_city).strip()
+        if f_city:
+            from_city = f_city.title()
+        if t_city:
+            to_city = t_city.title()
+    else:
+        cities = ["ahmedabad", "mumbai", "bangalore", "bengaluru", "delhi", "goa", "hyderabad", "chennai", "kolkata", "jaipur", "dehradun", "pune", "surat"]
+        found = [c for c in cities if c in msg_lower]
+        if len(found) >= 2:
+            from_city = found[0].title()
+            to_city = found[1].title()
+        elif len(found) == 1:
+            if found[0] == "pune":
+                to_city = "Ahmedabad"
+            else:
+                to_city = found[0].title()
+
+    travel_date = _tomorrow_night() if "tomorrow" in msg_lower else datetime.now() + timedelta(days=1)
     return SearchRequest(
         from_lat=18.5492,
         from_lon=73.7431,
         from_city=from_city,
-        to_city="Bangalore",
+        to_city=to_city,
         travel_date=travel_date,
         booking_time=request.booking_time or datetime.now(tz=travel_date.tzinfo),
-        is_smarttrip_plus=request.is_smarttrip_plus or "smarttrip plus" in message,
+        is_smarttrip_plus=request.is_smarttrip_plus or "smarttrip plus" in msg_lower,
     )
 
 
 def _answer_from_journeys(journeys: list[Journey]) -> str:
     if not journeys:
-        return "I could not find a journey for that request. Try Pune to Bangalore for the current demo."
+        return "I could not find a journey for that route. Please check the city names and try again."
     best = journeys[0]
     modes = " + ".join(leg.mode.title() for leg in best.legs)
     duration_hours = best.total_duration_seconds / 3600
-    return (
-        f"The best value option is {modes} at ₹{best.total_fare:.0f}, "
-        f"taking about {duration_hours:.1f} hours. {best.summary}."
+    
+    reply = (
+        f"🚗 **Recommended Door-to-Door Plan**\n\n"
+        f"• **Route**: {best.legs[0].start_location_name} ➔ {best.legs[-1].end_location_name}\n"
+        f"• **Modes**: {modes}\n"
+        f"• **Total Fare**: ₹{best.total_fare:.0f}\n"
+        f"• **Estimated Duration**: ~{duration_hours:.1f} hours\n\n"
+        f"📋 **Itinerary Details**:\n"
     )
+    for i, leg in enumerate(best.legs, 1):
+        dur = round(leg.duration_seconds / 60)
+        dur_str = f"{dur // 60}h {dur % 60}m" if dur >= 60 else f"{dur}m"
+        reply += f"  {i}. **{leg.mode.title()}** ({leg.operator}): {leg.start_location_name} to {leg.end_location_name} • {dur_str} • ₹{leg.fare:.0f}\n"
+
+    if len(journeys) > 1:
+        reply += f"\n💡 *Alternative flight and superfast train options are also ready for booking.*"
+
+    return reply
 
 
 async def execute_tool(name: str, arguments: dict[str, Any], db: AsyncSession) -> ToolResult:

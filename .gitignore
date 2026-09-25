@@ -3,11 +3,23 @@ venv/
 env/
 ENV/
 *.venv
+.venv/
 
-# Local environment files (contain credentials; never commit)
+# Local environment files (contain credentials; NEVER commit)
 .env
 .env.*
+*.env
+**/.env
+**/.env.*
+!**/.env.example
 !.env.example
+
+# Secrets & Keys
+*.pem
+*.key
+*.keystore
+service_account*.json
+firebase-adminsdk*.json
 
 # Generated machine-learning artifacts
 *.pkl

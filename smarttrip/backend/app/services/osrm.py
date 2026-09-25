@@ -39,8 +39,13 @@ class OSRMClient:
             if self._client is not None:
                 response = await self._client.get(path, params=params)
             else:
-                async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
-                    response = await client.get(path, params=params)
+                try:
+                    async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
+                        response = await client.get(path, params=params)
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    # Automatic fallback to public high-availability OSRM cluster
+                    async with httpx.AsyncClient(base_url="https://router.project-osrm.org", timeout=self.timeout) as pub_client:
+                        response = await pub_client.get(path, params=params)
             response.raise_for_status()
             payload = response.json()
         except httpx.TimeoutException as exc:

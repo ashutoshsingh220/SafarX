@@ -1,0 +1,72 @@
+{
+  "model_type": "RandomForestClassifier",
+  "n_samples": 2000,
+  "test_size": 500,
+  "accuracy": 1.0,
+  "macro_f1": 1.0,
+  "weighted_f1": 1.0,
+  "macro_precision": 1.0,
+  "macro_recall": 1.0,
+  "confusion_matrix": [
+    [
+      225,
+      0,
+      0
+    ],
+    [
+      0,
+      150,
+      0
+    ],
+    [
+      0,
+      0,
+      125
+    ]
+  ],
+  "class_report": {
+    "DIRECT_INTERCITY": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 225.0
+    },
+    "ONE_TRANSFER_GATEWAY": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 150.0
+    },
+    "INTRA_METRO_FEEDER": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 125.0
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 500.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 500.0
+    }
+  },
+  "feature_importances": [
+    0.009,
+    0.1891,
+    0.1854,
+    0.0003,
+    0.0146,
+    0.1767,
+    0.147,
+    0.0628,
+    0.0184,
+    0.1966
+  ]
+}

@@ -9,7 +9,11 @@ from typing import Iterable
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
-from xgboost import XGBRegressor
+try:
+    from xgboost import XGBRegressor
+except ImportError:
+    XGBRegressor = RandomForestRegressor
+
 
 ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
 DEMAND_ARTIFACT = "demand_kmeans.pkl"

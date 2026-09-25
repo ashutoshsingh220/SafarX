@@ -1,4 +1,4 @@
-﻿import datetime
+import datetime
 import random
 import string
 import uuid
@@ -38,6 +38,20 @@ async def create_bundle_booking(
     pnr = _generate_pnr()
     plan = request.plan
     now = datetime.datetime.now(datetime.timezone.utc)
+
+    # Anti-Tampering Security: Validate fare integrity and sanity
+    if not plan.legs:
+        raise ValueError("Cannot book an empty itinerary with zero legs.")
+
+    if any(leg.fare < 0 for leg in plan.legs) or plan.total_fare <= 0:
+        raise ValueError("Invalid negative or zero fare detected. Request blocked for security.")
+
+    calculated_fare = sum(leg.fare for leg in plan.legs)
+    if abs(calculated_fare - plan.total_fare) > 1.5:
+        raise ValueError(
+            f"Fare tampering detected: claimed total_fare (₹{plan.total_fare}) "
+            f"does not match verified sum of leg fares (₹{calculated_fare}). Request blocked."
+        )
 
     # Attach generated ticket identifiers to each leg
     processed_legs: list[MultimodalLegOut] = []
