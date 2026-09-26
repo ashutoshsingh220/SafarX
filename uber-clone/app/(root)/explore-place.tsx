@@ -159,7 +159,7 @@ export default function ExplorePlaceScreen() {
   const effectiveUserLat = userLatitude || 18.5412;
   const effectiveUserLon = userLongitude || 73.7275;
 
-  const mapRef = React.useRef<MapView>(null);
+  const mapRef = React.useRef<any>(null);
 
   // Fetch real Google Places photos and official editorial summary
   useEffect(() => {

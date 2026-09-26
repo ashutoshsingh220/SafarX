@@ -173,10 +173,10 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
         userLatitude={effectiveLat}
         userLongitude={effectiveLon}
         destinationLatitude={
-          currentLocationOnly ? undefined : destinationLatitude
+          currentLocationOnly || destinationLatitude == null ? undefined : destinationLatitude
         }
         destinationLongitude={
-          currentLocationOnly ? undefined : destinationLongitude
+          currentLocationOnly || destinationLongitude == null ? undefined : destinationLongitude
         }
         destinationTitle={destinationAddress || "Destination"}
         markers={currentLocationOnly ? [] : mapMarkers}

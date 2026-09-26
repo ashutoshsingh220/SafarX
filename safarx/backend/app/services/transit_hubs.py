@@ -693,3 +693,207 @@ def find_nearest_hub(
     """Find the single closest transit hub of given type to coordinates."""
     candidates = find_candidate_hubs_sorted(lat, lon, hub_type, limit=1)
     return candidates[0]
+
+
+def resolve_locality_context(name: str, lat: float = 0.0, lon: float = 0.0) -> dict:
+    """Resolve ANY locality, suburb, or town in India to its authentic parent city, state,
+    and official transit hubs (Rail, Air, Bus) with full mountain terrain awareness.
+    Prevents hallucinating non-existent stations or airports like 'Viman Nagar Airport' or 'Pithoragarh Station'.
+    """
+    clean = name.strip()
+    c_lower = clean.lower()
+    
+    # 1. Resolve coordinates
+    res_lat, res_lon = resolve_city_coordinates(name, fallback_lat=lat, fallback_lon=lon)
+
+    # 2. Check known localities dictionary
+    # A: Pune Localities
+    pune_localities = [
+        "viman nagar", "lohegaon", "kalyani nagar", "koregaon park", "yerwada",
+        "wadgaon sheri", "kharadi", "hadapsar", "magarpatta", "fatima nagar",
+        "wanowrie", "kondhwa", "camp", "swargate", "shivajinagar", "deccan",
+        "kothrud", "karve nagar", "warje", "bavdhan", "baner", "balewadi",
+        "aundh", "pashan", "hinjawadi", "hinjewadi", "wakad", "pimple",
+        "pimpri", "chinchwad", "nigdi", "akurdi", "bhosari", "moshi",
+        "ravet", "tathawade", "punawale", "mahalunge", "dhanori"
+    ]
+    if any(loc in c_lower for loc in pune_localities) or ("pune" in c_lower):
+        matched_loc = next((loc.title() for loc in pune_localities if loc in c_lower), "Pune")
+        return {
+            "clean_name": matched_loc,
+            "parent_city": "Pune",
+            "state": "Maharashtra",
+            "is_hill": False,
+            "is_kumaon": False,
+            "is_garhwal": False,
+            "rail_station": "Pune Junction (PUNE)",
+            "rail_code": "PUNE",
+            "airport": "Pune International Airport (PNQ)",
+            "airport_code": "PNQ",
+            "bus_terminal": "Pune Swargate Bus Terminal",
+            "local_feeder_point": f"{matched_loc} Feeder Stop / Pune Station",
+            "lat": res_lat,
+            "lon": res_lon,
+        }
+
+    # B: Mumbai & MMR Localities
+    mumbai_localities = [
+        "andheri", "bandra", "borivali", "dadar", "kurla", "powai", "juhu",
+        "colaba", "malad", "kandivali", "goregaon", "jogeshwari", "santacruz",
+        "vile parle", "ghatkopar", "mulund", "chembur", "sion", "churchgate",
+        "marine lines", "grant road", "mumbai central", "lower parel", "worli",
+        "navi mumbai", "vashi", "nerul", "belapur", "kharghar", "panvel",
+        "airoli", "ghansoli", "kopar khairane", "sanpada", "seawoods", "ulwe",
+        "thane", "kalyan", "dombivli"
+    ]
+    if any(loc in c_lower for loc in mumbai_localities) or ("mumbai" in c_lower):
+        matched_loc = next((loc.title() for loc in mumbai_localities if loc in c_lower), "Mumbai")
+        is_navi = any(n in c_lower for n in ["navi mumbai", "panvel", "vashi", "nerul", "belapur", "kharghar"])
+        rail = "Panvel Junction (PNVL)" if is_navi else "Chhatrapati Shivaji Maharaj Terminus (CSMT)"
+        r_code = "PNVL" if is_navi else "CSMT"
+        return {
+            "clean_name": matched_loc,
+            "parent_city": "Navi Mumbai" if is_navi else "Mumbai",
+            "state": "Maharashtra",
+            "is_hill": False,
+            "is_kumaon": False,
+            "is_garhwal": False,
+            "rail_station": rail,
+            "rail_code": r_code,
+            "airport": "Chhatrapati Shivaji Maharaj International Airport (BOM)",
+            "airport_code": "BOM",
+            "bus_terminal": "Vashi Highway Bus Terminal" if is_navi else "Borivali / Dadar Asiad Bus Stand",
+            "local_feeder_point": f"{matched_loc} Feeder Stop",
+            "lat": res_lat,
+            "lon": res_lon,
+        }
+
+    # C: Delhi NCR Localities
+    delhi_localities = [
+        "connaught place", "karol bagh", "paharganj", "chandni chowk",
+        "kashmere gate", "civil lines", "rohini", "pitampura", "janakpuri",
+        "dwarka", "uttam nagar", "saket", "hauz khas", "greater kailash",
+        "nehru place", "lajpat nagar", "vasant kunj", "anand vihar",
+        "noida", "greater noida", "gurgaon", "gurugram", "cyber city",
+        "faridabad", "ghaziabad", "indirapuram"
+    ]
+    if any(loc in c_lower for loc in delhi_localities) or ("delhi" in c_lower):
+        matched_loc = next((loc.title() for loc in delhi_localities if loc in c_lower), "Delhi")
+        return {
+            "clean_name": matched_loc,
+            "parent_city": "New Delhi",
+            "state": "Delhi",
+            "is_hill": False,
+            "is_kumaon": False,
+            "is_garhwal": False,
+            "rail_station": "New Delhi Railway Station (NDLS)",
+            "rail_code": "NDLS",
+            "airport": "Indira Gandhi International Airport (DEL)",
+            "airport_code": "DEL",
+            "bus_terminal": "Kashmere Gate ISBT / Anand Vihar ISBT",
+            "local_feeder_point": f"{matched_loc} Feeder Point",
+            "lat": res_lat,
+            "lon": res_lon,
+        }
+
+    # D: Bengaluru Localities
+    blr_localities = [
+        "indiranagar", "koramangala", "whitefield", "electronic city",
+        "hsr layout", "btm layout", "jayanagar", "jp nagar", "malleshwaram",
+        "yeshwanthpur", "hebbal", "yelahanka", "bellandur", "marathahalli",
+        "sarjapur", "kr puram", "domlur", "mg road"
+    ]
+    if any(loc in c_lower for loc in blr_localities) or ("bengaluru" in c_lower) or ("bangalore" in c_lower):
+        matched_loc = next((loc.title() for loc in blr_localities if loc in c_lower), "Bengaluru")
+        return {
+            "clean_name": matched_loc,
+            "parent_city": "Bengaluru",
+            "state": "Karnataka",
+            "is_hill": False,
+            "is_kumaon": False,
+            "is_garhwal": False,
+            "rail_station": "KSR Bengaluru City (SBC)",
+            "rail_code": "SBC",
+            "airport": "Kempegowda International Airport (BLR)",
+            "airport_code": "BLR",
+            "bus_terminal": "Kempegowda Majestic Bus Terminal",
+            "local_feeder_point": f"{matched_loc} Feeder Stop",
+            "lat": res_lat,
+            "lon": res_lon,
+        }
+
+    # E: Kumaon Mountain Region (High Himalayas - Zero Direct Rail Line)
+    kumaon_places = [
+        "pithoragarh", "almora", "ranikhet", "nainital", "bageshwar",
+        "champawat", "lohaghat", "dharchula", "didihat", "berinag",
+        "munsiyari", "chaukori", "kausani", "mukteshwar", "bhimtal", "bhowali"
+    ]
+    if any(loc in c_lower for loc in kumaon_places):
+        matched_loc = next((loc.title() for loc in kumaon_places if loc in c_lower), "Pithoragarh")
+        is_pith = "pithoragarh" in c_lower or "dharchula" in c_lower or "munsiyari" in c_lower
+        rail_hub = "Kathgodam Railway Station (KGM) [156 km Mountain Road]" if is_pith else "Kathgodam Railway Station (KGM)"
+        return {
+            "clean_name": matched_loc,
+            "parent_city": matched_loc,
+            "state": "Uttarakhand",
+            "is_hill": True,
+            "is_kumaon": True,
+            "is_garhwal": False,
+            "rail_station": rail_hub,
+            "rail_code": "KGM",
+            "airport": "Pithoragarh Naini Saini Airport (NNS) [UDAN]" if is_pith else "Pantnagar Airport (PGH) / Delhi IGI",
+            "airport_code": "NNS" if is_pith else "PGH",
+            "bus_terminal": f"{matched_loc} Main ISBT / UTC Roadways Stand",
+            "local_feeder_point": f"{matched_loc} Town Center / Siltham",
+            "lat": res_lat,
+            "lon": res_lon,
+        }
+
+    # F: Garhwal Mountain Region
+    garhwal_places = [
+        "mussoorie", "dhanaulti", "tehri", "uttarkashi", "joshimath",
+        "auli", "badrinath", "kedarnath", "gangotri", "yamunotri",
+        "rudraprayag", "karnaprayag", "chamoli"
+    ]
+    if any(loc in c_lower for loc in garhwal_places):
+        matched_loc = next((loc.title() for loc in garhwal_places if loc in c_lower), "Mussoorie")
+        return {
+            "clean_name": matched_loc,
+            "parent_city": matched_loc,
+            "state": "Uttarakhand",
+            "is_hill": True,
+            "is_kumaon": False,
+            "is_garhwal": True,
+            "rail_station": "Haridwar Junction (HW) / Dehradun (DDN)",
+            "rail_code": "HW",
+            "airport": "Dehradun Jolly Grant Airport (DED)",
+            "airport_code": "DED",
+            "bus_terminal": f"{matched_loc} Bus Depot",
+            "local_feeder_point": f"{matched_loc} Hill Feeder Point",
+            "lat": res_lat,
+            "lon": res_lon,
+        }
+
+    # G: Universal Dynamic Hub Matching for any other city across India
+    r_hub, _ = find_nearest_hub(res_lat, res_lon, "RAILWAY_STATION")
+    a_hub, _ = find_nearest_hub(res_lat, res_lon, "AIRPORT")
+    b_hub, _ = find_nearest_hub(res_lat, res_lon, "BUS_TERMINAL")
+
+    city_tag = clean.split(",")[0].strip().title()
+
+    return {
+        "clean_name": city_tag,
+        "parent_city": r_hub["city"] if r_hub else city_tag,
+        "state": r_hub["state"] if r_hub else "India",
+        "is_hill": False,
+        "is_kumaon": False,
+        "is_garhwal": False,
+        "rail_station": f"{r_hub['name']} ({r_hub['code']})" if r_hub else f"{city_tag} Junction",
+        "rail_code": r_hub["code"] if r_hub else "IR",
+        "airport": f"{a_hub['name']} ({a_hub['code']})" if a_hub else f"{city_tag} Airport",
+        "airport_code": a_hub["code"] if a_hub else "AIR",
+        "bus_terminal": b_hub["name"] if b_hub else f"{city_tag} ISBT",
+        "local_feeder_point": f"{city_tag} Central Feeder Stop",
+        "lat": res_lat,
+        "lon": res_lon,
+    }
