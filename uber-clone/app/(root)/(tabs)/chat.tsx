@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Text,
@@ -14,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { askTravelAgent, ChatMessage } from "@/lib/agent";
 import { useDriverStore, useLocationStore } from "@/store";
+import { images } from "@/constants";
 
 const QUICK_PROMPTS = [
   "💰 Compare UberGo vs Premier rates",
@@ -42,7 +44,7 @@ const Chat = () => {
     {
       id: "welcome-1",
       sender: "agent",
-      text: `👋 **Welcome to Smart Trip AI!**\n\nI am connected to your live trip in Pune & Uttarakhand.\n\n• **Pickup**: ${userAddress || "Symbiosis Institute of Technology, Lavale, Pune"}\n• **Destination**: ${destinationAddress || "Select destination or ask me"}\n• **Verified Rates**: UberGo @ ₹22/km | UberPremier @ ₹30/km\n\nAsk me about rates, fastest traffic routes, driver info, or flight/train connections!`,
+      text: `👋 **Welcome to SafarX!**\n\nI am connected to your live trip in Pune & Uttarakhand.\n\n• **Pickup**: ${userAddress || "Symbiosis Institute of Technology, Lavale, Pune"}\n• **Destination**: ${destinationAddress || "Select destination or ask me"}\n• **Verified Rates**: UberGo @ ₹22/km | UberPremier @ ₹30/km\n\nAsk me about rates, fastest traffic routes, driver info, or flight/train connections!`,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     },
   ]);
@@ -120,8 +122,12 @@ const Chat = () => {
         }`}
       >
         {!isUser && (
-          <View className="w-8 h-8 rounded-full bg-primary-500 items-center justify-center mr-2 mt-1 shadow-sm">
-            <Ionicons name="sparkles" size={16} color="#FFFFFF" />
+          <View className="w-8 h-8 rounded-full bg-neutral-100 items-center justify-center mr-2 mt-1 shadow-sm overflow-hidden border border-neutral-200">
+            <Image
+              source={images.safarxLogo}
+              style={{ width: 24, height: 24 }}
+              resizeMode="contain"
+            />
           </View>
         )}
 
@@ -155,18 +161,22 @@ const Chat = () => {
     <SafeAreaView className="flex-1 bg-white" edges={["top"]}>
       {/* Top Header */}
       <View className="px-4 py-3 border-b border-neutral-200 bg-white shadow-sm flex-row items-center justify-between">
-        <View className="flex-row items-center space-x-2">
-          <View className="w-9 h-9 rounded-full bg-[#0286FF]/10 items-center justify-center">
-            <Ionicons name="sparkles" size={20} color="#0286FF" />
+        <View className="flex-row items-center space-x-2.5">
+          <View className="w-10 h-10 rounded-full bg-neutral-100 items-center justify-center overflow-hidden border border-neutral-200">
+            <Image
+              source={images.safarxLogo}
+              style={{ width: 34, height: 34 }}
+              resizeMode="contain"
+            />
           </View>
           <View>
             <Text className="text-lg font-JakartaBold text-neutral-900">
-              Smart Trip AI
+              SafarX
             </Text>
             <View className="flex-row items-center space-x-1">
               <View className="w-2 h-2 rounded-full bg-emerald-500" />
               <Text className="text-[11px] font-JakartaMedium text-emerald-600">
-                Connected • Grok Ultra-Fast
+                Connected
               </Text>
             </View>
           </View>

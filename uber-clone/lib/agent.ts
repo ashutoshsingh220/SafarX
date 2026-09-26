@@ -57,7 +57,7 @@ export const buildSystemPrompt = (context: AgentContext): string => {
     }
   }
 
-  return `You are the Smart Trip AI & Ride Assistant for the Uber Clone app.
+  return `You are the SafarX AI Transit & Ride Assistant for the SafarX app.
 You are directly integrated into the app and have real-time visibility into the user's active session, GPS coordinates, route telemetry, and driver pricing.
 
 CURRENT USER TELEMETRY & APP STATE:
