@@ -11,8 +11,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import { GooglePlacesAutocompleteInput } from "@/src/features/smarttrip/components/GooglePlacesAutocompleteInput";
+import InteractiveMap from "@/components/InteractiveMap";
 import { useLocationStore } from "@/store";
 
 const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_PLACES_API_KEY || "";
@@ -395,93 +395,18 @@ export default function ExplorePlaceScreen() {
     <View className="flex-1 bg-neutral-900">
       {/* Full Map */}
       <View className="flex-1">
-        <MapView
-          ref={mapRef}
-          provider={PROVIDER_GOOGLE}
+        <InteractiveMap
+          userLatitude={effectiveUserLat}
+          userLongitude={effectiveUserLon}
+          destinationLatitude={placeCoords.latitude}
+          destinationLongitude={placeCoords.longitude}
+          destinationTitle={placeName}
+          routeCoordinates={showDirections ? routePolyline : []}
+          routeDuration={showDirections ? routeInfo?.duration : null}
+          routeDistance={showDirections ? routeInfo?.distance : null}
+          zoom={14}
           style={{ width: "100%", height: "100%" }}
-          mapType="standard"
-          initialRegion={{
-            latitude: placeCoords.latitude,
-            longitude: placeCoords.longitude,
-            latitudeDelta: 0.05,
-            longitudeDelta: 0.05,
-          }}
-          showsUserLocation={true}
-          showsMyLocationButton={true}
-          userInterfaceStyle="light"
-        >
-          <Marker
-            coordinate={{
-              latitude: placeCoords.latitude,
-              longitude: placeCoords.longitude,
-            }}
-            title={placeName}
-            pinColor="#EF4444"
-          />
-          {showDirections && routePolyline.length > 0 && (
-            <>
-              {/* Outer stroke line */}
-              <Polyline
-                coordinates={routePolyline.map(([lat, lng]) => ({
-                  latitude: lat,
-                  longitude: lng,
-                }))}
-                strokeColor="#1A73E8"
-                strokeWidth={7}
-                zIndex={10}
-              />
-              {/* Inner vivid blue line */}
-              <Polyline
-                coordinates={routePolyline.map(([lat, lng]) => ({
-                  latitude: lat,
-                  longitude: lng,
-                }))}
-                strokeColor="#388AF6"
-                strokeWidth={5}
-                zIndex={11}
-              />
-              {/* Midpoint route travel time badge (identical to Google Maps) */}
-              {routeInfo?.duration && (
-                <Marker
-                  coordinate={{
-                    latitude:
-                      routePolyline[Math.floor(routePolyline.length / 2)][0],
-                    longitude:
-                      routePolyline[Math.floor(routePolyline.length / 2)][1],
-                  }}
-                  tracksViewChanges={false}
-                  zIndex={20}
-                >
-                  <View
-                    style={{
-                      backgroundColor: "#1A73E8",
-                      paddingHorizontal: 8,
-                      paddingVertical: 4,
-                      borderRadius: 12,
-                      shadowColor: "#000",
-                      shadowOffset: { width: 0, height: 2 },
-                      shadowOpacity: 0.35,
-                      shadowRadius: 3,
-                      elevation: 6,
-                      borderWidth: 1.5,
-                      borderColor: "#FFFFFF",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: "#FFFFFF",
-                        fontWeight: "bold",
-                        fontSize: 11,
-                      }}
-                    >
-                      🚗 {routeInfo.duration}
-                    </Text>
-                  </View>
-                </Marker>
-              )}
-            </>
-          )}
-        </MapView>
+        />
       </View>
 
       {/* Floating Top Search Header */}

@@ -1,46 +1,37 @@
-import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Text, View } from "react-native";
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
+import React, { useEffect, useState } from "react";
+import { View } from "react-native";
 
-import { icons } from "@/constants";
+import InteractiveMap, { MapMarker } from "@/components/InteractiveMap";
 import { useFetch } from "@/lib/fetch";
 import {
   calculateDriverTimes,
-  calculateRegion,
-  decodePolyline,
   generateMarkersFromData,
   getResilientRoute,
 } from "@/lib/map";
 import { useDriverStore, useLocationStore } from "@/store";
 import { Driver, MarkerData } from "@/types/type";
 
-const directionsAPI = process.env.EXPO_PUBLIC_DIRECTIONS_API_KEY;
-
 interface MapProps {
   currentLocationOnly?: boolean;
 }
 
 const Map = ({ currentLocationOnly = false }: MapProps) => {
-  const mapRef = useRef<MapView>(null);
   const {
     userLongitude,
     userLatitude,
     destinationLatitude,
     destinationLongitude,
+    destinationAddress,
   } = useLocationStore();
-  const { selectedDriver, setDrivers } = useDriverStore();
+  const { setDrivers } = useDriverStore();
 
-  const { data: drivers, loading, error } = useFetch<Driver[]>("/(api)/driver");
+  const { data: drivers } = useFetch<Driver[]>("/(api)/driver");
   const [markers, setMarkers] = useState<MarkerData[]>([]);
-  const [routeCoordinates, setRouteCoordinates] = useState<
-    { latitude: number; longitude: number }[]
-  >([]);
+  const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>(
+    []
+  );
   const [routeDuration, setRouteDuration] = useState<string | null>(null);
   const [routeDistance, setRouteDistance] = useState<string | null>(null);
-  const [routeMidpoint, setRouteMidpoint] = useState<{
-    latitude: number;
-    longitude: number;
-  } | null>(null);
 
   const effectiveLat = userLatitude || 18.5412;
   const effectiveLon = userLongitude || 73.7275;
@@ -51,7 +42,6 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
       setRouteCoordinates([]);
       setRouteDuration(null);
       setRouteDistance(null);
-      setRouteMidpoint(null);
       return;
     }
 
@@ -65,19 +55,12 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
         );
 
         if (routeResult.coordinates.length > 0) {
-          setRouteCoordinates(routeResult.coordinates);
+          const latLngList: [number, number][] = routeResult.coordinates.map(
+            (c) => [c.latitude, c.longitude]
+          );
+          setRouteCoordinates(latLngList);
           setRouteDuration(routeResult.durationText);
           setRouteDistance(routeResult.distanceText);
-
-          const midIdx = Math.floor(routeResult.coordinates.length / 2);
-          setRouteMidpoint(routeResult.coordinates[midIdx]);
-
-          setTimeout(() => {
-            mapRef.current?.fitToCoordinates(routeResult.coordinates, {
-              edgePadding: { top: 120, right: 60, bottom: 280, left: 60 },
-              animated: true,
-            });
-          }, 400);
         }
       } catch (err) {
         console.log("Error fetching map route:", err);
@@ -85,7 +68,13 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
     };
 
     fetchRoute();
-  }, [effectiveLat, effectiveLon, destinationLatitude, destinationLongitude]);
+  }, [
+    currentLocationOnly,
+    effectiveLat,
+    effectiveLon,
+    destinationLatitude,
+    destinationLongitude,
+  ]);
 
   useEffect(() => {
     if (Array.isArray(drivers) && drivers.length > 0) {
@@ -96,7 +85,7 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
       });
       setMarkers(newMarkers);
     } else {
-      // Driver options: UberGo, UberPremier, and UberAuto
+      // Authentic driver options around Pune / user coords
       const fallbackDrivers = [
         {
           id: 1,
@@ -104,8 +93,7 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
           last_name: "Sharma",
           profile_image_url:
             "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80",
-          car_image_url:
-            "https://img.icons8.com/color/512/car--v1.png",
+          car_image_url: "https://img.icons8.com/color/512/car--v1.png",
           car_seats: 4,
           rating: 4.85,
           latitude: effectiveLat + 0.003,
@@ -134,8 +122,7 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
           last_name: "Patil",
           profile_image_url:
             "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&auto=format&fit=crop&q=80",
-          car_image_url:
-            "https://img.icons8.com/color/512/auto-rickshaw.png",
+          car_image_url: "https://img.icons8.com/color/512/auto-rickshaw.png",
           car_seats: 3,
           rating: 4.78,
           latitude: effectiveLat + 0.001,
@@ -164,98 +151,42 @@ const Map = ({ currentLocationOnly = false }: MapProps) => {
         if (drivers) setDrivers(drivers as MarkerData[]);
       });
     }
-  }, [markers, destinationLatitude, destinationLongitude, effectiveLat, effectiveLon]);
-
-  const region = calculateRegion({
-    userLatitude: effectiveLat,
-    userLongitude: effectiveLon,
+  }, [
+    markers,
     destinationLatitude,
     destinationLongitude,
-  });
+    effectiveLat,
+    effectiveLon,
+  ]);
+
+  const mapMarkers: MapMarker[] = markers.map((m) => ({
+    id: m.id,
+    latitude: m.latitude,
+    longitude: m.longitude,
+    title: m.title,
+    type: "driver",
+  }));
 
   return (
-    <MapView
-      ref={mapRef}
-      provider={PROVIDER_GOOGLE}
-      style={{ width: "100%", height: "100%", borderRadius: 16 }}
-      mapType="standard"
-      initialRegion={region}
-      showsUserLocation={true}
-      showsMyLocationButton={true}
-      userInterfaceStyle="light"
-    >
-
-      {!currentLocationOnly && destinationLatitude && destinationLongitude && (
-        <>
-          <Marker
-            key="destination"
-            coordinate={{
-              latitude: destinationLatitude,
-              longitude: destinationLongitude,
-            }}
-            title="Destination"
-            image={icons.pin}
-          />
-
-          {routeCoordinates.length > 0 && (
-            <>
-              {/* Outer boundary stroke for authentic Google Maps route depth */}
-              <Polyline
-                coordinates={routeCoordinates}
-                strokeColor="#1A73E8"
-                strokeWidth={7}
-                zIndex={10}
-              />
-              {/* Vibrant inner Google blue path */}
-              <Polyline
-                coordinates={routeCoordinates}
-                strokeColor="#388AF6"
-                strokeWidth={5}
-                zIndex={11}
-              />
-
-              {/* Midpoint duration badge pill matching Google Maps screenshot */}
-              {routeMidpoint && routeDuration && (
-                <Marker
-                  coordinate={routeMidpoint}
-                  anchor={{ x: 0.5, y: 0.5 }}
-                  tracksViewChanges={false}
-                  zIndex={20}
-                >
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      backgroundColor: "#1A73E8",
-                      paddingHorizontal: 10,
-                      paddingVertical: 5,
-                      borderRadius: 16,
-                      borderWidth: 1.5,
-                      borderColor: "#FFFFFF",
-                      shadowColor: "#000",
-                      shadowOffset: { width: 0, height: 2 },
-                      shadowOpacity: 0.35,
-                      shadowRadius: 3,
-                      elevation: 6,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: "#FFFFFF",
-                        fontSize: 12,
-                        fontWeight: "700",
-                      }}
-                    >
-                      🚗 {routeDuration}{routeDistance ? ` (${routeDistance})` : ""}
-                    </Text>
-                  </View>
-                </Marker>
-              )}
-            </>
-          )}
-        </>
-      )}
-    </MapView>
+    <View style={{ width: "100%", height: "100%", borderRadius: 16, overflow: "hidden" }}>
+      <InteractiveMap
+        userLatitude={effectiveLat}
+        userLongitude={effectiveLon}
+        destinationLatitude={
+          currentLocationOnly ? undefined : destinationLatitude
+        }
+        destinationLongitude={
+          currentLocationOnly ? undefined : destinationLongitude
+        }
+        destinationTitle={destinationAddress || "Destination"}
+        markers={currentLocationOnly ? [] : mapMarkers}
+        routeCoordinates={currentLocationOnly ? [] : routeCoordinates}
+        routeDuration={currentLocationOnly ? null : routeDuration}
+        routeDistance={currentLocationOnly ? null : routeDistance}
+        zoom={14}
+        style={{ width: "100%", height: "100%", borderRadius: 16 }}
+      />
+    </View>
   );
 };
 
