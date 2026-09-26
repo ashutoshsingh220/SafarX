@@ -1,5 +1,5 @@
 import React, { useMemo, useRef } from "react";
-import { View, StyleSheet, ActivityIndicator, TouchableOpacity, Text } from "react-native";
+import { View, StyleSheet, ActivityIndicator } from "react-native";
 import { WebView } from "react-native-webview";
 
 export interface MapMarker {
@@ -20,6 +20,8 @@ interface InteractiveMapProps {
   routeCoordinates?: [number, number][]; // [lat, lng]
   routeDuration?: string | null;
   routeDistance?: string | null;
+  recenterPosition?: "top-right" | "bottom-right";
+  showRecenter?: boolean;
   style?: any;
   zoom?: number;
 }
@@ -34,13 +36,31 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   routeCoordinates,
   routeDuration,
   routeDistance,
+  recenterPosition = "top-right",
+  showRecenter = true,
   style,
-  zoom = 14,
+  zoom,
 }) => {
   const webViewRef = useRef<WebView>(null);
 
   const htmlContent = useMemo(() => {
     const allMarkers: any[] = [];
+
+    // Destination is primary if specified
+    const hasDestination =
+      destinationLatitude !== undefined &&
+      destinationLatitude !== null &&
+      destinationLongitude !== undefined &&
+      destinationLongitude !== null;
+
+    if (hasDestination) {
+      allMarkers.push({
+        lat: destinationLatitude,
+        lng: destinationLongitude,
+        title: destinationTitle,
+        type: "destination",
+      });
+    }
 
     if (userLatitude && userLongitude) {
       allMarkers.push({
@@ -48,15 +68,6 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         lng: userLongitude,
         title: "Your Location",
         type: "user",
-      });
-    }
-
-    if (destinationLatitude && destinationLongitude) {
-      allMarkers.push({
-        lat: destinationLatitude,
-        lng: destinationLongitude,
-        title: destinationTitle,
-        type: "destination",
       });
     }
 
@@ -70,10 +81,19 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     });
 
     const markersJson = JSON.stringify(allMarkers);
+    const hasRoute = routeCoordinates && routeCoordinates.length > 0;
     const routeJson = JSON.stringify(routeCoordinates || []);
 
-    const centerLat = destinationLatitude && !userLatitude ? destinationLatitude : userLatitude;
-    const centerLng = destinationLongitude && !userLongitude ? destinationLongitude : userLongitude;
+    // Primary center: If exploring a destination, focus ON THAT DESTINATION!
+    // If on home/current location, focus on user location.
+    const centerLat = hasDestination ? destinationLatitude : userLatitude;
+    const centerLng = hasDestination ? destinationLongitude : userLongitude;
+    const initialZoom = zoom ?? (hasDestination ? 13 : 15);
+
+    const recenterTopStyle =
+      recenterPosition === "bottom-right"
+        ? "bottom: 16px; right: 16px;"
+        : "top: 14px; right: 14px;";
 
     return `
 <!DOCTYPE html>
@@ -84,37 +104,46 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body, html, #map {
       margin: 0; padding: 0; width: 100%; height: 100%; background: #e5e3df;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow: hidden;
     }
     .user-pulse-container {
-      position: relative; width: 24px; height: 24px;
+      position: relative; width: 26px; height: 26px;
       display: flex; align-items: center; justify-content: center;
     }
     .user-pulse-ring {
-      position: absolute; width: 24px; height: 24px; border-radius: 50%;
-      background: rgba(26, 115, 232, 0.25); animation: pulse 2s infinite ease-out;
+      position: absolute; width: 26px; height: 26px; border-radius: 50%;
+      background: rgba(26, 115, 232, 0.28); animation: pulse 2.2s infinite ease-out;
     }
     .user-pulse-dot {
       position: absolute; width: 14px; height: 14px; border-radius: 50%;
       background: #1A73E8; border: 2.5px solid #FFFFFF;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.35);
     }
     @keyframes pulse {
-      0% { transform: scale(0.6); opacity: 1; }
-      100% { transform: scale(1.6); opacity: 0; }
+      0% { transform: scale(0.5); opacity: 1; }
+      100% { transform: scale(1.7); opacity: 0; }
     }
-    .dest-pin {
-      width: 26px; height: 26px; border-radius: 50% 50% 50% 0;
+    .dest-pin-wrapper {
+      position: relative; width: 32px; height: 42px;
+      display: flex; flex-direction: column; align-items: center;
+    }
+    .dest-pin-head {
+      width: 28px; height: 28px; border-radius: 50% 50% 50% 0;
       background: #EA4335; transform: rotate(-45deg);
-      border: 2px solid #FFFFFF; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+      border: 2px solid #FFFFFF; box-shadow: 0 2px 6px rgba(0,0,0,0.35);
       display: flex; align-items: center; justify-content: center;
     }
-    .dest-inner {
-      width: 8px; height: 8px; border-radius: 50%; background: #FFFFFF;
+    .dest-pin-dot {
+      width: 9px; height: 9px; border-radius: 50%; background: #FFFFFF;
       transform: rotate(45deg);
+    }
+    .dest-pin-shadow {
+      position: absolute; bottom: 0; width: 12px; height: 4px;
+      background: rgba(0,0,0,0.25); border-radius: 50%;
     }
     .cab-marker {
       width: 32px; height: 32px; background: #FFFFFF; border-radius: 50%;
@@ -123,30 +152,36 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       font-size: 16px;
     }
     .google-badge {
-      position: absolute; bottom: 8px; left: 8px; z-index: 1000;
-      background: rgba(255,255,255,0.92); padding: 2px 6px; border-radius: 4px;
+      position: absolute; bottom: 10px; left: 10px; z-index: 1000;
+      background: rgba(255,255,255,0.92); padding: 3px 7px; border-radius: 4px;
       font-weight: 700; font-size: 11px; letter-spacing: -0.2px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.18); display: flex; align-items: center; gap: 3px;
+      pointer-events: none;
     }
     .google-g { color: #4285F4; }
     .google-o1 { color: #EA4335; }
     .google-o2 { color: #FBBC05; }
     .google-l { color: #34A853; }
     .google-e { color: #EA4335; }
-    .recenter-btn {
-      position: absolute; top: 12px; right: 12px; z-index: 1000;
-      width: 38px; height: 38px; background: #FFFFFF; border-radius: 50%;
-      border: none; box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    .google-recenter-fab {
+      position: absolute; ${recenterTopStyle} z-index: 1000;
+      width: 44px; height: 44px; background: #FFFFFF; border-radius: 50%;
+      border: none; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
       display: flex; align-items: center; justify-content: center;
-      cursor: pointer; font-size: 18px; color: #5F6368;
+      cursor: pointer; transition: background-color 0.15s, transform 0.1s;
+      outline: none;
+    }
+    .google-recenter-fab:active {
+      background-color: #F1F3F4;
+      transform: scale(0.95);
     }
     .duration-badge {
-      background: #1A73E8; color: #FFFFFF; padding: 4px 8px;
-      border-radius: 12px; font-size: 11px; font-weight: 700;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.3); border: 1.5px solid #FFFFFF;
+      background: #1A73E8; color: #FFFFFF; padding: 5px 10px;
+      border-radius: 14px; font-size: 12px; font-weight: 700;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.35); border: 2px solid #FFFFFF;
       white-space: nowrap;
     }
-    .leaflet-bar { display: none; }
+    .leaflet-bar { display: none !important; }
   </style>
 </head>
 <body>
@@ -154,16 +189,36 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   <div class="google-badge">
     <span class="google-g">G</span><span class="google-o1">o</span><span class="google-o2">o</span><span class="google-g">g</span><span class="google-l">l</span><span class="google-e">e</span>
   </div>
-  <button class="recenter-btn" onclick="recenterToUser()" title="My Location">🎯</button>
+  
+  ${
+    showRecenter
+      ? `
+  <!-- Authentic Google Maps "My Location" precision crosshair button -->
+  <button class="google-recenter-fab" onclick="recenterMap()" aria-label="My Location">
+    <svg id="crosshair-icon" width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z" fill="#5F6368"/>
+    </svg>
+  </button>
+  `
+      : ""
+  }
 
   <script>
     var userLat = ${userLatitude};
     var userLng = ${userLongitude};
+    var destLat = ${destinationLatitude ?? "null"};
+    var destLng = ${destinationLongitude ?? "null"};
+    var hasRoute = ${hasRoute ? "true" : "false"};
 
     var map = L.map('map', {
       zoomControl: false,
-      attributionControl: false
-    }).setView([${centerLat}, ${centerLng}], ${zoom});
+      attributionControl: false,
+      dragging: true,
+      touchZoom: true,
+      scrollWheelZoom: true,
+      doubleClickZoom: true,
+      tap: true
+    }).setView([${centerLat}, ${centerLng}], ${initialZoom});
 
     // Real Google Maps standard road tiles
     var googleTiles = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
@@ -171,7 +226,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
     });
 
-    // High reliability CartoDB fallback
+    // High reliability CartoDB fallback layer
     var fallbackTiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       maxZoom: 19,
       subdomains: 'abcd'
@@ -185,30 +240,42 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
     googleTiles.addTo(map);
 
-    function recenterToUser() {
+    // Invalidate size once container renders
+    setTimeout(function() { map.invalidateSize(); }, 150);
+    setTimeout(function() { map.invalidateSize(); }, 400);
+
+    function recenterMap() {
+      var icon = document.querySelector('#crosshair-icon path');
+      if (icon) icon.setAttribute('fill', '#1A73E8');
+      
+      // If user has location, fly to user location
       if (userLat && userLng) {
-        map.flyTo([userLat, userLng], 15, { duration: 0.8 });
+        map.flyTo([userLat, userLng], 15, { duration: 0.9 });
+      } else if (destLat && destLng) {
+        map.flyTo([destLat, destLng], 14, { duration: 0.9 });
       }
+      
+      setTimeout(function() {
+        if (icon) icon.setAttribute('fill', '#5F6368');
+      }, 1500);
     }
 
     var markersData = ${markersJson};
-    var bounds = [];
-
     markersData.forEach(function(item) {
       var icon;
       if (item.type === 'user') {
         icon = L.divIcon({
           className: '',
           html: '<div class="user-pulse-container"><div class="user-pulse-ring"></div><div class="user-pulse-dot"></div></div>',
-          iconSize: [24, 24],
-          iconAnchor: [12, 12]
+          iconSize: [26, 26],
+          iconAnchor: [13, 13]
         });
       } else if (item.type === 'destination') {
         icon = L.divIcon({
           className: '',
-          html: '<div class="dest-pin"><div class="dest-inner"></div></div>',
-          iconSize: [26, 26],
-          iconAnchor: [13, 26]
+          html: '<div class="dest-pin-wrapper"><div class="dest-pin-head"><div class="dest-pin-dot"></div></div><div class="dest-pin-shadow"></div></div>',
+          iconSize: [32, 42],
+          iconAnchor: [16, 40]
         });
       } else {
         icon = L.divIcon({
@@ -223,11 +290,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       if (item.title) {
         m.bindPopup("<b>" + item.title + "</b>");
       }
-      bounds.push([item.lat, item.lng]);
     });
 
     var route = ${routeJson};
-    if (route && route.length > 0) {
+    if (hasRoute && route.length > 0) {
       // Outer border for 3D depth matching Google Maps
       L.polyline(route, {
         color: '#1557B0',
@@ -246,7 +312,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         lineJoin: 'round'
       }).addTo(map);
 
-      map.fitBounds(activeRoute.getBounds(), { padding: [35, 35] });
+      map.fitBounds(activeRoute.getBounds(), { padding: [40, 40] });
 
       ${
         routeDuration
@@ -257,14 +323,12 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       var badgeIcon = L.divIcon({
         className: '',
         html: badgeHtml,
-        iconAnchor: [45, 12]
+        iconAnchor: [50, 14]
       });
       L.marker(midPoint, { icon: badgeIcon }).addTo(map);
       `
           : ""
       }
-    } else if (bounds.length > 1) {
-      map.fitBounds(bounds, { padding: [35, 35] });
     }
   </script>
 </body>
@@ -280,6 +344,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     routeCoordinates,
     routeDuration,
     routeDistance,
+    recenterPosition,
     zoom,
   ]);
 
