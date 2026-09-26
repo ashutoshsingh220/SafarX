@@ -95,7 +95,7 @@ export const askTravelAgent = async (
   const apiKey =
     process.env.EXPO_PUBLIC_GROQ_API_KEY ||
     process.env.EXPO_PUBLIC_GROK_API_KEY ||
-    "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";
+    "";
 
   const model = process.env.EXPO_PUBLIC_GROQ_MODEL || "openai/gpt-oss-120b";
 
