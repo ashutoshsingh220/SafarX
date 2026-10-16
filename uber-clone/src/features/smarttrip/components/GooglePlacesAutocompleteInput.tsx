@@ -6,10 +6,20 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
-  Pressable,
+  Platform,
 } from "react-native";
 
 const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_PLACES_API_KEY || "";
+
+const GOOGLE_HEADERS: Record<string, string> = {
+  "Content-Type": "application/json",
+  ...(Platform.OS === "android"
+    ? {
+        "X-Android-Package": "com.ashukharayat.uberclone",
+        "X-Android-Cert": "9E013D154716FFBD112ECA1E2C178CBFB0023848",
+      }
+    : {}),
+};
 
 export interface PlaceResult {
   address: string;
@@ -82,7 +92,7 @@ export const GooglePlacesAutocompleteInput = ({
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            ...GOOGLE_HEADERS,
             "X-Goog-Api-Key": GOOGLE_API_KEY,
           },
           body: JSON.stringify({
@@ -114,7 +124,9 @@ export const GooglePlacesAutocompleteInput = ({
         return;
       }
     } catch (err: any) {
-      console.log("Autocomplete fetch fallback:", err?.message || err);
+      if (err?.name !== "AbortError" && err?.message !== "Aborted") {
+        console.log("Autocomplete fetch fallback:", err?.message || err);
+      }
     }
 
     // 2. Fallback to searchText API if autocomplete returned nothing or timed out
@@ -124,7 +136,7 @@ export const GooglePlacesAutocompleteInput = ({
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            ...GOOGLE_HEADERS,
             "X-Goog-Api-Key": GOOGLE_API_KEY,
             "X-Goog-FieldMask":
               "places.id,places.displayName,places.formattedAddress,places.location",
@@ -195,7 +207,7 @@ export const GooglePlacesAutocompleteInput = ({
         `https://places.googleapis.com/v1/places/${item.placeId}`,
         {
           headers: {
-            "Content-Type": "application/json",
+            ...GOOGLE_HEADERS,
             "X-Goog-Api-Key": GOOGLE_API_KEY,
             "X-Goog-FieldMask": "location,formattedAddress,displayName",
           },
@@ -206,7 +218,8 @@ export const GooglePlacesAutocompleteInput = ({
       let lon = details.location?.longitude;
       if (!lat || !lon) {
         const geoRes = await fetch(
-          `https://maps.googleapis.com/maps/api/geocode/json?place_id=${item.placeId}&key=${GOOGLE_API_KEY}`
+          `https://maps.googleapis.com/maps/api/geocode/json?place_id=${item.placeId}&key=${GOOGLE_API_KEY}`,
+          { headers: GOOGLE_HEADERS }
         );
         const geoData = await geoRes.json();
         if (geoData.results?.[0]?.geometry?.location) {

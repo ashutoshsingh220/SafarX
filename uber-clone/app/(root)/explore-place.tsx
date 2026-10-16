@@ -14,6 +14,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { GooglePlacesAutocompleteInput } from "@/src/features/smarttrip/components/GooglePlacesAutocompleteInput";
 import InteractiveMap from "@/components/InteractiveMap";
 import { useLocationStore } from "@/store";
+import { getResilientRoute } from "@/lib/map";
 
 const GOOGLE_API_KEY = process.env.EXPO_PUBLIC_PLACES_API_KEY || "";
 
@@ -276,126 +277,43 @@ export default function ExplorePlaceScreen() {
     setShowDirections(true);
 
     try {
-      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${effectiveUserLat},${effectiveUserLon}&destination=${destLat},${destLng}&departure_time=now&traffic_model=best_guess&alternatives=true&key=${GOOGLE_API_KEY}`;
-      const res = await fetch(url);
-      const data = await res.json();
+      const route = await getResilientRoute(
+        effectiveUserLat,
+        effectiveUserLon,
+        destLat,
+        destLng
+      );
 
-      if (data.status === "OK" && data.routes?.length > 0) {
-        // Select shortest distance route just as Google Maps provides
-        const sortedRoutes = [...data.routes].sort((a, b) => {
-          const distA = a.legs?.[0]?.distance?.value ?? 999999999;
-          const distB = b.legs?.[0]?.distance?.value ?? 999999999;
-          if (distA !== distB) return distA - distB;
-          const durA =
-            a.legs?.[0]?.duration_in_traffic?.value ??
-            a.legs?.[0]?.duration?.value ??
-            99999999;
-          const durB =
-            b.legs?.[0]?.duration_in_traffic?.value ??
-            b.legs?.[0]?.duration?.value ??
-            99999999;
-          return durA - durB;
-        });
-
-        const shortestRoute = sortedRoutes[0];
-        const leg = shortestRoute.legs[0];
-        const liveDuration =
-          leg.duration_in_traffic?.text || leg.duration?.text || "1 d 3 hours";
+      if (route.coordinates && route.coordinates.length > 0) {
+        const polylineTuples: [number, number][] = route.coordinates.map((c) => [
+          c.latitude,
+          c.longitude,
+        ]);
+        setRoutePolyline(polylineTuples);
         setRouteInfo({
-          duration: liveDuration,
-          distance: leg.distance?.text || "1,558 km",
-          summary: shortestRoute.summary || "Shortest Route",
+          duration: route.durationText,
+          distance: route.distanceText,
+          summary:
+            route.source === "google"
+              ? "Fastest Highway Route"
+              : route.source === "osrm"
+              ? "Fastest Highway Route"
+              : "Shortest Route",
         });
 
-        if (shortestRoute.overview_polyline?.points) {
-          const decoded = decodePolyline(
-            shortestRoute.overview_polyline.points
+        // Fit map camera to full route
+        setTimeout(() => {
+          mapRef.current?.fitToCoordinates(
+            route.coordinates,
+            {
+              edgePadding: { top: 260, right: 60, bottom: 400, left: 60 },
+              animated: true,
+            }
           );
-          setRoutePolyline(decoded);
-
-          // Fit map camera to full route
-          setTimeout(() => {
-            mapRef.current?.fitToCoordinates(
-              decoded.map(([lat, lng]) => ({ latitude: lat, longitude: lng })),
-              {
-                edgePadding: { top: 260, right: 60, bottom: 400, left: 60 },
-                animated: true,
-              }
-            );
-          }, 350);
-        }
-      } else {
-        const R = 6371;
-        const dLat = ((destLat - effectiveUserLat) * Math.PI) / 180;
-        const dLon = ((destLng - effectiveUserLon) * Math.PI) / 180;
-        const a =
-          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-          Math.cos((effectiveUserLat * Math.PI) / 180) *
-            Math.cos((destLat * Math.PI) / 180) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        const distKm = Math.round(R * c * 1.25);
-        const hrs = Math.floor(distKm / 65);
-        const mins = Math.round((distKm % 65) * (60 / 65));
-        const durationStr =
-          hrs >= 24
-            ? `${Math.floor(hrs / 24)} d ${hrs % 24} hr`
-            : `${hrs} hr ${mins} min`;
-
-        setRouteInfo({
-          duration: durationStr,
-          distance: `${distKm.toLocaleString("en-IN")} km`,
-          summary: "Fastest Highway Route",
-        });
-
-        const interpolated: [number, number][] = [];
-        const steps = 15;
-        for (let i = 0; i <= steps; i++) {
-          const t = i / steps;
-          interpolated.push([
-            effectiveUserLat + (destLat - effectiveUserLat) * t,
-            effectiveUserLon + (destLng - effectiveUserLon) * t,
-          ]);
-        }
-        setRoutePolyline(interpolated);
+        }, 350);
       }
     } catch (e) {
       console.log("Directions notice:", e);
-      const R = 6371;
-      const dLat = ((destLat - effectiveUserLat) * Math.PI) / 180;
-      const dLon = ((destLng - effectiveUserLon) * Math.PI) / 180;
-      const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos((effectiveUserLat * Math.PI) / 180) *
-          Math.cos((destLat * Math.PI) / 180) *
-          Math.sin(dLon / 2) *
-          Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      const distKm = Math.round(R * c * 1.25);
-      const hrs = Math.floor(distKm / 65);
-      const mins = Math.round((distKm % 65) * (60 / 65));
-      const durationStr =
-        hrs >= 24
-          ? `${Math.floor(hrs / 24)} d ${hrs % 24} hr`
-          : `${hrs} hr ${mins} min`;
-
-      setRouteInfo({
-        duration: durationStr,
-        distance: `${distKm.toLocaleString("en-IN")} km`,
-        summary: "Fastest Highway Route",
-      });
-
-      const interpolated: [number, number][] = [];
-      const steps = 15;
-      for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        interpolated.push([
-          effectiveUserLat + (destLat - effectiveUserLat) * t,
-          effectiveUserLon + (destLng - effectiveUserLon) * t,
-        ]);
-      }
-      setRoutePolyline(interpolated);
     } finally {
       setLoadingDirections(false);
     }

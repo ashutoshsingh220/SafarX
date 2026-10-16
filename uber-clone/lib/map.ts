@@ -1,4 +1,14 @@
+import { Platform } from "react-native";
 import { Driver, MarkerData } from "@/types/type";
+
+export const GOOGLE_ANDROID_HEADERS: Record<string, string> = {
+  ...(Platform.OS === "android"
+    ? {
+        "X-Android-Package": "com.ashukharayat.uberclone",
+        "X-Android-Cert": "9E013D154716FFBD112ECA1E2C178CBFB0023848",
+      }
+    : {}),
+};
 
 const directionsAPI = process.env.EXPO_PUBLIC_DIRECTIONS_API_KEY;
 
@@ -169,7 +179,7 @@ export async function getResilientRoute(
       const gUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${originLat},${originLon}&destination=${destLat},${destLon}&departure_time=now&traffic_model=best_guess&alternatives=true&key=${directionsAPI}`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(gUrl, { signal: controller.signal });
+      const res = await fetch(gUrl, { signal: controller.signal, headers: GOOGLE_ANDROID_HEADERS });
       clearTimeout(timeoutId);
       const data = await res.json();
 
