@@ -39,12 +39,12 @@ export default function TravelSearchScreen() {
   const profileStore = useProfileStore();
   const params = useLocalSearchParams<{ origin?: string; destination?: string; date?: string }>();
 
-  const [origin, setOrigin] = useState(params.origin ? String(params.origin) : "");
-  const [destination, setDestination] = useState(params.destination ? String(params.destination) : "");
+  const [origin, setOrigin] = useState(params.origin ? String(params.origin) : "Navi Mumbai, Maharashtra, India");
+  const [destination, setDestination] = useState(params.destination ? String(params.destination) : "Darbhanga, Bihar, India");
   const [originCoords, setOriginCoords] = useState<{ lat?: number; lon?: number }>({});
   const [destinationCoords, setDestinationCoords] = useState<{ lat?: number; lon?: number }>({});
 
-  const [travelDate, setTravelDate] = useState(params.date ? String(params.date) : "15-Oct-2026");
+  const [travelDate, setTravelDate] = useState(params.date ? String(params.date) : "05-Oct-2026");
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [feederMode, setFeederMode] = useState<"AUTO" | "CAB">("AUTO");
 
@@ -270,7 +270,7 @@ export default function TravelSearchScreen() {
           </TouchableOpacity>
           <View>
             <Text className="text-lg font-JakartaBold text-neutral-900">
-              SafarX Multimodal Transit
+              SafarX Multi-Transport
             </Text>
             <Text className="text-[11px] font-Jakarta text-neutral-500">
               IRCTC Trains • AC Buses • Flights • Outstation Cabs

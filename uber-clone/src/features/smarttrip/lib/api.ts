@@ -1069,7 +1069,7 @@ export async function fetchCorridorInventory(params: {
       {
         cab_id: "cab-sedan",
         vehicle_type: "AC Sedan (Dzire / Etios)",
-        operator: "SmartTrip Outstation Sedan",
+        operator: "SafarX Outstation Sedan",
         duration_str: "10h 30m",
         distance_km: 520.0,
         fare: 8320,
