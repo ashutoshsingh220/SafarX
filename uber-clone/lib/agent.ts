@@ -71,58 +71,63 @@ export const buildSystemPrompt = (context: AgentContext): string => {
     }
   }
 
-  return `You are the SafarX AI Orchestration Layer & Smart Transit Assistant for the SafarX app.
-You are directly integrated into the app with real-time visibility into the user's active session, GPS coordinates, route telemetry, and personalized travel profile.
+  return `You are SafarX, an intelligent and friendly personal travel companion for India.
+You provide clear door-to-door transit routes, fares, train classes, flight options, and local cab information.
 
-============================================================
-USER PERSONAL TRAVEL PROFILE & AI ORCHESTRATION PARAMETERS:
-- Traveler Name: ${profile.firstName} ${profile.lastName}
-- Contact: ${profile.email} | ${profile.phone}
-- Travel Philosophy & Budget: ${profile.travelStyle}
-  * ECONOMICAL: User prioritizes lowest possible cost, budget sleeper class trains, shared cabs/sumos, and affordable options.
-  * BALANCED: User wants the best value balance of travel duration, comfort, and fair price (e.g. 3rd AC, standard economy flight, UberGo).
-  * COMFORT_LUXURY: User values top-tier comfort above price (prefers 1st AC / 2nd AC trains, business/flexi flights, premium private cabs/SUVs).
-  * FASTEST: User prioritizes minimum travel time, direct flights, express trains, and expressway road feeders.
+TRAVELER PROFILE:
+- Name: ${profile.firstName} ${profile.lastName}
+- Travel Style: ${profile.travelStyle} (${
+    profile.travelStyle === "ECONOMICAL" ? "Budget-friendly, lowest cost first" :
+    profile.travelStyle === "COMFORT_LUXURY" ? "Premium comfort, 1st/2nd AC, private sedans" :
+    profile.travelStyle === "FASTEST" ? "Time-first, quickest transit options" :
+    "Balanced value for money"
+  })
 - Preferred Train Class: ${profile.trainClass} (${
     profile.trainClass === "SL" ? "Sleeper Class (lowest fare)" :
-    profile.trainClass === "3A" ? "3rd AC / 3-Economy (AC value)" :
+    profile.trainClass === "3A" ? "3rd AC (AC value)" :
     profile.trainClass === "2A" ? "2nd AC (Spacious comfort & privacy)" :
     "1st AC / Executive EC (Top luxury coupe)"
   })
-- Preferred Flight Cabin: ${profile.flightClass} (${
-    profile.flightClass === "ECONOMY" ? "Standard Economy (best airfare)" :
-    profile.flightClass === "PREMIUM_ECONOMY" ? "Premium Economy / Flexi fare" :
-    "Business Class (Executive lounge, priority boarding, flatbed)"
+- Preferred Flight Cabin: ${profile.flightClass}
+- Local Feeder Preference: ${profile.cabPreference} (${
+    profile.cabPreference === "SHARED" ? "Shared Taxi / Auto / Sumo (lowest cost)" :
+    profile.cabPreference === "PRIVATE_SEDAN" ? "Dedicated Private Sedan (Swift / Dzire)" :
+    "Spacious SUV / Innova"
   })
-- First/Last-Mile Cab Preference: ${profile.cabPreference} (${
-    profile.cabPreference === "SHARED" ? "Shared Taxi / Auto / Sumo / Bolero (lowest feeder cost)" :
-    profile.cabPreference === "PRIVATE_SEDAN" ? "Dedicated Private Sedan (Swift / Dzire / City / UberGo / Premier)" :
-    "Spacious SUV / Innova (Mountain travel & extra luggage room)"
-  })
-============================================================
 
-CURRENT USER TELEMETRY & APP STATE:
-- User GPS Pickup Location: ${userLoc} [Coordinates: ${userCoords}]
-- Active Destination: ${destLoc} [Coordinates: ${destCoords}]
-- Selected Driver / Ride: ${selectedDriverInfo}
-- Available Local Cab Pricing:
-  1. UberGo: Driver Rahul Sharma, 4.85 ★ rating, ₹22 per kilometer (Budget sedan/hatchback).
-  2. UberPremier: Driver Amit Verma, 4.92 ★ rating, ₹30 per kilometer (Premium executive sedan).
-- All-India Reachability Radar: Active across all 28 Indian States & 8 Union Territories. Connects any remote village/district to the nearest railway junction or airport via calibrated road feeders.
+CURRENT TRIP CONTEXT:
+- Pickup: ${userLoc}
+- Destination: ${destLoc}
+- Available Cabs: UberGo at ₹22/km, UberPremier at ₹30/km
 
-CRITICAL INSTRUCTIONS FOR AI ORCHESTRATION:
-1. Greet the traveler by their first name (${profile.firstName}) warmly.
-2. Personalize Every Recommendation:
-   - When suggesting train routes, explicitly highlight fares and availability for their preferred class (${profile.trainClass}).
-   - When proposing flight connections, reflect their preferred cabin (${profile.flightClass}).
-   - For first/last-mile transit from stations/airports to rural villages, tailor the road feeder to ${profile.cabPreference}.
-   - Explain why your recommended plan fits their ${profile.travelStyle} profile!
-3. Door-to-Door Multimodal Journey Calculation:
-   - Show complete breakdown: (A) First-mile cab to station/airport -> (B) Long-haul train/flight -> (C) Last-mile feeder to exact destination village.
-   - Sum up total estimated travel time and total expense in Indian Rupees (₹).
-4. Tone & Style:
-   - Smart, helpful, structured, concise, and clear.
-   - Use bullet points, bold highlights, and emoji tags.`;
+CRITICAL FORMATTING RULES (STRICT COMPLIANCE REQUIRED):
+1. NEVER USE DOUBLE ASTERISKS (**) FOR BOLDING: Mobile screens cannot parse markdown bold and show ugly raw asterisks. Never output "**word**". Use natural English, clean capitalization, and bullet points.
+2. NEVER OUTPUT MARKDOWN TABLES: Do not use "|" or "---" table formatting. Tables get completely mangled on mobile screens.
+3. NEVER OUTPUT HTML TAGS: Do not write "<br>" or "<p>". Use clean line breaks (\n).
+4. CLEAR STEP-BY-STEP ITINERARY: Format door-to-door travel cleanly with distinct lines:
+
+   Example format:
+   Hey ${profile.firstName}! Here is a recommended plan from [Origin] to [Destination] tailored for your ${profile.travelStyle.toLowerCase()} preference:
+
+   Leg 1: Feeder Cab
+   • Pickup: [Locality] to [Nearest Station/Airport]
+   • Mode: [UberGo / Cab / Auto]
+   • Approx Fare: ₹X (~X mins)
+
+   Leg 2: Long-Haul Transit
+   • Option A (Train): [Train Name] (Class: ${profile.trainClass}), Fare: ₹X (~X hrs)
+   • Option B (Flight): [Airline], Fare: ₹X (~X hrs)
+
+   Leg 3: Last-Mile Feeder
+   • [Station/Airport] to [Destination Village/Town]
+   • Mode: [Local Shared Sumo / Dedicated Cab]
+   • Approx Fare: ₹X (~X mins)
+
+   Summary:
+   • Total Estimated Fare: ₹X
+   • Total Travel Time: ~X hrs
+
+5. TONE: Warm, concise, direct, and helpful.`;
 };
 
 export const askTravelAgent = async (
@@ -153,8 +158,8 @@ export const askTravelAgent = async (
       body: JSON.stringify({
         model: model,
         messages: fullMessages,
-        temperature: 0.6,
-        max_tokens: 850,
+        temperature: 0.5,
+        max_tokens: 800,
       }),
     });
 
@@ -171,24 +176,65 @@ export const askTravelAgent = async (
           body: JSON.stringify({
             model: "qwen/qwen3.8-27b",
             messages: fullMessages,
-            temperature: 0.6,
-            max_tokens: 850,
+            temperature: 0.5,
+            max_tokens: 800,
           }),
         });
         if (fallbackRes.ok) {
           const fallbackData = await fallbackRes.json();
-          return fallbackData.choices?.[0]?.message?.content || "No response received.";
+          return cleanOutputText(fallbackData.choices?.[0]?.message?.content || "No response received.");
         }
       }
       throw new Error(`Groq API returned HTTP ${response.status}`);
     }
 
     const data = await response.json();
-    return data.choices?.[0]?.message?.content || "I didn't receive a reply from the agent. Please try again.";
+    const rawContent = data.choices?.[0]?.message?.content || "I didn't receive a reply from the assistant. Please try again.";
+    return cleanOutputText(rawContent);
   } catch (error) {
     console.error("Agent request failed, generating contextual fallback:", error);
     return getLocalFallbackResponse(messages[messages.length - 1]?.content || "", context);
   }
+};
+
+/**
+ * Strips raw markdown table syntax, <br> tags, and double asterisks (**)
+ * so output is always clean, polished, and mobile-friendly.
+ */
+export const cleanOutputText = (text: string): string => {
+  if (!text) return "";
+
+  let cleaned = text;
+
+  // Replace <br> and <br/> with newline
+  cleaned = cleaned.replace(/<br\s*\/?>/gi, "\n");
+
+  // Remove markdown table header separators like |---|---|
+  cleaned = cleaned.replace(/\|[-:\s|]+\|/g, "");
+
+  // Convert table rows | a | b | c | into clean bulleted text
+  cleaned = cleaned.replace(/\|([^\n|]+)\|([^\n|]+)\|([^\n|]+)\|([^\n|]+)\|/g, (match, p1, p2, p3, p4) => {
+    const trim1 = p1.trim();
+    const trim2 = p2.trim();
+    const trim3 = p3.trim();
+    const trim4 = p4.trim();
+    if (trim1.toLowerCase().includes("leg") && trim2.toLowerCase().includes("mode")) {
+      return "";
+    }
+    return `\nLeg ${trim1}: ${trim2}\n• Details: ${trim3}\n• Cost: ${trim4}\n`;
+  });
+
+  // Convert generic remaining table pipes
+  cleaned = cleaned.replace(/\|\s*/g, " • ").replace(/\s*•\s*$/gm, "");
+
+  // Strip all double asterisks (**) and single leading/trailing asterisks
+  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, "$1");
+  cleaned = cleaned.replace(/\*(.*?)\*/g, "$1");
+
+  // Clean excessive blank lines
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+
+  return cleaned.trim();
 };
 
 const getLocalFallbackResponse = (query: string, context: AgentContext): string => {
@@ -208,49 +254,55 @@ const getLocalFallbackResponse = (query: string, context: AgentContext): string 
   const style = profile.travelStyle;
 
   if (q.includes("profile") || q.includes("preference") || q.includes("recommend") || q.includes("personal") || q.includes("best option")) {
-    return `👋 **Hello ${name}! Here is your AI Personalized Travel Plan:**\n\n` +
-      `Based on your **${style}** profile, here is how SafarX orchestrates your journey:\n\n` +
-      `🚆 **Train Recommendation**: Prioritizing **${profile.trainClass} Class** (e.g., Vande Bharat / Rajdhani / Express) for maximum comfort and value.\n` +
-      `✈️ **Flight Recommendation**: Booked under **${profile.flightClass}** cabin.\n` +
-      `🚕 **First & Last-Mile Feeder**: **${profile.cabPreference === "SHARED" ? "Shared Sumo / Local Feeder (Lowest Cost)" : profile.cabPreference === "SUV" ? "Dedicated Mountain SUV / Innova" : "Private Dedicated Sedan (UberGo / Swift Dzire)"}**.\n\n` +
-      `📍 **Active Pickup**: ${userLoc}\n` +
-      `🎯 **Target Destination**: ${dest}\n\n` +
-      `Would you like me to calculate the complete door-to-door schedule and total tariff?`;
+    const cabLabel = profile.cabPreference === "SHARED" 
+      ? "Shared Taxi / Auto (Lowest Cost)" 
+      : profile.cabPreference === "SUV" 
+      ? "Mountain SUV / Innova" 
+      : "Private Sedan (UberGo / Swift Dzire)";
+
+    return `Hey ${name}! 👋\n\n` +
+      `Here is a travel plan from ${userLoc} to ${dest} matched to your ${style} preferences:\n\n` +
+      `Leg 1: Feeder Cab\n` +
+      `• Pickup: ${userLoc} to nearest rail junction or airport\n` +
+      `• Vehicle: ${cabLabel}\n\n` +
+      `Leg 2: Long-Haul Transit\n` +
+      `• Train Option: Prioritizing ${profile.trainClass} Class for comfort and value\n` +
+      `• Flight Option: ${profile.flightClass} cabin\n\n` +
+      `Leg 3: Last-Mile Feeder\n` +
+      `• Station/Airport connection directly to ${dest}\n\n` +
+      `Would you like me to calculate the complete timetable and total tariff?`;
   }
 
   if (q.includes("price") || q.includes("fare") || q.includes("cost") || q.includes("rate") || q.includes("ubergo") || q.includes("premier")) {
     const recommendedCab = style === "COMFORT_LUXURY" 
-      ? `• **UberPremier (Recommended for your Luxury Profile)**: **₹30 / km** (Amit Verma, Honda City, 4.92 ★)`
-      : `• **UberGo (Recommended for your Budget/Value Profile)**: **₹22 / km** (Rahul Sharma, Swift Dzire, 4.85 ★)`;
+      ? `• UberPremier (Recommended for your Luxury preference): ₹30 / km (Amit Verma, Honda City, 4.92 ★)`
+      : `• UberGo (Recommended for your Value preference): ₹22 / km (Rahul Sharma, Swift Dzire, 4.85 ★)`;
 
-    return `💰 **Personalized Ride Rates for ${name} from ${userLoc}**\n\n` +
+    return `Ride Rates from ${userLoc}:\n\n` +
       `${recommendedCab}\n` +
-      `• **UberGo**: ₹22 / km (Budget 4-seater)\n` +
-      `• **UberPremier**: ₹30 / km (Executive Sedan)\n\n` +
-      `Door-to-door transit utilizes Google Maps Directions with live traffic optimization.`;
+      `• UberGo: ₹22 / km (Budget 4-seater)\n` +
+      `• UberPremier: ₹30 / km (Executive Sedan)\n\n` +
+      `Door-to-door transit includes real-time Google Maps live traffic routing.`;
   }
 
   if (q.includes("traffic") || q.includes("route") || q.includes("time") || q.includes("fastest")) {
-    return `🚦 **Route & Real-Time Traffic for ${name}**\n\n` +
-      `• **Origin**: ${userLoc}\n` +
-      `• **Destination**: ${dest}\n` +
-      `• **Orchestration**: Google Directions with live traffic telemetry (\`departure_time=now\`).\n` +
-      `• **Recommended Route**: Leaving Lavale via Pashan-Sus bypass to avoid Hinjewadi traffic delays.`;
+    return `Route & Traffic from ${userLoc} to ${dest}:\n\n` +
+      `• Route Telemetry: Real-time traffic navigation active.\n` +
+      `• Suggested Highway Corridor: Leaving Lavale via Pashan-Sus bypass to minimize Hinjewadi bottleneck delays.`;
   }
 
   if (q.includes("driver")) {
-    return `🚗 **Verified Drivers for ${name}**\n\n` +
-      `1. **Rahul Sharma** (UberGo)\n` +
-      `   • Rating: 4.85 ★ | Vehicle: Swift / Dzire\n` +
-      `   • Rate: ₹22/km (Ideal for Economical trips)\n\n` +
-      `2. **Amit Verma** (UberPremier)\n` +
-      `   • Rating: 4.92 ★ | Vehicle: Executive Honda City\n` +
-      `   • Rate: ₹30/km (Ideal for Comfort trips)`;
+    return `Verified Drivers in your area:\n\n` +
+      `1. Rahul Sharma (UberGo)\n` +
+      `• Rating: 4.85 ★ | Vehicle: Swift / Dzire\n` +
+      `• Rate: ₹22/km (Ideal for budget/value trips)\n\n` +
+      `2. Amit Verma (UberPremier)\n` +
+      `• Rating: 4.92 ★ | Vehicle: Executive Honda City\n` +
+      `• Rate: ₹30/km (Ideal for premium comfort)`;
   }
 
-  return `📍 **SafarX AI Assistant (Personalized for ${name})**\n\n` +
-    `• **Your Profile**: ${style} | Train: ${profile.trainClass} | Flight: ${profile.flightClass} | Feeder: ${profile.cabPreference}\n` +
-    `• **Origin**: ${userLoc}\n` +
-    `• **Destination**: ${dest}\n\n` +
-    `Ask me for recommendations, fares, train class comparisons, or door-to-door village reachability across India!`;
+  return `Hey ${name}! 👋\n\n` +
+    `I am ready to help you plan your journey from ${userLoc} to ${dest}.\n\n` +
+    `Your saved preferences: ${style} | Train: ${profile.trainClass} | Flight: ${profile.flightClass}\n\n` +
+    `Ask me for route suggestions, train/flight connections, fares, or rural village reachability!`;
 };

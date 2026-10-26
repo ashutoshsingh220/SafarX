@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { askTravelAgent, ChatMessage } from "@/lib/agent";
+import { askTravelAgent, ChatMessage, cleanOutputText } from "@/lib/agent";
 import { useDriverStore, useLocationStore, useProfileStore } from "@/store";
 import { images } from "@/constants";
 
@@ -51,7 +51,7 @@ const Chat = () => {
     {
       id: "welcome-1",
       sender: "agent",
-      text: `👋 **Welcome to SafarX AI Orchestration!**\n\nI am personalized to your travel style (**${profileStore.travelStyle}**) and connected to live transit telemetry.\n\n• **Traveler**: ${profileStore.firstName} ${profileStore.lastName}\n• **Preferences**: Train ${profileStore.trainClass} | Flight ${profileStore.flightClass} | Feeder ${profileStore.cabPreference}\n• **Pickup**: ${userAddress || "Symbiosis Institute of Technology, Lavale, Pune"}\n• **Destination**: ${destinationAddress || "Select destination or ask me"}\n\nAsk me for route recommendations, train/flight connections, fares, or door-to-door village transit!`,
+      text: `Hey ${profileStore.firstName || "Ashutosh"}! 👋\n\nI am connected to your live trip in Pune & Uttarakhand.\n\n• Traveler: ${profileStore.firstName} ${profileStore.lastName}\n• Travel Style: ${profileStore.travelStyle}\n• Preferences: Train ${profileStore.trainClass} | Flight ${profileStore.flightClass}\n• Pickup: ${userAddress || "Symbiosis Institute of Technology, Lavale, Pune"}\n• Destination: ${destinationAddress || "Select destination or ask me"}\n\nAsk me about rates, fastest traffic routes, driver info, or flight and train connections!`,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     },
   ]);
@@ -93,7 +93,6 @@ const Chat = () => {
     setLoading(true);
 
     try {
-      // Build conversation history for API
       const conversationHistory = [...messages, userMsg].map((m) => ({
         role: (m.sender === "user" ? "user" : "assistant") as "user" | "assistant",
         content: m.text,
@@ -104,7 +103,7 @@ const Chat = () => {
       const agentMsg: ChatMessage = {
         id: `agent-${Date.now()}`,
         sender: "agent",
-        text: reply,
+        text: cleanOutputText(reply),
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
@@ -131,6 +130,7 @@ const Chat = () => {
 
   const renderMessageItem = ({ item }: { item: ChatMessage }) => {
     const isUser = item.sender === "user";
+    const formattedText = cleanOutputText(item.text);
 
     return (
       <View
@@ -149,18 +149,18 @@ const Chat = () => {
         )}
 
         <View
-          className={`max-w-[82%] px-4 py-3 rounded-2xl shadow-sm ${
+          className={`max-w-[85%] px-4 py-3 rounded-2xl shadow-sm ${
             isUser
               ? "bg-[#0286FF] rounded-tr-none text-white"
               : "bg-neutral-100 border border-neutral-200 rounded-tl-none"
           }`}
         >
           <Text
-            className={`text-sm leading-5 font-JakartaRegular ${
+            className={`text-sm leading-6 font-JakartaRegular ${
               isUser ? "text-white font-JakartaMedium" : "text-neutral-800"
             }`}
           >
-            {item.text}
+            {formattedText}
           </Text>
           <Text
             className={`text-[10px] mt-1.5 self-end ${
@@ -189,7 +189,7 @@ const Chat = () => {
           <View>
             <View className="flex-row items-center gap-1.5">
               <Text className="text-lg font-JakartaBold text-neutral-900">
-                SafarX AI
+                SafarX Assistant
               </Text>
               <View className="bg-primary-100 px-2 py-0.5 rounded-full">
                 <Text className="text-[10px] font-JakartaBold text-primary-700">
@@ -212,7 +212,7 @@ const Chat = () => {
               {
                 id: "welcome-reset",
                 sender: "agent",
-                text: `🔄 **Chat reset.**\n\nActive profile for ${profileStore.firstName}:\n• Travel Style: ${profileStore.travelStyle}\n• Preferred Train: ${profileStore.trainClass} | Flight: ${profileStore.flightClass}\n• Pickup: ${userAddress || "Symbiosis Institute of Technology, Pune"}\n• Destination: ${destinationAddress || "Not set"}\n\nHow can I help you right now?`,
+                text: `Chat reset.\n\nActive profile for ${profileStore.firstName}:\n• Travel Style: ${profileStore.travelStyle}\n• Preferred Train: ${profileStore.trainClass} | Flight: ${profileStore.flightClass}\n• Pickup: ${userAddress || "Symbiosis Institute of Technology, Pune"}\n• Destination: ${destinationAddress || "Not set"}\n\nHow can I help you right now?`,
                 timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               },
             ]);
@@ -268,7 +268,7 @@ const Chat = () => {
               <View className="flex-row items-center space-x-2 px-4 py-2 bg-neutral-100 self-start ml-4 my-2 rounded-2xl border border-neutral-200">
                 <ActivityIndicator size="small" color="#0286FF" />
                 <Text className="text-xs font-JakartaMedium text-neutral-600">
-                  AI Orchestrating your personalized plan...
+                  Finding best travel options for you...
                 </Text>
               </View>
             ) : null
@@ -300,7 +300,7 @@ const Chat = () => {
         <View className="flex-row items-center px-3 pt-2 pb-24 border-t border-neutral-200 bg-white">
           <TextInput
             className="flex-1 bg-neutral-100 border border-neutral-300 rounded-full px-4 py-2.5 text-sm font-JakartaRegular text-neutral-800 mr-2"
-            placeholder="Ask about personalized routes, fares, traffic..."
+            placeholder="Ask about rides, fares, train classes, traffic..."
             placeholderTextColor="#9CA3AF"
             value={inputMessage}
             onChangeText={setInputMessage}

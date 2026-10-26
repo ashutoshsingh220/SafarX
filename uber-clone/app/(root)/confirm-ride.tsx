@@ -173,9 +173,9 @@ const ConfirmRide = () => {
         ListHeaderComponent={() => (
           <View className="bg-primary-50 border border-primary-200/80 rounded-2xl p-3 mb-3 mx-1">
             <View className="flex-row items-center gap-1.5 mb-1">
-              <Text className="text-sm">🤖</Text>
+              <Text className="text-sm">🎯</Text>
               <Text className="text-xs font-JakartaBold text-primary-800">
-                AI Recommendation for {profileStore.firstName}
+                Recommended for {profileStore.firstName}
               </Text>
               <View className="bg-primary-500 px-2 py-0.5 rounded-full ml-auto">
                 <Text className="text-[10px] font-JakartaBold text-white">

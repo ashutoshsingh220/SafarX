@@ -130,26 +130,26 @@ def _answer_from_journeys(journeys: list[Journey], user_preferences: dict[str, A
         t_style = user_preferences.get("travelStyle") or "BALANCED"
         t_class = user_preferences.get("trainClass") or "3A"
         c_mode = user_preferences.get("cabPreference") or "PRIVATE_SEDAN"
-        greeting = f"👋 **Hello {fname}!**\n"
-        prefs_note = f"• **AI Personalization**: Calibrated for **{t_style}** (Train: **{t_class}**, Feeder: **{c_mode}**)\n"
+        greeting = f"Hello {fname}! 👋\n\n"
+        prefs_note = f"• Tailored for: {t_style} preference (Train: {t_class}, Feeder: {c_mode})\n"
 
     reply = (
         f"{greeting}"
-        f"🚗 **Recommended Door-to-Door Plan**\n\n"
-        f"• **Route**: {best.legs[0].start_location_name} ➔ {best.legs[-1].end_location_name}\n"
+        f"🚗 Recommended Door-to-Door Plan\n\n"
+        f"• Route: {best.legs[0].start_location_name} ➔ {best.legs[-1].end_location_name}\n"
         f"{prefs_note}"
-        f"• **Modes**: {modes}\n"
-        f"• **Total Fare**: ₹{best.total_fare:.0f}\n"
-        f"• **Estimated Duration**: ~{duration_hours:.1f} hours\n\n"
-        f"📋 **Itinerary Details**:\n"
+        f"• Modes: {modes}\n"
+        f"• Total Fare: ₹{best.total_fare:.0f}\n"
+        f"• Estimated Duration: ~{duration_hours:.1f} hours\n\n"
+        f"📋 Itinerary Details:\n"
     )
     for i, leg in enumerate(best.legs, 1):
         dur = round(leg.duration_seconds / 60)
         dur_str = f"{dur // 60}h {dur % 60}m" if dur >= 60 else f"{dur}m"
-        reply += f"  {i}. **{leg.mode.title()}** ({leg.operator}): {leg.start_location_name} to {leg.end_location_name} • {dur_str} • ₹{leg.fare:.0f}\n"
+        reply += f"  {i}. {leg.mode.title()} ({leg.operator}): {leg.start_location_name} to {leg.end_location_name} • {dur_str} • ₹{leg.fare:.0f}\n"
 
     if len(journeys) > 1:
-        reply += f"\n💡 *Alternative flight and superfast train options are also ready for booking.*"
+        reply += f"\n💡 Alternative flight and superfast train options are also ready for booking."
 
     return reply
 
@@ -209,7 +209,10 @@ class TravelAgent:
         
         system_instruction = (
             "You are SafarX. Always use search_routes before recommending an itinerary. "
-            "Present one bundle price and explain vehicle modes clearly."
+            "Present one bundle price and explain vehicle modes clearly. "
+            "IMPORTANT FORMATTING RULES: Never use double asterisks (**) or markdown bolding. "
+            "Never use markdown tables or pipe symbols (|). Use clean plain text with bullet points (•) and line breaks. "
+            "Never use technical terms like 'AI Orchestration'."
         )
         if request.user_preferences:
             system_instruction += (

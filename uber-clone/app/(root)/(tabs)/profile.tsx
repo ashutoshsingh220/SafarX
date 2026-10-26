@@ -92,7 +92,7 @@ const CAB_PREFERENCES: {
     id: "PRIVATE_SEDAN",
     title: "Dedicated Private Cab",
     badge: "Comfort & Privacy",
-    desc: "UberGo / Premier private sedans (Swift, Dzire, Honda City).",
+    desc: "Private sedans (Swift, Dzire, Honda City).",
   },
   {
     id: "SUV",
@@ -120,7 +120,6 @@ const Profile = () => {
 
   useEffect(() => {
     profileStore.loadProfile().then(() => {
-      // Sync local state if profile store was loaded
       const current = useProfileStore.getState();
       setFirstName(current.firstName || user?.firstName || "Ashutosh");
       setLastName(current.lastName || user?.lastName || "Singh");
@@ -182,12 +181,12 @@ const Profile = () => {
                 My Profile
               </Text>
               <Text className="text-sm font-JakartaMedium text-neutral-500 mt-0.5">
-                Personal details & AI transit preferences
+                Personal details & travel preferences
               </Text>
             </View>
             <View className="bg-primary-100 px-3 py-1.5 rounded-full border border-primary-200">
               <Text className="text-xs font-JakartaBold text-primary-700">
-                AI Orchestration
+                Preferences
               </Text>
             </View>
           </View>
@@ -217,7 +216,7 @@ const Profile = () => {
                   </Text>
                 </View>
                 <Text className="text-xs font-JakartaMedium text-neutral-400 ml-2">
-                  All-India Radar Ready
+                  All-India Reachable
                 </Text>
               </View>
             </View>
@@ -299,7 +298,7 @@ const Profile = () => {
               </Text>
             </View>
             <Text className="text-xs font-JakartaRegular text-neutral-500 mb-3 ml-7">
-              Tells the AI engine whether to optimize for minimum expense, balance, or luxury.
+              Choose whether you prioritize minimum expense, balanced value, or luxury.
             </Text>
 
             <View className="flex-col gap-2.5">
@@ -367,7 +366,7 @@ const Profile = () => {
               </Text>
             </View>
             <Text className="text-xs font-JakartaRegular text-neutral-500 mb-3 ml-7">
-              AI prioritizes this coach class when suggesting Indian Railways options.
+              Automatically prioritizes this coach class when suggesting train options.
             </Text>
 
             <View className="flex-row flex-wrap gap-2">
@@ -420,7 +419,7 @@ const Profile = () => {
               </Text>
             </View>
             <Text className="text-xs font-JakartaRegular text-neutral-500 mb-3 ml-7">
-              AI selects this fare class when presenting domestic flight options.
+              Selects this fare class when presenting domestic flight options.
             </Text>
 
             <View className="flex-col gap-2">
@@ -469,11 +468,11 @@ const Profile = () => {
             <View className="flex-row items-center mb-1">
               <Ionicons name="car-outline" size={20} color="#0286FF" />
               <Text className="text-base font-JakartaBold text-neutral-900 ml-2">
-                First & Last-Mile Road Feeder
+                First & Last-Mile Feeder
               </Text>
             </View>
             <Text className="text-xs font-JakartaRegular text-neutral-500 mb-3 ml-7">
-              How you reach the nearest railway station or airport from your village / town.
+              How you reach the nearest railway station or airport from your location.
             </Text>
 
             <View className="flex-col gap-2">
@@ -519,31 +518,17 @@ const Profile = () => {
             </View>
           </View>
 
-          {/* Section 6: AI Orchestration Info Banner */}
-          <View className="bg-gradient-to-r from-blue-900 to-indigo-900 bg-neutral-900 rounded-2xl p-4 shadow-sm border border-neutral-700 mb-5">
-            <View className="flex-row items-center mb-2">
-              <Ionicons name="hardware-chip-outline" size={20} color="#60A5FA" />
-              <Text className="text-sm font-JakartaBold text-white ml-2">
-                AI Orchestration Layer Active
-              </Text>
-            </View>
-            <Text className="text-xs font-JakartaMedium text-neutral-300 leading-5">
-              These preferences dynamically calibrate the Groq LLM Assistant in the Chat tab and the
-              All-India Door-to-Door multi-modal planner. The AI will prioritize your chosen train class,
-              flight cabin, and cab budget in all recommendations.
-            </Text>
-          </View>
-
-          {/* Section 7: Save Profile Button */}
+          {/* Success Banner */}
           {saveSuccess && (
             <View className="bg-emerald-500/10 border border-emerald-500 rounded-xl p-3 mb-3 flex-row items-center">
               <Ionicons name="checkmark-circle" size={18} color="#10B981" />
               <Text className="text-xs font-JakartaBold text-emerald-700 ml-2">
-                Profile and AI Orchestration Preferences Saved!
+                Travel preferences saved successfully!
               </Text>
             </View>
           )}
 
+          {/* Save Button */}
           <TouchableOpacity
             onPress={handleSave}
             disabled={saving}
@@ -556,7 +541,7 @@ const Profile = () => {
               <>
                 <Ionicons name="save-outline" size={18} color="#FFFFFF" />
                 <Text className="text-white font-JakartaBold text-base ml-2">
-                  Save Profile & AI Preferences
+                  Save Travel Preferences
                 </Text>
               </>
             )}

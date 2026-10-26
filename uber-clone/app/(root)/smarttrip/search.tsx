@@ -591,14 +591,14 @@ export default function TravelSearchScreen() {
           </View>
         )}
 
-        {/* Personalized AI Profile Orchestration Banner */}
+        {/* Personalized Recommendations Banner */}
         {inventory && (
           <View className="bg-blue-50 border border-blue-200/90 mx-3 my-2.5 p-3 rounded-2xl shadow-sm">
             <View className="flex-row items-center justify-between mb-1">
               <View className="flex-row items-center gap-1.5 flex-1 mr-2">
                 <Text className="text-sm">🤖</Text>
                 <Text className="text-xs font-JakartaBold text-blue-900" numberOfLines={1}>
-                  Personalized for {profileStore.firstName}
+                  Recommended for {profileStore.firstName}
                 </Text>
               </View>
               <View className="bg-primary-500 px-2 py-0.5 rounded-full">

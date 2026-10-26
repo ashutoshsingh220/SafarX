@@ -4,6 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useSmartTripStore } from "../../../src/features/smarttrip/store/smartTripStore";
 import { sendAgentMessage } from "../../../src/features/smarttrip/lib/api";
 import { useProfileStore } from "../../../store/profileStore";
+import { cleanOutputText } from "../../../lib/agent";
 import { router } from "expo-router";
 
 export default function AgentScreen() {
@@ -18,7 +19,7 @@ export default function AgentScreen() {
       addAgentMessage({
         id: "init",
         role: "assistant",
-        content: `Hi ${profileStore.firstName || "there"}! 👋 I'm your SafarX AI Orchestration Assistant, tuned for your ${profileStore.travelStyle} travel profile. Where would you like to travel across India?`,
+        content: `Hi ${profileStore.firstName || "Ashutosh"}! 👋 I'm your SafarX Assistant. Where would you like to travel across India?`,
         timestamp: Date.now(),
       });
     }
@@ -64,7 +65,7 @@ export default function AgentScreen() {
       addAgentMessage({
         id: Date.now().toString(),
         role: "assistant",
-        content: res.reply,
+        content: cleanOutputText(res.reply),
         timestamp: Date.now(),
       });
       
@@ -109,10 +110,10 @@ export default function AgentScreen() {
                 : "bg-white self-start rounded-tl-none border border-neutral-200 shadow-sm"
             }`}
           >
-            <Text className={`font-Jakarta text-base leading-6 ${
+            <Text className={`font-Jakarta text-sm leading-6 ${
               msg.role === "user" ? "text-white font-JakartaMedium" : "text-neutral-800"
             }`}>
-              {msg.content}
+              {cleanOutputText(msg.content)}
             </Text>
           </View>
         ))}
@@ -120,7 +121,7 @@ export default function AgentScreen() {
         {isAgentThinking && (
           <View className="flex-row items-center bg-white self-start rounded-2xl rounded-tl-none border border-neutral-200 p-4 mb-4 shadow-sm">
             <ActivityIndicator color="#0286FF" size="small" />
-            <Text className="ml-3 font-JakartaMedium text-neutral-500">Orchestrating route options...</Text>
+            <Text className="ml-3 font-JakartaMedium text-neutral-500">Finding best route options...</Text>
           </View>
         )}
       </ScrollView>
