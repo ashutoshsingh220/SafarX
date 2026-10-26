@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSmartTripStore } from "../../../src/features/smarttrip/store/smartTripStore";
+import { useProfileStore } from "../../../store/profileStore";
 import {
   fetchCorridorInventory,
   stitchDoorToDoorPlan,
@@ -35,6 +36,7 @@ const QUICK_DATES = [
 
 export default function TravelSearchScreen() {
   const { setSelectedPlan } = useSmartTripStore();
+  const profileStore = useProfileStore();
   const params = useLocalSearchParams<{ origin?: string; destination?: string; date?: string }>();
 
   const [origin, setOrigin] = useState(params.origin ? String(params.origin) : "");
@@ -56,6 +58,20 @@ export default function TravelSearchScreen() {
   const [selectedClassKey, setSelectedClassKey] = useState<string | null>(null);
   const [stitchedPlan, setStitchedPlan] = useState<any | null>(null);
   const [isStitching, setIsStitching] = useState(false);
+
+  useEffect(() => {
+    profileStore.loadProfile().then(() => {
+      const p = useProfileStore.getState();
+      if (p.cabPreference === "SHARED") {
+        setFeederMode("AUTO");
+      } else {
+        setFeederMode("CAB");
+      }
+      if (p.travelStyle === "FASTEST") {
+        setActiveTab("FLIGHT");
+      }
+    });
+  }, []);
 
   // Only auto-search on initial mount if BOTH origin and destination were passed
   useEffect(() => {
@@ -92,10 +108,14 @@ export default function TravelSearchScreen() {
       });
       setInventory(data);
 
-      // Auto-select first train 3A class to show instant door-to-door preview
+      // Auto-select train class matching user's preferred profile
       if (data && data.trains && data.trains.length > 0) {
         const firstTrain = data.trains[0];
-        const prefClass = firstTrain.classes?.find((c: any) => c.class_code === "3A") || firstTrain.classes?.[0];
+        const targetClass = profileStore.trainClass || "3A";
+        const prefClass =
+          firstTrain.classes?.find((c: any) => c.class_code === targetClass) ||
+          firstTrain.classes?.find((c: any) => c.class_code === "3A") ||
+          firstTrain.classes?.[0];
         if (prefClass) {
           handleSelectTrainClass(firstTrain, prefClass, data);
         }
@@ -571,6 +591,34 @@ export default function TravelSearchScreen() {
           </View>
         )}
 
+        {/* Personalized AI Profile Orchestration Banner */}
+        {inventory && (
+          <View className="bg-blue-50 border border-blue-200/90 mx-3 my-2.5 p-3 rounded-2xl shadow-sm">
+            <View className="flex-row items-center justify-between mb-1">
+              <View className="flex-row items-center gap-1.5 flex-1 mr-2">
+                <Text className="text-sm">🤖</Text>
+                <Text className="text-xs font-JakartaBold text-blue-900" numberOfLines={1}>
+                  Personalized for {profileStore.firstName}
+                </Text>
+              </View>
+              <View className="bg-primary-500 px-2 py-0.5 rounded-full">
+                <Text className="text-[10px] font-JakartaBold text-white uppercase">
+                  {profileStore.travelStyle}
+                </Text>
+              </View>
+            </View>
+            <Text className="text-[11px] font-JakartaMedium text-blue-800 leading-4">
+              {profileStore.travelStyle === "ECONOMICAL"
+                ? `Prioritizing lowest fares: Sleeper (SL) coaches and shared feeders are starred (⭐). Other transit choices remain fully accessible below.`
+                : profileStore.travelStyle === "COMFORT_LUXURY"
+                ? `Prioritizing maximum comfort: ${profileStore.trainClass} AC coach and private cabs are starred (⭐). Other transit choices remain fully accessible below.`
+                : profileStore.travelStyle === "FASTEST"
+                ? `Prioritizing minimum travel time: Direct flights and express rail are starred (⭐). Other transit choices remain fully accessible below.`
+                : `Balanced itinerary: Showing options calibrated for your ${profileStore.trainClass} coach preference. Other transit choices remain fully accessible below.`}
+            </Text>
+          </View>
+        )}
+
         {/* 4 Mode Tabs Row */}
         <View className="flex-row bg-white border-b border-neutral-200">
           <TouchableOpacity
@@ -823,16 +871,25 @@ export default function TravelSearchScreen() {
                           const isClassSelected =
                             isTrainSelected && selectedClassKey === cls.class_code;
 
+                          const isRecommendedClass = cls.class_code === profileStore.trainClass;
+
                           return (
                             <TouchableOpacity
                               key={cls.class_code}
                               onPress={() => handleSelectTrainClass(train, cls, inventory)}
-                              className={`px-3 py-2 rounded-xl mr-2 border min-w-[84px] items-center ${
+                              className={`px-3 py-2 rounded-xl mr-2 border min-w-[88px] items-center ${
                                 isClassSelected
                                   ? "bg-primary-50 border-primary-500 shadow-sm"
+                                  : isRecommendedClass
+                                  ? "bg-amber-50/60 border-amber-300"
                                   : "bg-neutral-50 border-neutral-200"
                               }`}
                             >
+                              {isRecommendedClass && (
+                                <View className="bg-amber-400 px-1.5 py-0.2 rounded-full mb-0.5">
+                                  <Text className="text-[8px] font-JakartaExtraBold text-amber-950">⭐ PREFERRED</Text>
+                                </View>
+                              )}
                               <Text
                                 className={`text-xs font-JakartaBold ${
                                   isClassSelected ? "text-primary-600" : "text-neutral-800"

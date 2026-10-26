@@ -1,11 +1,11 @@
 import { router } from "expo-router";
 import React, { useEffect } from "react";
-import { FlatList, View } from "react-native";
+import { FlatList, Text, View } from "react-native";
 
 import CustomButton from "@/components/CustomButton";
 import DriverCard from "@/components/DriverCard";
 import RideLayout from "@/components/RideLayout";
-import { useDriverStore, useLocationStore } from "@/store";
+import { useDriverStore, useLocationStore, useProfileStore } from "@/store";
 
 const ConfirmRide = () => {
   const { drivers, selectedDriver, setSelectedDriver } = useDriverStore();
@@ -15,6 +15,11 @@ const ConfirmRide = () => {
     destinationLatitude,
     destinationLongitude,
   } = useLocationStore();
+  const profileStore = useProfileStore();
+
+  useEffect(() => {
+    profileStore.loadProfile();
+  }, []);
 
   // Determine real-time trip distance
   const effectiveUserLat = userLatitude || 18.5412;
@@ -97,14 +102,55 @@ const ConfirmRide = () => {
     };
   });
 
-  useEffect(() => {
-    if (displayDrivers && displayDrivers.length > 0) {
-      const exists = displayDrivers.some((d) => d.id === selectedDriver);
-      if (!selectedDriver || !exists) {
-        setSelectedDriver(displayDrivers[0].id);
+  // Calculate recommendation based on user's profile preferences
+  const getRecommendation = (driver: any) => {
+    const title = (driver.title || "").toLowerCase();
+    const isPremier = title.includes("premier");
+    const isAuto = title.includes("auto");
+    const isUberGo = !isPremier && !isAuto;
+
+    if (profileStore.travelStyle === "COMFORT_LUXURY") {
+      if (isPremier) {
+        return {
+          isRecommended: true,
+          reason: "Matches your Luxury profile (Executive Sedan & maximum comfort)",
+        };
+      }
+    } else if (profileStore.travelStyle === "ECONOMICAL" || profileStore.cabPreference === "SHARED") {
+      if (isAutoAllowed && isAuto) {
+        return {
+          isRecommended: true,
+          reason: "Matches your Economical profile (Lowest fare @ ₹18/km)",
+        };
+      } else if (isUberGo) {
+        return {
+          isRecommended: true,
+          reason: "Matches your Economical profile (Budget Sedan @ ₹22/km)",
+        };
+      }
+    } else {
+      // BALANCED or FASTEST
+      if (isUberGo) {
+        return {
+          isRecommended: true,
+          reason: "Matches your Balanced Value profile (Optimal price & speed)",
+        };
       }
     }
-  }, [displayDrivers, selectedDriver]);
+
+    return { isRecommended: false, reason: "" };
+  };
+
+  useEffect(() => {
+    if (displayDrivers && displayDrivers.length > 0) {
+      // Find recommended driver
+      const recommended = displayDrivers.find((d) => getRecommendation(d).isRecommended);
+      const exists = displayDrivers.some((d) => d.id === selectedDriver);
+      if (!selectedDriver || !exists) {
+        setSelectedDriver(recommended ? recommended.id : displayDrivers[0].id);
+      }
+    }
+  }, [displayDrivers, selectedDriver, profileStore.travelStyle, profileStore.cabPreference]);
 
   const handleSelectRide = () => {
     if (
@@ -113,7 +159,8 @@ const ConfirmRide = () => {
       displayDrivers &&
       displayDrivers.length > 0
     ) {
-      setSelectedDriver(displayDrivers[0].id);
+      const recommended = displayDrivers.find((d) => getRecommendation(d).isRecommended);
+      setSelectedDriver(recommended ? recommended.id : displayDrivers[0].id);
     }
     router.push("/(root)/book-ride");
   };
@@ -123,15 +170,38 @@ const ConfirmRide = () => {
       <FlatList
         data={displayDrivers}
         keyExtractor={(item, index) => index.toString()}
-        renderItem={({ item }) => (
-          <DriverCard
-            item={item}
-            selected={selectedDriver!}
-            setSelected={() => setSelectedDriver(item.id!)}
-          />
+        ListHeaderComponent={() => (
+          <View className="bg-primary-50 border border-primary-200/80 rounded-2xl p-3 mb-3 mx-1">
+            <View className="flex-row items-center gap-1.5 mb-1">
+              <Text className="text-sm">🤖</Text>
+              <Text className="text-xs font-JakartaBold text-primary-800">
+                AI Recommendation for {profileStore.firstName}
+              </Text>
+              <View className="bg-primary-500 px-2 py-0.5 rounded-full ml-auto">
+                <Text className="text-[10px] font-JakartaBold text-white">
+                  {profileStore.travelStyle}
+                </Text>
+              </View>
+            </View>
+            <Text className="text-[11px] font-JakartaMedium text-primary-700 leading-4">
+              Because of your {profileStore.travelStyle.toLowerCase().replace("_", " ")} preference, the best matching ride is highlighted below. All other options remain fully selectable.
+            </Text>
+          </View>
         )}
+        renderItem={({ item }) => {
+          const { isRecommended, reason } = getRecommendation(item);
+          return (
+            <DriverCard
+              item={item}
+              selected={selectedDriver!}
+              setSelected={() => setSelectedDriver(item.id!)}
+              isRecommended={isRecommended}
+              recommendationReason={reason}
+            />
+          );
+        }}
         ListFooterComponent={() => (
-          <View className="mx-5 mt-6 mb-8">
+          <View className="mx-5 mt-4 mb-8">
             <CustomButton title="Select Ride" onPress={handleSelectRide} />
           </View>
         )}
