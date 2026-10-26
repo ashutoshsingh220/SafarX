@@ -64,8 +64,10 @@ flowchart TD
     subgraph MobileClient["📱 Mobile Client (React Native / Expo 51)"]
         SearchUI["Multimodal Search Screen<br/>(Train, Flight, Bus, Cab)"]
         MapEngine["Google Maps Native Polyline & Marker Engine"]
-        AgentChat["Groq LLaMA 3.3 AI Travel Assistant"]
-        StitchView["Dynamic 3-Leg Stitching Sheet"]
+        ProfileStore["Personalized Preferences Store<br/>(Travel Style, Train & Flight Class, Feeder Cab)"]
+        AgentChat["SafarX Travel Assistant<br/>(Groq LLaMA 3.3 70B & Gemini)"]
+        TextSanitizer["Clean Output & Formatting Engine<br/>(Zero Markdown Leakage / Clean Bullets)"]
+        StitchView["Dynamic 3-Leg Door-to-Door Sheet"]
     end
 
     subgraph APIGateway["⚡ FastAPI High-Performance Gateway (:8000)"]
@@ -75,11 +77,12 @@ flowchart TD
         SerpApiCache["SerpApi Live Flights Cache"]
     end
 
-    subgraph SpatialBrain["🗺️ Geospatial Intelligence & Fallback Engine"]
-        GoogleGeo["Google Maps Geocoding API<br/>(Sub-km Coordinate Resolution)"]
-        GoogleDir["Google Maps Directions API<br/>(Real Highway Distance & ETAs)"]
-        HubRegistry["Certified Transit Hubs Registry<br/>(AAI Airports, IRCTC Junctions, ISBTs)"]
+    subgraph SpatialBrain["🗺️ Geospatial Intelligence & Pan-India Reachability"]
+        GoogleGeo["Google Maps Geocoding API<br/>(28 States, 8 UTs, 750+ Districts & Villages)"]
+        GoogleDir["Google Maps Directions API<br/>(Live Highway Road Distance & ETAs)"]
+        HubRegistry["Certified Transit Hubs Registry<br/>(AAI Airports, IRCTC Rail Junctions, ISBTs)"]
         KNN["Decoupled Multi-Hub k-NN Engine<br/>(Expanding Radial Rings R1 → R2 → R3)"]
+        FeederCalc["Last-Mile Feeder Cost & ETA Calculator<br/>(Station/Airport ➔ Remote Village)"]
     end
 
     subgraph TransitServices["🚆 Live Transit Inventory & Aggregation"]
@@ -94,7 +97,10 @@ flowchart TD
         RedisCache[("Redis 7 In-Memory Cache")]
     end
 
-    SearchUI -->|HTTP / JSON| Router
+    SearchUI -->|HTTP / JSON + Preferences| Router
+    ProfileStore -.->|User Preferences| SearchUI
+    ProfileStore -.->|User Preferences| AgentChat
+    AgentChat --> TextSanitizer
     MapEngine -->|Directions Request| Router
     AgentChat -->|Function Calling| Router
 
@@ -106,6 +112,7 @@ flowchart TD
     DirectionsCache --> GoogleDir
     Router --> HubRegistry
     HubRegistry --> KNN
+    KNN --> FeederCalc
 
     KNN -->|Mode: Flight| SerpApi
     KNN -->|Mode: Train| RapidAPI
@@ -160,6 +167,23 @@ Rather than requiring travelers to manually book multiple disconnected tickets, 
 | **Total Duration** | `First-Mile Transfer + Intercity Travel Time + Last-Mile Dropoff` | Complete doorstep-to-doorstep journey duration with realistic buffer times |
 
 All three legs are bundled into a single checkout flow, providing travelers with a guaranteed all-in-one digital boarding pass with a scannable QR code.
+
+### 4. Pan-India Universal Reachability (28 States & 8 Union Territories)
+* **Comprehensive Geographic Coverage**: Supports every state, union territory, district (750+), and remote village across India.
+* **Intelligent Terminal Fallback**: If a remote destination or rural village has no direct railway station or operational airport, the engine identifies the closest accessible trunk station or commercial airport, details the exact reachability boundary, and automatically computes the last-mile road feeder distance, realistic duration, and fare.
+* **Zero Blind Spots**: Whether traveling from a small village in Himachal Pradesh, Uttarakhand, Bihar, or Kerala to another remote town, the system provides an end-to-end multi-segment route with exact junction connections.
+
+### 5. Personalized Travel Preferences & Recommendation Engine
+* **Tailored Travel Styles**: Users can configure their personal travel profile:
+  * **Travel Budget & Style**: Economical (budget-focused), Balanced (optimal price-to-time ratio), or Luxury (comfort-first).
+  * **Train Class Preference**: Sleeper (SL), 3rd AC (3A), 2nd AC (2A), or 1st AC (1A).
+  * **Flight Cabin Preference**: Economy, Premium Economy, or Business Class.
+  * **Feeder Road Transport**: Shared Auto/Cab, Private Sedan, or Premier SUV.
+* **Non-Intrusive Personalization**: While all available transit options remain visible and bookable, the system highlights the best-suited plan with a personalized recommendation badge (`Recommended for [Name]`), factoring in comfort, class, and budget criteria.
+
+### 6. Natural Conversational Assistant with Clean Text Formatting
+* **Sub-Second Conversational Planning**: Powered by Groq LLaMA 3.3 70B and Gemini models, allowing users to query routes, compare prices, or request customized schedules in natural language.
+* **Sanitized, Human-Readable Formatting**: Implements an automated text cleaning pipeline that prevents raw markdown syntax errors (stripping literal asterisks `**`, converting unparsed tables into clean multi-line bullet lists, and rendering clean spacing) so the interface always appears polished and human-written.
 
 ---
 
