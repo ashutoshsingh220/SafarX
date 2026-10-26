@@ -3,19 +3,22 @@ import { View, Text, ScrollView, TextInput, TouchableOpacity, KeyboardAvoidingVi
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSmartTripStore } from "../../../src/features/smarttrip/store/smartTripStore";
 import { sendAgentMessage } from "../../../src/features/smarttrip/lib/api";
+import { useProfileStore } from "../../../store/profileStore";
 import { router } from "expo-router";
 
 export default function AgentScreen() {
   const { agentMessages, addAgentMessage, isAgentThinking, setIsAgentThinking } = useSmartTripStore();
   const [inputText, setInputText] = React.useState("");
   const scrollViewRef = useRef<ScrollView>(null);
+  const profileStore = useProfileStore();
 
   useEffect(() => {
+    profileStore.loadProfile();
     if (agentMessages.length === 0) {
       addAgentMessage({
         id: "init",
         role: "assistant",
-        content: "Hi there! 👋 I'm your SafarX Assistant. Where would you like to travel?",
+        content: `Hi ${profileStore.firstName || "there"}! 👋 I'm your SafarX AI Orchestration Assistant, tuned for your ${profileStore.travelStyle} travel profile. Where would you like to travel across India?`,
         timestamp: Date.now(),
       });
     }
@@ -45,7 +48,18 @@ export default function AgentScreen() {
           content: m.content,
         }));
 
-      const res = await sendAgentMessage({ message: userMsg, history });
+      const res = await sendAgentMessage({
+        message: userMsg,
+        history,
+        userPreferences: {
+          firstName: profileStore.firstName,
+          lastName: profileStore.lastName,
+          travelStyle: profileStore.travelStyle,
+          trainClass: profileStore.trainClass,
+          flightClass: profileStore.flightClass,
+          cabPreference: profileStore.cabPreference,
+        },
+      });
       
       addAgentMessage({
         id: Date.now().toString(),
@@ -72,57 +86,66 @@ export default function AgentScreen() {
         <TouchableOpacity onPress={() => router.back()} className="mr-4">
           <Text className="text-2xl">←</Text>
         </TouchableOpacity>
-        <Text className="text-xl font-JakartaBold">SafarX Assistant</Text>
+        <View>
+          <Text className="text-xl font-JakartaBold">SafarX Assistant</Text>
+          <Text className="text-xs font-JakartaMedium text-neutral-500">
+            {profileStore.firstName} &bull; {profileStore.travelStyle} ({profileStore.trainClass})
+          </Text>
+        </View>
       </View>
 
       <ScrollView 
         ref={scrollViewRef}
         onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
         className="flex-1 p-4"
+        contentContainerStyle={{ paddingBottom: 20 }}
       >
         {agentMessages.map((msg) => (
           <View 
-            key={msg.id} 
-            className={`mb-4 max-w-[80%] p-3.5 rounded-2xl ${
+            key={msg.id}
+            className={`mb-4 max-w-[85%] rounded-2xl p-4 ${
               msg.role === "user" 
-                ? "bg-primary-500 self-end rounded-tr-none" 
-                : "bg-white border border-neutral-200 self-start rounded-tl-none shadow-sm"
+                ? "bg-primary-500 self-end rounded-tr-none shadow-sm" 
+                : "bg-white self-start rounded-tl-none border border-neutral-200 shadow-sm"
             }`}
           >
-            <Text className={`font-Jakarta ${msg.role === "user" ? "text-white" : "text-black"}`}>
+            <Text className={`font-Jakarta text-base leading-6 ${
+              msg.role === "user" ? "text-white font-JakartaMedium" : "text-neutral-800"
+            }`}>
               {msg.content}
             </Text>
           </View>
         ))}
+
         {isAgentThinking && (
-          <View className="bg-white border border-neutral-200 self-start p-3 rounded-2xl rounded-tl-none mb-4 flex-row items-center">
-            <ActivityIndicator size="small" color="#0286FF" />
-            <Text className="font-Jakarta ml-2 text-gray-500">SmartTrip is thinking...</Text>
+          <View className="flex-row items-center bg-white self-start rounded-2xl rounded-tl-none border border-neutral-200 p-4 mb-4 shadow-sm">
+            <ActivityIndicator color="#0286FF" size="small" />
+            <Text className="ml-3 font-JakartaMedium text-neutral-500">Orchestrating route options...</Text>
           </View>
         )}
-        <View className="h-10" />
       </ScrollView>
 
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
       >
-        <View className="p-4 bg-white border-t border-neutral-200 flex-row items-center">
+        <View className="p-4 bg-white border-t border-neutral-200 flex-row items-center gap-2">
           <TextInput
-            className="flex-1 bg-neutral-100 p-3.5 rounded-full font-Jakarta text-base"
-            placeholder="Ask anything (e.g. Pune to Bangalore)"
             value={inputText}
             onChangeText={setInputText}
+            placeholder="Ask anything, e.g. 'I want to travel to Dehradun'..."
+            className="flex-1 bg-neutral-100 rounded-full px-4 py-3 font-Jakarta text-base"
             onSubmitEditing={handleSend}
+            returnKeyType="send"
           />
           <TouchableOpacity 
             onPress={handleSend}
-            disabled={!inputText.trim() || isAgentThinking}
-            className={`ml-3 w-12 h-12 rounded-full items-center justify-center ${
+            disabled={isAgentThinking || !inputText.trim()}
+            className={`w-12 h-12 rounded-full items-center justify-center ${
               !inputText.trim() || isAgentThinking ? "bg-neutral-300" : "bg-primary-500"
             }`}
           >
-            <Text className="text-white text-xl">↑</Text>
+            <Text className="text-white text-lg">↑</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>

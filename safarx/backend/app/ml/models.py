@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 from sklearn.cluster import KMeans
@@ -33,27 +33,28 @@ def train_demand_model(artifact_dir: Path | None = None) -> Path:
     centers = np.array(
         [
             [18.5492, 73.7431],  # Susgaon: highest observed feeder demand
-            [18.5987, 73.7628],  # Wakad
-            [18.5204, 73.8567],  # Pune centre
+            [18.5314, 73.8446],  # Shivajinagar transport interchange
+            [18.5793, 73.7388],  # Hinjewadi Phase 1 tech corridor
         ]
     )
-    sample_sizes = [90, 55, 35]
     samples = np.vstack(
         [
-            center + generator.normal(0, 0.003, size=(sample_size, 2))
-            for center, sample_size in zip(centers, sample_sizes, strict=True)
+            generator.normal(loc=centers[0], scale=[0.015, 0.015], size=(220, 2)),
+            generator.normal(loc=centers[1], scale=[0.012, 0.012], size=(160, 2)),
+            generator.normal(loc=centers[2], scale=[0.018, 0.018], size=(120, 2)),
         ]
     )
-    model = KMeans(n_clusters=3, random_state=42, n_init=20)
-    labels = model.fit_predict(samples)
-    cluster_sizes = np.bincount(labels, minlength=3).tolist()
+    model = KMeans(n_clusters=3, random_state=42, n_init=10)
+    model.fit(samples)
+    labels = model.predict(samples)
+    sizes = [int(np.sum(labels == idx)) for idx in range(3)]
     path = _artifact_path(DEMAND_ARTIFACT, artifact_dir)
     with path.open("wb") as file:
-        pickle.dump({"model": model, "cluster_sizes": cluster_sizes}, file)
+        pickle.dump({"model": model, "cluster_sizes": sizes}, file)
     return path
 
 
-def predict_demand(lat: float, lon: float, artifact_dir: Path | None = None) -> dict[str, int | str | float]:
+def predict_demand(lat: float, lon: float, artifact_dir: Path | None = None) -> dict[str, int | str]:
     path = _artifact_path(DEMAND_ARTIFACT, artifact_dir)
     if not path.exists():
         train_demand_model(artifact_dir)
@@ -75,14 +76,22 @@ def train_eta_model(artifact_dir: Path | None = None) -> Path:
     peak_multiplier = np.where(((hour >= 8) & (hour <= 10)) | ((hour >= 17) & (hour <= 20)), 1.35, 1.0)
     eta_minutes = np.maximum(5, distance_km * 2.1 * peak_multiplier * (1 + traffic * 0.45) + generator.normal(0, 2, 400))
     features = np.column_stack([distance_km, hour, traffic])
-    model = XGBRegressor(
-        n_estimators=80,
-        max_depth=4,
-        learning_rate=0.08,
-        objective="reg:squarederror",
-        random_state=42,
-        n_jobs=1,
-    )
+    if XGBRegressor is RandomForestRegressor:
+        model = RandomForestRegressor(
+            n_estimators=80,
+            max_depth=4,
+            random_state=42,
+            n_jobs=1,
+        )
+    else:
+        model = XGBRegressor(
+            n_estimators=80,
+            max_depth=4,
+            learning_rate=0.08,
+            objective="reg:squarederror",
+            random_state=42,
+            n_jobs=1,
+        )
     model.fit(features, eta_minutes)
     path = _artifact_path(ETA_ARTIFACT, artifact_dir)
     with path.open("wb") as file:
@@ -93,62 +102,62 @@ def train_eta_model(artifact_dir: Path | None = None) -> Path:
 def predict_eta(
     distance_km: float, hour_of_day: int, traffic_level: float = 0.5, artifact_dir: Path | None = None
 ) -> float:
-    if distance_km <= 0:
-        raise ValueError("distance_km must be greater than zero")
-    if not 0 <= hour_of_day <= 23:
-        raise ValueError("hour_of_day must be between 0 and 23")
-    if not 0 <= traffic_level <= 1:
-        raise ValueError("traffic_level must be between 0 and 1")
     path = _artifact_path(ETA_ARTIFACT, artifact_dir)
     if not path.exists():
         train_eta_model(artifact_dir)
     with path.open("rb") as file:
         model = pickle.load(file)
-    return round(max(5.0, float(model.predict([[distance_km, hour_of_day, traffic_level]])[0])), 1)
+    predicted = float(model.predict([[distance_km, hour_of_day, traffic_level]])[0])
+    return round(max(3.0, predicted), 2)
 
 
-def train_option_ranker(artifact_dir: Path | None = None) -> Path:
-    """Train a transparent synthetic option ranker for the demo environment."""
-    generator = np.random.default_rng(7)
-    fare = generator.uniform(400, 5_000, 600)
-    duration_hours = generator.uniform(1, 18, 600)
-    transfers = generator.integers(0, 4, 600)
-    comfort_score = generator.uniform(1, 5, 600)
-    target = 100 - fare / 85 - duration_hours * 2.8 - transfers * 9 + comfort_score * 7
-    target += generator.normal(0, 1.5, 600)
-    features = np.column_stack([fare, duration_hours, transfers, comfort_score])
-    model = RandomForestRegressor(n_estimators=120, max_depth=8, random_state=7, n_jobs=1)
-    model.fit(features, target)
+def train_ranker_model(artifact_dir: Path | None = None) -> Path:
+    """Train a mock ranker model capturing user preferences for speed vs fare."""
+    weights = np.array([0.45, 0.40, 0.15])
     path = _artifact_path(RANKER_ARTIFACT, artifact_dir)
     with path.open("wb") as file:
-        pickle.dump(model, file)
+        pickle.dump({"weights": weights, "metric_names": ["fare_ratio", "duration_ratio", "leg_count"]}, file)
     return path
 
 
-def rank_options(options: Iterable[dict[str, float | int]], artifact_dir: Path | None = None) -> list[dict[str, float | int]]:
-    option_list = list(options)
-    if not option_list:
+def rank_options(
+    options: list[dict[str, float]], artifact_dir: Path | None = None, is_smarttrip_plus: bool = False
+) -> list[dict[str, Any]]:
+    """Sort options by lowest weighted penalty score; prefers speed/convenience for SmartTrip+."""
+    if not options:
         return []
     path = _artifact_path(RANKER_ARTIFACT, artifact_dir)
     if not path.exists():
-        train_option_ranker(artifact_dir)
+        train_ranker_model(artifact_dir)
     with path.open("rb") as file:
-        model = pickle.load(file)
-    features = [
-        [item["fare"], item["duration_hours"], item["transfers"], item["comfort_score"]]
-        for item in option_list
-    ]
-    scores = model.predict(features)
-    ranked = [
-        {"option_index": index, "score": round(float(score), 2)}
-        for index, score in enumerate(scores)
-    ]
-    return sorted(ranked, key=lambda item: float(item["score"]), reverse=True)
+        payload = pickle.load(file)
+    weights = np.array(payload["weights"])
+    if is_smarttrip_plus:
+        weights = np.array([0.25, 0.60, 0.15])
+
+    fares = np.array([float(item.get("fare", 0.0)) for item in options], dtype=float)
+    durations = np.array([
+        float(item["duration_seconds"]) if "duration_seconds" in item else float(item.get("duration_hours", 0.0)) * 3600.0
+        for item in options
+    ], dtype=float)
+    legs = np.array([
+        float(item["transfers"]) if "transfers" in item else float(item.get("leg_count", 1))
+        for item in options
+    ], dtype=float)
+
+    max_fare = max(float(np.max(fares)), 1.0)
+    max_duration = max(float(np.max(durations)), 1.0)
+    max_legs = max(float(np.max(legs)), 1.0)
+
+    normalized = np.column_stack([fares / max_fare, durations / max_duration, legs / max_legs])
+    scores = normalized @ weights
+    order = [int(idx) for idx in np.argsort(scores)]
+    return [{"option_index": idx, "score": float(scores[idx])} for idx in order]
 
 
 def train_all(artifact_dir: Path | None = None) -> list[Path]:
     return [
         train_demand_model(artifact_dir),
         train_eta_model(artifact_dir),
-        train_option_ranker(artifact_dir),
+        train_ranker_model(artifact_dir),
     ]

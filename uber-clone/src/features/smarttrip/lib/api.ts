@@ -27,16 +27,18 @@ async function fetchWithTimeout(url: string, options: any, timeoutMs = 2500): Pr
 export async function sendAgentMessage({
   message,
   history,
+  userPreferences,
 }: {
   message: string;
   history: any[];
+  userPreferences?: any;
 }) {
   for (const baseUrl of CANDIDATE_API_URLS) {
     try {
       const response = await fetch(`${baseUrl}/api/v1/agent/plan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, user_preferences: userPreferences }),
       });
 
       if (response.ok) {

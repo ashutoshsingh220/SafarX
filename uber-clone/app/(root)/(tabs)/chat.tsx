@@ -14,14 +14,15 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { askTravelAgent, ChatMessage } from "@/lib/agent";
-import { useDriverStore, useLocationStore } from "@/store";
+import { useDriverStore, useLocationStore, useProfileStore } from "@/store";
 import { images } from "@/constants";
 
 const QUICK_PROMPTS = [
+  "🎯 Recommend best route for my profile",
   "💰 Compare UberGo vs Premier rates",
-  "🚦 Fastest route & traffic conditions",
-  "🚗 Who is my driver & car details?",
-  "✈️ Best travel options to Haldwani / Uttarakhand",
+  "🚆 Train options (Sleeper vs AC)",
+  "✈️ Flight vs Train to destination",
+  "🚦 Fastest route & live traffic conditions",
 ];
 
 const Chat = () => {
@@ -35,16 +36,22 @@ const Chat = () => {
   } = useLocationStore();
 
   const { drivers, selectedDriver } = useDriverStore();
+  const profileStore = useProfileStore();
 
   const flatListRef = useRef<FlatList>(null);
 
   const [inputMessage, setInputMessage] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    profileStore.loadProfile();
+  }, []);
+
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome-1",
       sender: "agent",
-      text: `👋 **Welcome to SafarX!**\n\nI am connected to your live trip in Pune & Uttarakhand.\n\n• **Pickup**: ${userAddress || "Symbiosis Institute of Technology, Lavale, Pune"}\n• **Destination**: ${destinationAddress || "Select destination or ask me"}\n• **Verified Rates**: UberGo @ ₹22/km | UberPremier @ ₹30/km\n\nAsk me about rates, fastest traffic routes, driver info, or flight/train connections!`,
+      text: `👋 **Welcome to SafarX AI Orchestration!**\n\nI am personalized to your travel style (**${profileStore.travelStyle}**) and connected to live transit telemetry.\n\n• **Traveler**: ${profileStore.firstName} ${profileStore.lastName}\n• **Preferences**: Train ${profileStore.trainClass} | Flight ${profileStore.flightClass} | Feeder ${profileStore.cabPreference}\n• **Pickup**: ${userAddress || "Symbiosis Institute of Technology, Lavale, Pune"}\n• **Destination**: ${destinationAddress || "Select destination or ask me"}\n\nAsk me for route recommendations, train/flight connections, fares, or door-to-door village transit!`,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     },
   ]);
@@ -58,6 +65,16 @@ const Chat = () => {
     destinationLongitude,
     selectedDriver,
     drivers,
+    userProfile: {
+      firstName: profileStore.firstName,
+      lastName: profileStore.lastName,
+      email: profileStore.email,
+      phone: profileStore.phone,
+      travelStyle: profileStore.travelStyle,
+      trainClass: profileStore.trainClass,
+      flightClass: profileStore.flightClass,
+      cabPreference: profileStore.cabPreference,
+    },
   };
 
   const handleSendMessage = async (textToSend?: string) => {
@@ -170,13 +187,20 @@ const Chat = () => {
             />
           </View>
           <View>
-            <Text className="text-lg font-JakartaBold text-neutral-900">
-              SafarX
-            </Text>
+            <View className="flex-row items-center gap-1.5">
+              <Text className="text-lg font-JakartaBold text-neutral-900">
+                SafarX AI
+              </Text>
+              <View className="bg-primary-100 px-2 py-0.5 rounded-full">
+                <Text className="text-[10px] font-JakartaBold text-primary-700">
+                  {profileStore.travelStyle}
+                </Text>
+              </View>
+            </View>
             <View className="flex-row items-center space-x-1">
               <View className="w-2 h-2 rounded-full bg-emerald-500" />
               <Text className="text-[11px] font-JakartaMedium text-emerald-600">
-                Connected
+                Connected &bull; {profileStore.firstName}
               </Text>
             </View>
           </View>
@@ -188,7 +212,7 @@ const Chat = () => {
               {
                 id: "welcome-reset",
                 sender: "agent",
-                text: `🔄 **Chat reset.**\n\nActive context:\n• Pickup: ${userAddress || "Symbiosis Institute of Technology, Pune"}\n• Destination: ${destinationAddress || "Not set"}\n\nHow can I help you right now?`,
+                text: `🔄 **Chat reset.**\n\nActive profile for ${profileStore.firstName}:\n• Travel Style: ${profileStore.travelStyle}\n• Preferred Train: ${profileStore.trainClass} | Flight: ${profileStore.flightClass}\n• Pickup: ${userAddress || "Symbiosis Institute of Technology, Pune"}\n• Destination: ${destinationAddress || "Not set"}\n\nHow can I help you right now?`,
                 timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               },
             ]);
@@ -223,7 +247,7 @@ const Chat = () => {
 
         <View className="bg-blue-100 px-2 py-0.5 rounded-full">
           <Text className="text-[10px] font-JakartaBold text-[#0286FF]">
-            ₹22-₹30/km
+            {profileStore.trainClass} &bull; {profileStore.flightClass.slice(0, 4)}
           </Text>
         </View>
       </View>
@@ -244,7 +268,7 @@ const Chat = () => {
               <View className="flex-row items-center space-x-2 px-4 py-2 bg-neutral-100 self-start ml-4 my-2 rounded-2xl border border-neutral-200">
                 <ActivityIndicator size="small" color="#0286FF" />
                 <Text className="text-xs font-JakartaMedium text-neutral-600">
-                  AI is analyzing route & traffic...
+                  AI Orchestrating your personalized plan...
                 </Text>
               </View>
             ) : null
@@ -276,7 +300,7 @@ const Chat = () => {
         <View className="flex-row items-center px-3 pt-2 pb-24 border-t border-neutral-200 bg-white">
           <TextInput
             className="flex-1 bg-neutral-100 border border-neutral-300 rounded-full px-4 py-2.5 text-sm font-JakartaRegular text-neutral-800 mr-2"
-            placeholder="Ask about rides, fares, traffic..."
+            placeholder="Ask about personalized routes, fares, traffic..."
             placeholderTextColor="#9CA3AF"
             value={inputMessage}
             onChangeText={setInputMessage}

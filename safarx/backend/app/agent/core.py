@@ -78,33 +78,31 @@ def extract_mock_search_request(request: AgentPlanRequest) -> SearchRequest:
     from_city = "Pune"
     to_city = "Ahmedabad"
 
-    # Strip phrases like 'i want to go to', 'i want to travel from', etc.
-    cleaned = re.sub(
-        r"^(?:can you\s+)?(?:please\s+)?(?:i\s+want\s+to\s+|i\s+need\s+to\s+|i\s+would\s+like\s+to\s+)?(?:go\s+to\s+|go\s+from\s+|go\s+|travel\s+to\s+|travel\s+from\s+|travel\s+|book\s+|plan\s+)?(?:a\s+trip\s+)?(?:from\s+)?",
-        "",
-        msg_lower,
-    ).strip()
-
-    match = re.search(r"([a-zA-Z\s]+?)\s+(?:to|->)\s+([a-zA-Z\s]+)", cleaned)
-    if match:
-        f_city = match.group(1).strip()
-        t_city = match.group(2).strip()
-        t_city = re.sub(r"(\s+tomorrow|\s+today|\s+tonight|\s+now|\s+next\s+week|\s+please).*$", "", t_city).strip()
-        if f_city:
-            from_city = f_city.title()
-        if t_city:
-            to_city = t_city.title()
+    cities = ["ahmedabad", "mumbai", "bangalore", "bengaluru", "delhi", "goa", "hyderabad", "chennai", "kolkata", "jaipur", "dehradun", "pune", "surat"]
+    found = sorted([c for c in cities if c in msg_lower], key=lambda c: msg_lower.index(c))
+    if len(found) >= 2:
+        from_city = found[0].title()
+        to_city = found[1].title()
+    elif len(found) == 1:
+        if found[0] == "pune":
+            to_city = "Ahmedabad"
+        else:
+            to_city = found[0].title()
     else:
-        cities = ["ahmedabad", "mumbai", "bangalore", "bengaluru", "delhi", "goa", "hyderabad", "chennai", "kolkata", "jaipur", "dehradun", "pune", "surat"]
-        found = [c for c in cities if c in msg_lower]
-        if len(found) >= 2:
-            from_city = found[0].title()
-            to_city = found[1].title()
-        elif len(found) == 1:
-            if found[0] == "pune":
-                to_city = "Ahmedabad"
-            else:
-                to_city = found[0].title()
+        cleaned = re.sub(
+            r"^(?:can you\s+)?(?:please\s+)?(?:i\s+want\s+to\s+|i\s+need\s+to\s+|i\s+would\s+like\s+to\s+)?(?:go\s+to\s+|go\s+from\s+|go\s+|travel\s+to\s+|travel\s+from\s+|travel\s+|book\s+|plan\s+)?(?:a\s+trip\s+)?(?:from\s+)?",
+            "",
+            msg_lower,
+        ).strip()
+        match = re.search(r"([a-zA-Z\s]+?)\s+(?:to|->)\s+([a-zA-Z\s]+)", cleaned)
+        if match:
+            f_city = match.group(1).strip()
+            t_city = match.group(2).strip()
+            t_city = re.sub(r"(\s+tomorrow|\s+today|\s+tonight|\s+now|\s+next\s+week|\s+please).*$", "", t_city).strip()
+            if f_city:
+                from_city = f_city.title()
+            if t_city:
+                to_city = t_city.title()
 
     travel_date = _tomorrow_night() if "tomorrow" in msg_lower else datetime.now() + timedelta(days=1)
     return SearchRequest(
@@ -118,16 +116,28 @@ def extract_mock_search_request(request: AgentPlanRequest) -> SearchRequest:
     )
 
 
-def _answer_from_journeys(journeys: list[Journey]) -> str:
+def _answer_from_journeys(journeys: list[Journey], user_preferences: dict[str, Any] | None = None) -> str:
     if not journeys:
         return "I could not find a journey for that route. Please check the city names and try again."
     best = journeys[0]
     modes = " + ".join(leg.mode.title() for leg in best.legs)
     duration_hours = best.total_duration_seconds / 3600
     
+    greeting = ""
+    prefs_note = ""
+    if user_preferences:
+        fname = user_preferences.get("firstName") or "Traveler"
+        t_style = user_preferences.get("travelStyle") or "BALANCED"
+        t_class = user_preferences.get("trainClass") or "3A"
+        c_mode = user_preferences.get("cabPreference") or "PRIVATE_SEDAN"
+        greeting = f"👋 **Hello {fname}!**\n"
+        prefs_note = f"• **AI Personalization**: Calibrated for **{t_style}** (Train: **{t_class}**, Feeder: **{c_mode}**)\n"
+
     reply = (
+        f"{greeting}"
         f"🚗 **Recommended Door-to-Door Plan**\n\n"
         f"• **Route**: {best.legs[0].start_location_name} ➔ {best.legs[-1].end_location_name}\n"
+        f"{prefs_note}"
         f"• **Modes**: {modes}\n"
         f"• **Total Fare**: ₹{best.total_fare:.0f}\n"
         f"• **Estimated Duration**: ~{duration_hours:.1f} hours\n\n"
@@ -186,7 +196,7 @@ class TravelAgent:
         tool_result = await execute_tool("search_routes", search_request.model_dump(mode="json"), db)
         journeys = [Journey.model_validate(item) for item in tool_result.payload["journeys"]]
         return AgentPlanResponse(
-            answer=_answer_from_journeys(journeys),
+            answer=_answer_from_journeys(journeys, request.user_preferences),
             journeys=journeys,
             tools_used=["search_routes"],
             is_mock=True,
@@ -196,12 +206,22 @@ class TravelAgent:
         if not settings.GEMINI_API_KEY:
             raise ValueError("GEMINI_API_KEY is required when USE_MOCK_AI=false")
         client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        
+        system_instruction = (
+            "You are SafarX. Always use search_routes before recommending an itinerary. "
+            "Present one bundle price and explain vehicle modes clearly."
+        )
+        if request.user_preferences:
+            system_instruction += (
+                f" User profile preferences: Travel style is {request.user_preferences.get('travelStyle')}, "
+                f"preferred train class is {request.user_preferences.get('trainClass')}, "
+                f"flight cabin is {request.user_preferences.get('flightClass')}, "
+                f"and road feeder preference is {request.user_preferences.get('cabPreference')}."
+            )
+
         config = types.GenerateContentConfig(
             tools=[types.Tool(function_declarations=GEMINI_TOOLS[0]["function_declarations"])],
-            system_instruction=(
-                "You are SafarX. Always use search_routes before recommending an itinerary. "
-                "Present one bundle price and explain vehicle modes clearly."
-            ),
+            system_instruction=system_instruction,
         )
         contents: list[Any] = [types.Content(role="user", parts=[types.Part(text=request.message)])]
         response = await asyncio.to_thread(
@@ -239,5 +259,5 @@ class TravelAgent:
                 config=config,
             )
 
-        answer = response.text or _answer_from_journeys(journeys)
+        answer = response.text or _answer_from_journeys(journeys, request.user_preferences)
         return AgentPlanResponse(answer=answer, journeys=journeys, tools_used=tools_used, is_mock=False)
