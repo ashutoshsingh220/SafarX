@@ -137,6 +137,35 @@ export interface DirectCabInventoryItem {
   benefits: string[];
 }
 
+export interface ReachabilityContext {
+  clean_name: string;
+  parent_city: string;
+  district?: string;
+  state: string;
+  is_hill: boolean;
+  is_island: boolean;
+  is_remote: boolean;
+  train_reachable_direct: boolean;
+  rail_station: string;
+  rail_code: string;
+  rail_dist_km: number;
+  rail_reachability_text: string;
+  airport: string;
+  airport_code: string;
+  airport_dist_km: number;
+  airport_reachability_text: string;
+  bus_terminal: string;
+  bus_dist_km: number;
+  local_feeder_point: string;
+  feeder_mode: string;
+  feeder_operator: string;
+  feeder_fare: number;
+  feeder_duration_minutes: number;
+  feeder_summary: string;
+  lat: number;
+  lon: number;
+}
+
 export interface CorridorInventory {
   origin: string;
   destination: string;
@@ -148,9 +177,13 @@ export interface CorridorInventory {
     transit_hub?: string;
     leg1?: string;
     leg2?: string;
+    leg3?: string;
     transfer_buffer?: string;
     recommendation?: string;
   };
+  origin_reachability?: ReachabilityContext;
+  destination_reachability?: ReachabilityContext;
+  reachability_note?: string;
   trains: TrainInventoryItem[];
   buses: BusInventoryItem[];
   flights: FlightInventoryItem[];
@@ -160,6 +193,3 @@ export interface CorridorInventory {
     cab_rate_per_km?: number;
   };
 }
-
-
-

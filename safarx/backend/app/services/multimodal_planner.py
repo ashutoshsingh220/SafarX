@@ -1,7 +1,13 @@
-﻿import uuid
+import uuid
 from typing import List
-from app.schemas import MultimodalLegOut, MultimodalPlanOut, MultimodalPlanRequest, MultimodalPlanResponse
-from app.services.transit_hubs import find_nearest_hub
+from app.schemas import (
+    MultimodalLegOut,
+    MultimodalPlanOut,
+    MultimodalPlanRequest,
+    MultimodalPlanResponse,
+    ReachabilityInfo,
+)
+from app.services.transit_hubs import find_nearest_hub, resolve_locality_context
 from app.services.road_feeder import calculate_feeder_trip
 from app.services.intercity_transit import (
     calculate_train_leg,
@@ -12,8 +18,9 @@ from app.services.intercity_transit import (
 
 
 def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanResponse:
-    """Generate and compare end-to-end 3-leg multimodal plans between any two locations in India."""
-    
+    """Generate and compare end-to-end 3-leg multimodal plans between ANY two locations in India.
+    Includes rich reachability analysis: where train/flight reaches, exact feeder distances, and fares.
+    """
     orig_name = request.origin_name
     orig_lat = request.origin_lat
     orig_lon = request.origin_lon
@@ -22,9 +29,21 @@ def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanRes
     dest_lat = request.destination_lat
     dest_lon = request.destination_lon
 
-    preferred_feeder = request.feeder_mode or "AUTO"
+    # 1. Resolve authentic locality context, state, district, and reachability
+    orig_ctx = resolve_locality_context(orig_name, orig_lat, orig_lon)
+    dest_ctx = resolve_locality_context(dest_name, dest_lat, dest_lon)
 
-    # 1. Resolve nearest transit hubs
+    # Use resolved genuine coordinates if initial were 0.0 or approximations
+    orig_lat = orig_ctx["lat"]
+    orig_lon = orig_ctx["lon"]
+    dest_lat = dest_ctx["lat"]
+    dest_lon = dest_ctx["lon"]
+
+    preferred_feeder = request.feeder_mode or "AUTO"
+    if orig_ctx["is_hill"]:
+        preferred_feeder = "CAB"
+
+    # 2. Resolve nearest transit hubs
     orig_rail, _ = find_nearest_hub(orig_lat, orig_lon, "RAILWAY_STATION")
     dest_rail, _ = find_nearest_hub(dest_lat, dest_lon, "RAILWAY_STATION")
 
@@ -37,22 +56,33 @@ def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanRes
     plans: List[MultimodalPlanOut] = []
 
     # =========================================================================
-    # PLAN A: 🚆 TRAIN MULTIMODAL ROUTE (First-Mile Auto + Train + Last-Mile Auto/E-Rickshaw)
+    # PLAN A: 🚆 TRAIN MULTIMODAL ROUTE (First-Mile Feeder + Train + Last-Mile Feeder)
     # =========================================================================
-    # Leg 1: First Mile
     leg1_train = calculate_feeder_trip(
         orig_lat, orig_lon, orig_rail["latitude"], orig_rail["longitude"],
-        mode=preferred_feeder if preferred_feeder in ["AUTO", "CAB"] else "AUTO",
-        start_name=orig_name, end_name=orig_rail["name"], leg_type="FIRST_MILE"
+        mode="CAB" if orig_ctx["is_hill"] else preferred_feeder,
+        start_name=orig_name, end_name=orig_rail["name"], leg_type="FIRST_MILE",
+        is_hill=orig_ctx["is_hill"], is_remote=orig_ctx["is_remote"]
     )
-    # Leg 2: Train
     leg2_train = calculate_train_leg(orig_rail, dest_rail, train_class="SL" if request.feeder_mode == "SHUTTLE" else "3A")
-    # Leg 3: Last Mile (use E_RICKSHAW if distance < 5km, else AUTO)
-    leg3_train_mode = "E_RICKSHAW" if orig_rail["city"] == dest_rail["city"] or dest_rail["city"] == "Haridwar" else "AUTO"
+    
+    leg3_train_mode = "CAB" if dest_ctx["is_hill"] else ("E_RICKSHAW" if dest_rail["city"] == "Haridwar" else "AUTO")
     leg3_train = calculate_feeder_trip(
         dest_rail["latitude"], dest_rail["longitude"], dest_lat, dest_lon,
         mode=leg3_train_mode,
-        start_name=dest_rail["name"], end_name=dest_name, leg_type="LAST_MILE"
+        start_name=dest_rail["name"], end_name=dest_name, leg_type="LAST_MILE",
+        is_hill=dest_ctx["is_hill"], is_remote=dest_ctx["is_remote"]
+    )
+
+    first_mile_desc = (
+        f"{orig_ctx['rail_reachability_text']} Feeder: {leg1_train['operator']} ({leg1_train['distance_km']} km, ₹{leg1_train['fare']})"
+        if not orig_ctx["train_reachable_direct"]
+        else leg1_train["description"]
+    )
+    last_mile_desc = (
+        f"{dest_ctx['rail_reachability_text']} Last-mile: {leg3_train['operator']} ({leg3_train['distance_km']} km, ₹{leg3_train['fare']})"
+        if not dest_ctx["train_reachable_direct"]
+        else leg3_train["description"]
     )
 
     train_legs = [
@@ -60,7 +90,7 @@ def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanRes
             leg_index=1, leg_type="FIRST_MILE", mode=leg1_train["mode"],
             operator=leg1_train["operator"], origin=orig_name, destination=orig_rail["name"],
             distance_km=leg1_train["distance_km"], duration_minutes=leg1_train["duration_minutes"],
-            fare=leg1_train["fare"], description=leg1_train["description"], vehicle_icon="car"
+            fare=leg1_train["fare"], description=first_mile_desc, vehicle_icon="car"
         ),
         MultimodalLegOut(
             leg_index=2, leg_type="LONG_HAUL", mode="TRAIN",
@@ -72,12 +102,12 @@ def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanRes
             leg_index=3, leg_type="LAST_MILE", mode=leg3_train["mode"],
             operator=leg3_train["operator"], origin=dest_rail["name"], destination=dest_name,
             distance_km=leg3_train["distance_km"], duration_minutes=leg3_train["duration_minutes"],
-            fare=leg3_train["fare"], description=leg3_train["description"], vehicle_icon="car"
+            fare=leg3_train["fare"], description=last_mile_desc, vehicle_icon="car"
         ),
     ]
 
     total_train_fare = sum(l.fare for l in train_legs)
-    total_train_duration = sum(l.duration_minutes for l in train_legs) + 30  # station transfer buffer
+    total_train_duration = sum(l.duration_minutes for l in train_legs) + 30
     total_train_distance = sum(l.distance_km for l in train_legs)
 
     plans.append(MultimodalPlanOut(
@@ -96,12 +126,14 @@ def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanRes
     # =========================================================================
     leg1_flight = calculate_feeder_trip(
         orig_lat, orig_lon, orig_air["latitude"], orig_air["longitude"],
-        mode="CAB", start_name=orig_name, end_name=orig_air["name"], leg_type="FIRST_MILE"
+        mode="CAB", start_name=orig_name, end_name=orig_air["name"], leg_type="FIRST_MILE",
+        is_hill=orig_ctx["is_hill"], is_remote=orig_ctx["is_remote"]
     )
     leg2_flight = calculate_flight_leg(orig_air, dest_air)
     leg3_flight = calculate_feeder_trip(
         dest_air["latitude"], dest_air["longitude"], dest_lat, dest_lon,
-        mode="CAB", start_name=dest_air["name"], end_name=dest_name, leg_type="LAST_MILE"
+        mode="CAB", start_name=dest_air["name"], end_name=dest_name, leg_type="LAST_MILE",
+        is_hill=dest_ctx["is_hill"], is_remote=dest_ctx["is_remote"]
     )
 
     flight_legs = [
@@ -109,7 +141,7 @@ def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanRes
             leg_index=1, leg_type="FIRST_MILE", mode="CAB",
             operator=leg1_flight["operator"], origin=orig_name, destination=orig_air["name"],
             distance_km=leg1_flight["distance_km"], duration_minutes=leg1_flight["duration_minutes"],
-            fare=leg1_flight["fare"], description=leg1_flight["description"], vehicle_icon="car"
+            fare=leg1_flight["fare"], description=f"Airport Feeder: {leg1_flight['operator']} to {orig_air['name']} ({leg1_flight['distance_km']} km, ₹{leg1_flight['fare']})", vehicle_icon="car"
         ),
         MultimodalLegOut(
             leg_index=2, leg_type="LONG_HAUL", mode="FLIGHT",
@@ -121,12 +153,12 @@ def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanRes
             leg_index=3, leg_type="LAST_MILE", mode="CAB",
             operator=leg3_flight["operator"], origin=dest_air["name"], destination=dest_name,
             distance_km=leg3_flight["distance_km"], duration_minutes=leg3_flight["duration_minutes"],
-            fare=leg3_flight["fare"], description=leg3_flight["description"], vehicle_icon="car"
+            fare=leg3_flight["fare"], description=f"Airport Drop: {leg3_flight['operator']} from {dest_air['name']} to doorstep ({leg3_flight['distance_km']} km, ₹{leg3_flight['fare']})", vehicle_icon="car"
         ),
     ]
 
     total_flight_fare = sum(l.fare for l in flight_legs)
-    total_flight_duration = sum(l.duration_minutes for l in flight_legs) + 45  # baggage/transit buffer
+    total_flight_duration = sum(l.duration_minutes for l in flight_legs) + 45
     total_flight_distance = sum(l.distance_km for l in flight_legs)
 
     plans.append(MultimodalPlanOut(
@@ -141,21 +173,25 @@ def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanRes
     ))
 
     # =========================================================================
-    # PLAN C: 🚌 INTERCITY BUS MULTIMODAL ROUTE (Auto + AC Sleeper Bus + Auto)
+    # PLAN C: 🚌 INTERCITY BUS MULTIMODAL ROUTE (Auto/Cab + AC Sleeper Bus + Auto/Cab)
     # =========================================================================
     leg1_bus = calculate_feeder_trip(
         orig_lat, orig_lon, orig_bus["latitude"], orig_bus["longitude"],
-        mode="AUTO", start_name=orig_name, end_name=orig_bus["name"], leg_type="FIRST_MILE"
+        mode="CAB" if orig_ctx["is_hill"] else "AUTO",
+        start_name=orig_name, end_name=orig_bus["name"], leg_type="FIRST_MILE",
+        is_hill=orig_ctx["is_hill"], is_remote=orig_ctx["is_remote"]
     )
     leg2_bus = calculate_bus_leg(orig_bus, dest_bus)
     leg3_bus = calculate_feeder_trip(
         dest_bus["latitude"], dest_bus["longitude"], dest_lat, dest_lon,
-        mode="AUTO", start_name=dest_bus["name"], end_name=dest_name, leg_type="LAST_MILE"
+        mode="CAB" if dest_ctx["is_hill"] else "AUTO",
+        start_name=dest_bus["name"], end_name=dest_name, leg_type="LAST_MILE",
+        is_hill=dest_ctx["is_hill"], is_remote=dest_ctx["is_remote"]
     )
 
     bus_legs = [
         MultimodalLegOut(
-            leg_index=1, leg_type="FIRST_MILE", mode="AUTO",
+            leg_index=1, leg_type="FIRST_MILE", mode=leg1_bus["mode"],
             operator=leg1_bus["operator"], origin=orig_name, destination=orig_bus["name"],
             distance_km=leg1_bus["distance_km"], duration_minutes=leg1_bus["duration_minutes"],
             fare=leg1_bus["fare"], description=leg1_bus["description"], vehicle_icon="car"
@@ -167,7 +203,7 @@ def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanRes
             fare=leg2_bus["fare"], description=leg2_bus["description"], vehicle_icon="bus"
         ),
         MultimodalLegOut(
-            leg_index=3, leg_type="LAST_MILE", mode="AUTO",
+            leg_index=3, leg_type="LAST_MILE", mode=leg3_bus["mode"],
             operator=leg3_bus["operator"], origin=dest_bus["name"], destination=dest_name,
             distance_km=leg3_bus["distance_km"], duration_minutes=leg3_bus["duration_minutes"],
             fare=leg3_bus["fare"], description=leg3_bus["description"], vehicle_icon="car"
@@ -227,14 +263,75 @@ def plan_multimodal_journey(request: MultimodalPlanRequest) -> MultimodalPlanRes
         else:
             p.badge = "BEST_VALUE"
 
-    # Sort plans: Cheapest first, then fastest, then best value, then direct cab
     badge_order = {"CHEAPEST": 0, "BEST_VALUE": 1, "FASTEST": 2, "DIRECT_CAB": 3}
     plans.sort(key=lambda p: badge_order.get(p.badge or "", 99))
+
+    # Build Reachability Info objects
+    orig_reach = ReachabilityInfo(
+        place_name=orig_ctx["clean_name"],
+        state=orig_ctx["state"],
+        district=orig_ctx["district"],
+        is_hill=orig_ctx["is_hill"],
+        is_island=orig_ctx["is_island"],
+        train_reachable_direct=orig_ctx["train_reachable_direct"],
+        nearest_railhead_name=orig_ctx["rail_station"],
+        nearest_railhead_code=orig_ctx["rail_code"],
+        railhead_distance_km=orig_ctx["rail_dist_km"],
+        railhead_duration_minutes=orig_ctx["feeder_duration_minutes"],
+        railhead_feeder_mode=orig_ctx["feeder_mode"],
+        railhead_feeder_fare=orig_ctx["feeder_fare"],
+        railhead_reachability_text=orig_ctx["rail_reachability_text"],
+        nearest_airport_name=orig_ctx["airport"],
+        nearest_airport_code=orig_ctx["airport_code"],
+        airport_distance_km=orig_ctx["airport_dist_km"],
+        airport_duration_minutes=max(15, int(orig_ctx["airport_dist_km"] / 45.0 * 60)),
+        airport_feeder_mode="CAB",
+        airport_feeder_fare=max(120.0, round(orig_ctx["airport_dist_km"] * 2.2, 0)),
+        airport_reachability_text=orig_ctx["airport_reachability_text"],
+        nearest_bus_terminal=orig_ctx["bus_terminal"],
+        bus_distance_km=orig_ctx["bus_dist_km"],
+        feeder_summary=orig_ctx["feeder_summary"],
+    )
+
+    dest_reach = ReachabilityInfo(
+        place_name=dest_ctx["clean_name"],
+        state=dest_ctx["state"],
+        district=dest_ctx["district"],
+        is_hill=dest_ctx["is_hill"],
+        is_island=dest_ctx["is_island"],
+        train_reachable_direct=dest_ctx["train_reachable_direct"],
+        nearest_railhead_name=dest_ctx["rail_station"],
+        nearest_railhead_code=dest_ctx["rail_code"],
+        railhead_distance_km=dest_ctx["rail_dist_km"],
+        railhead_duration_minutes=dest_ctx["feeder_duration_minutes"],
+        railhead_feeder_mode=dest_ctx["feeder_mode"],
+        railhead_feeder_fare=dest_ctx["feeder_fare"],
+        railhead_reachability_text=dest_ctx["rail_reachability_text"],
+        nearest_airport_name=dest_ctx["airport"],
+        nearest_airport_code=dest_ctx["airport_code"],
+        airport_distance_km=dest_ctx["airport_dist_km"],
+        airport_duration_minutes=max(15, int(dest_ctx["airport_dist_km"] / 45.0 * 60)),
+        airport_feeder_mode="CAB",
+        airport_feeder_fare=max(120.0, round(dest_ctx["airport_dist_km"] * 2.2, 0)),
+        airport_reachability_text=dest_ctx["airport_reachability_text"],
+        nearest_bus_terminal=dest_ctx["bus_terminal"],
+        bus_distance_km=dest_ctx["bus_dist_km"],
+        feeder_summary=dest_ctx["feeder_summary"],
+    )
+
+    reach_note = (
+        f"Door-to-door transit reachability: "
+        f"{orig_ctx['clean_name']} ({orig_ctx['state']}) connects via railhead {orig_ctx['rail_station']}. "
+        f"Express train connects to {dest_ctx['rail_station']}, where last-mile feeder transfers directly to {dest_ctx['clean_name']} ({dest_ctx['state']})."
+    )
 
     return MultimodalPlanResponse(
         origin=orig_name,
         destination=dest_name,
         origin_coords={"lat": orig_lat, "lon": orig_lon},
         destination_coords={"lat": dest_lat, "lon": dest_lon},
+        origin_reachability=orig_reach,
+        destination_reachability=dest_reach,
+        reachability_note=reach_note,
         plans=plans,
     )

@@ -462,6 +462,115 @@ export default function TravelSearchScreen() {
           </View>
         )}
 
+        {/* All-India Reachability Radar Card */}
+        {inventory && (inventory.origin_reachability || inventory.destination_reachability) && (
+          <View className="bg-slate-900 border-y border-slate-800 p-3.5 shadow-md">
+            <View className="flex-row items-center justify-between mb-2.5">
+              <View className="flex-row items-center space-x-1.5">
+                <Text className="text-base mr-1">🇮🇳</Text>
+                <Text className="text-xs font-JakartaBold text-amber-400 uppercase tracking-wider">
+                  Door-to-Door Reachability Radar
+                </Text>
+              </View>
+              <View className="bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 rounded-full">
+                <Text className="text-[10px] font-JakartaBold text-amber-300">28 States & 8 UTs</Text>
+              </View>
+            </View>
+
+            {/* Origin Reachability Section */}
+            {inventory.origin_reachability && (
+              <View className="bg-slate-800/80 rounded-xl p-2.5 mb-2 border border-slate-700">
+                <View className="flex-row items-center justify-between mb-1">
+                  <View className="flex-row items-center flex-1 mr-2">
+                    <Text className="text-emerald-400 text-xs mr-1 font-JakartaBold">📍 Origin:</Text>
+                    <Text className="text-white text-xs font-JakartaBold" numberOfLines={1}>
+                      {inventory.origin_reachability.clean_name}
+                    </Text>
+                  </View>
+                  <View className="bg-emerald-950 border border-emerald-500/40 px-2 py-0.5 rounded">
+                    <Text className="text-emerald-300 text-[10px] font-JakartaBold">
+                      {inventory.origin_reachability.state}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Train Reachability */}
+                <View className="mt-1 flex-row items-start space-x-1.5">
+                  <Text className="text-xs mr-1">🚆</Text>
+                  <View className="flex-1">
+                    <Text className="text-[11px] font-JakartaSemiBold text-slate-200">
+                      {inventory.origin_reachability.train_reachable_direct
+                        ? `Direct Rail: ${inventory.origin_reachability.rail_station} (${inventory.origin_reachability.rail_dist_km} km)`
+                        : `Train reaches till: ${inventory.origin_reachability.rail_station}`}
+                    </Text>
+                    {!inventory.origin_reachability.train_reachable_direct && (
+                      <Text className="text-[10px] font-JakartaMedium text-amber-300 mt-0.5">
+                        Feeder: {inventory.origin_reachability.feeder_summary}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                {/* Flight Reachability */}
+                <View className="mt-1 flex-row items-start space-x-1.5">
+                  <Text className="text-xs mr-1">✈️</Text>
+                  <View className="flex-1">
+                    <Text className="text-[10px] font-Jakarta text-slate-300">
+                      Flights reach till: {inventory.origin_reachability.airport} ({inventory.origin_reachability.airport_dist_km} km away)
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Destination Reachability Section */}
+            {inventory.destination_reachability && (
+              <View className="bg-slate-800/80 rounded-xl p-2.5 border border-slate-700">
+                <View className="flex-row items-center justify-between mb-1">
+                  <View className="flex-row items-center flex-1 mr-2">
+                    <Text className="text-rose-400 text-xs mr-1 font-JakartaBold">🏁 Destination:</Text>
+                    <Text className="text-white text-xs font-JakartaBold" numberOfLines={1}>
+                      {inventory.destination_reachability.clean_name}
+                    </Text>
+                  </View>
+                  <View className="bg-rose-950 border border-rose-500/40 px-2 py-0.5 rounded">
+                    <Text className="text-rose-300 text-[10px] font-JakartaBold">
+                      {inventory.destination_reachability.state}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Train Arrival */}
+                <View className="mt-1 flex-row items-start space-x-1.5">
+                  <Text className="text-xs mr-1">🚆</Text>
+                  <View className="flex-1">
+                    <Text className="text-[11px] font-JakartaSemiBold text-slate-200">
+                      {inventory.destination_reachability.train_reachable_direct
+                        ? `Direct Rail: ${inventory.destination_reachability.rail_station} (${inventory.destination_reachability.rail_dist_km} km)`
+                        : `Train arrives at: ${inventory.destination_reachability.rail_station}`}
+                    </Text>
+                    {!inventory.destination_reachability.train_reachable_direct && (
+                      <Text className="text-[10px] font-JakartaMedium text-amber-300 mt-0.5">
+                        Last-Mile: {inventory.destination_reachability.feeder_summary} to doorstep
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                {/* Flight Arrival */}
+                <View className="mt-1 flex-row items-start space-x-1.5">
+                  <Text className="text-xs mr-1">✈️</Text>
+                  <View className="flex-1">
+                    <Text className="text-[10px] font-Jakarta text-slate-300">
+                      Flights arrive at: {inventory.destination_reachability.airport} ({inventory.destination_reachability.airport_dist_km} km away)
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
+
         {/* 4 Mode Tabs Row */}
         <View className="flex-row bg-white border-b border-neutral-200">
           <TouchableOpacity

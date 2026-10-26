@@ -466,16 +466,10 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
     is_garhwal = orig_ctx["is_garhwal"] or dest_ctx["is_garhwal"]
     is_hill = orig_ctx["is_hill"] or dest_ctx["is_hill"]
 
-    # Authentic Corridor Title
-    if is_kumaon:
-        if orig_ctx["is_kumaon"]:
-            corridor_title = f"{orig_ctx['clean_name'].upper()} TO {dest_ctx['parent_city'].upper()} (VIA KATHGODAM GATEWAY & DELHI HUB)"
-        else:
-            corridor_title = f"{orig_ctx['parent_city'].upper()} TO {dest_ctx['clean_name'].upper()} (VIA DELHI HUB & KATHGODAM GATEWAY)"
-    elif is_garhwal:
-        corridor_title = f"{orig_ctx['clean_name'].upper()} TO {dest_ctx['clean_name'].upper()} (VIA HARIDWAR / DEHRADUN HUB)"
-    else:
-        corridor_title = f"{orig_ctx['parent_city'].upper()} TO {dest_ctx['parent_city'].upper()}"
+    # Authentic Multi-State & Small Village Corridor Title
+    orig_state_tag = orig_ctx.get("state", "").upper()
+    dest_state_tag = dest_ctx.get("state", "").upper()
+    corridor_title = f"{orig_ctx['clean_name'].upper()} ({orig_state_tag}) TO {dest_ctx['clean_name'].upper()} ({dest_state_tag})"
 
     trains_list: List[TrainInventoryItem] = []
     has_direct_trains = True
@@ -738,8 +732,24 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
                     )
                 )
         else:
-            # Fallback direct or hub connection
-            has_direct_trains = True
+            # Fallback direct or hub connection across states
+            if not orig_ctx["train_reachable_direct"] or not dest_ctx["train_reachable_direct"]:
+                has_direct_trains = False
+                connecting_note = (
+                    f"Transit Reachability Notice: "
+                    f"{orig_ctx['rail_reachability_text']} "
+                    f"{dest_ctx['rail_reachability_text']}"
+                )
+                connecting_itin = {
+                    "transit_hub": f"{orig_ctx['rail_station']} ➔ {dest_ctx['rail_station']}",
+                    "leg1": f"First-Mile: {orig_ctx['clean_name']} ➔ {orig_ctx['rail_station']} ({orig_ctx['feeder_summary']})",
+                    "leg2": f"Long-Haul: Express Train between {orig_ctx['rail_station']} and {dest_ctx['rail_station']}",
+                    "leg3": f"Last-Mile: {dest_ctx['rail_station']} ➔ {dest_ctx['clean_name']} ({dest_ctx['feeder_summary']})",
+                    "transfer_buffer": "45m station connection window",
+                    "recommendation": f"Take feeder taxi from {orig_ctx['clean_name']} to {orig_ctx['rail_station']}, board express train to {dest_ctx['rail_station']}, and transfer directly to {dest_ctx['clean_name']}.",
+                }
+            else:
+                has_direct_trains = True
             gen_hours = max(4, int(rail_dist_km / 65.0))
             gen_mins = (int(rail_dist_km) * 7) % 60
             train_catalog = [
@@ -766,6 +776,35 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
                         classes=classes,
                     )
                 )
+
+    if not trains_list:
+        gen_hours = max(3, int(rail_dist_km / 65.0))
+        gen_mins = (int(rail_dist_km) * 7) % 60
+        train_catalog = [
+            {"num": f"12{random.randint(100, 999)}", "name": f"{orig_ctx['rail_code']} - {dest_ctx['rail_code']} SUPERFAST EXPRESS", "dep": "06:40", "arr_offset": gen_hours, "mult": 1.05},
+            {"num": f"22{random.randint(100, 999)}", "name": f"{orig_ctx['rail_code']} - {dest_ctx['rail_code']} SF EXP", "dep": "16:20", "arr_offset": gen_hours, "mult": 1.10},
+            {"num": f"14{random.randint(100, 999)}", "name": f"{orig_ctx['rail_code']} - {dest_ctx['rail_code']} MAIL EXP", "dep": "21:30", "arr_offset": gen_hours + 1, "mult": 0.95},
+        ]
+        for idx, t in enumerate(train_catalog, start=1):
+            dep_dt = travel_dt
+            arr_dt = dep_dt + timedelta(hours=t["arr_offset"], minutes=gen_mins)
+            classes = _generate_train_classes(base_rail_3a * t["mult"], seed=(idx * 89))
+            trains_list.append(
+                TrainInventoryItem(
+                    train_number=t["num"],
+                    train_name=t["name"],
+                    departure_time=t["dep"],
+                    departure_station=orig_ctx["rail_station"],
+                    departure_date=dep_dt.strftime("%a, %d %b %Y"),
+                    arrival_time=arr_dt.strftime("%H:%M"),
+                    arrival_station=dest_ctx["rail_station"],
+                    arrival_date=arr_dt.strftime("%a, %d %b %Y"),
+                    duration_str=f"{t['arr_offset']}h {gen_mins:02d}m",
+                    running_days=DAY_LETTERS,
+                    active_days=[True] * 7,
+                    classes=classes,
+                )
+            )
 
     # ---------------------------------------------------------
     # 4. BUSES INVENTORY (Authentic Terminals & Boarding Points)
@@ -1040,6 +1079,12 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
         ),
     ]
 
+    reachability_note = (
+        f"Transit reachability breakdown: "
+        f"{orig_ctx['clean_name']} ({orig_ctx.get('state')}) connects via {orig_ctx['rail_station']} ({orig_ctx['rail_dist_km']} km feeder). "
+        f"Long-haul connects to {dest_ctx['rail_station']}, followed by {dest_ctx['rail_dist_km']} km last-mile feeder to {dest_ctx['clean_name']} ({dest_ctx.get('state')})."
+    )
+
     return CorridorInventoryResponse(
         origin=request.origin_name,
         destination=request.destination_name,
@@ -1048,6 +1093,9 @@ def get_corridor_inventory(request: CorridorInventoryRequest) -> CorridorInvento
         has_direct_trains=has_direct_trains,
         connecting_train_note=connecting_note,
         connecting_itinerary=connecting_itin,
+        origin_reachability=orig_ctx,
+        destination_reachability=dest_ctx,
+        reachability_note=reachability_note,
         trains=trains_list,
         buses=buses_list,
         flights=flights_list,
@@ -1101,47 +1149,38 @@ def stitch_door_to_door_plan(request: StitchDoorToDoorRequest) -> MultimodalPlan
             summary=f"Non-stop private {request.selected_class} directly from your doorstep to destination",
         )
 
-    # 1. Determine relevant hubs based on context
-    is_orig_kumaon = orig_ctx["is_kumaon"]
-    is_dest_kumaon = dest_ctx["is_kumaon"]
+    # 1. Determine relevant hubs and authentic GPS coordinates
+    hub_type = "RAILWAY_STATION" if request.selected_mode == "TRAIN" else ("AIRPORT" if request.selected_mode == "FLIGHT" else "BUS_TERMINAL")
+    first_hub, _ = find_nearest_hub(orig_lat, orig_lon, hub_type)
+    last_hub, _ = find_nearest_hub(dest_lat, dest_lon, hub_type)
 
-    # Departure Hub
-    first_hub_name = request.departure_hub_name or (
-        orig_ctx["rail_station"] if request.selected_mode == "TRAIN"
-        else (orig_ctx["airport"] if request.selected_mode == "FLIGHT" else orig_ctx["bus_terminal"])
-    )
+    first_hub_name = request.departure_hub_name or first_hub["name"]
+    first_hub_lat = request.departure_hub_lat or first_hub["latitude"]
+    first_hub_lon = request.departure_hub_lon or first_hub["longitude"]
 
-    # Arrival Hub
-    last_hub_name = request.arrival_hub_name or (
-        dest_ctx["rail_station"] if request.selected_mode == "TRAIN"
-        else (dest_ctx["airport"] if request.selected_mode == "FLIGHT" else dest_ctx["bus_terminal"])
-    )
+    last_hub_name = request.arrival_hub_name or last_hub["name"]
+    last_hub_lat = request.arrival_hub_lat or last_hub["latitude"]
+    last_hub_lon = request.arrival_hub_lon or last_hub["longitude"]
 
     # 2. First-Mile Feeder
-    if is_orig_kumaon and ("kathgodam" in first_hub_name.lower() or "kgm" in first_hub_name.lower() or request.selected_mode == "TRAIN"):
-        first_mile_km = 156.4
-        first_mile_dur = 315
-        first_mile_fare = 2192.0
-        first_operator = "Himalayan Highway Feeder Cab (Mountain Taxi)"
-        first_desc = f"Mountain highway connection via NH109 from {request.origin_name} to Kathgodam Rail Gateway"
-        first_mode = "CAB"
-    else:
-        first_trip = calculate_feeder_trip(
-            start_lat=orig_lat,
-            start_lon=orig_lon,
-            end_lat=orig_lat + 0.05,
-            end_lon=orig_lon + 0.05,
-            mode=request.feeder_mode or "AUTO",
-            start_name=request.origin_name,
-            end_name=first_hub_name,
-            leg_type="FIRST_MILE",
-        )
-        first_mile_km = max(1.5, round(first_trip["distance_km"], 1))
-        first_mile_fare = max(45.0, round(first_trip["fare"], 0))
-        first_mile_dur = max(12, int(first_trip["duration_minutes"]))
-        first_operator = "Uber Auto / Local Auto" if request.feeder_mode != "CAB" else "UberGo AC Cab"
-        first_desc = f"Direct pickup from doorstep to {first_hub_name}"
-        first_mode = request.feeder_mode or "AUTO"
+    first_trip = calculate_feeder_trip(
+        start_lat=orig_lat,
+        start_lon=orig_lon,
+        end_lat=first_hub_lat,
+        end_lon=first_hub_lon,
+        mode=request.feeder_mode or ("CAB" if orig_ctx["is_hill"] else "AUTO"),
+        start_name=request.origin_name,
+        end_name=first_hub_name,
+        leg_type="FIRST_MILE",
+        is_hill=orig_ctx["is_hill"],
+        is_remote=orig_ctx["is_remote"],
+    )
+    first_mile_km = first_trip["distance_km"]
+    first_mile_fare = first_trip["fare"]
+    first_mile_dur = first_trip["duration_minutes"]
+    first_operator = first_trip["operator"]
+    first_desc = f"{first_operator} from doorstep in {orig_ctx['clean_name']} to {first_hub_name} ({first_mile_km} km)"
+    first_mode = first_trip["mode"]
 
     leg1 = MultimodalLegOut(
         leg_index=1,
@@ -1172,35 +1211,29 @@ def stitch_door_to_door_plan(request: StitchDoorToDoorRequest) -> MultimodalPlan
         distance_km=long_haul_dist,
         duration_minutes=long_haul_dur,
         fare=request.selected_fare,
-        description=f"Confirmed ticket in {request.selected_class} class",
+        description=f"Confirmed booking in {request.selected_class} class",
         vehicle_icon="train" if request.selected_mode == "TRAIN" else ("flight" if request.selected_mode == "FLIGHT" else "bus"),
     )
 
     # 4. Last-Mile Feeder
-    if is_dest_kumaon and ("kathgodam" in last_hub_name.lower() or "kgm" in last_hub_name.lower() or request.selected_mode == "TRAIN"):
-        last_mile_km = 156.4
-        last_mile_dur = 330
-        last_mile_fare = 2192.0
-        last_operator = "Himalayan Highway Feeder Cab (Mountain Taxi)"
-        last_desc = f"Mountain highway connection via NH109 from Kathgodam to {request.destination_name}"
-        last_mode = "CAB"
-    else:
-        last_trip = calculate_feeder_trip(
-            start_lat=dest_lat - 0.05,
-            start_lon=dest_lon - 0.05,
-            end_lat=dest_lat,
-            end_lon=dest_lon,
-            mode=request.feeder_mode or "AUTO",
-            start_name=last_hub_name,
-            end_name=request.destination_name,
-            leg_type="LAST_MILE",
-        )
-        last_mile_km = max(1.5, round(last_trip["distance_km"], 1))
-        last_mile_fare = max(45.0, round(last_trip["fare"], 0))
-        last_mile_dur = max(12, int(last_trip["duration_minutes"]))
-        last_operator = "Uber Auto / Local Auto" if request.feeder_mode != "CAB" else "UberGo AC Cab"
-        last_desc = f"Dropoff from {last_hub_name} directly to {request.destination_name}"
-        last_mode = request.feeder_mode or "AUTO"
+    last_trip = calculate_feeder_trip(
+        start_lat=last_hub_lat,
+        start_lon=last_hub_lon,
+        end_lat=dest_lat,
+        end_lon=dest_lon,
+        mode=request.feeder_mode or ("CAB" if dest_ctx["is_hill"] else "AUTO"),
+        start_name=last_hub_name,
+        end_name=request.destination_name,
+        leg_type="LAST_MILE",
+        is_hill=dest_ctx["is_hill"],
+        is_remote=dest_ctx["is_remote"],
+    )
+    last_mile_km = last_trip["distance_km"]
+    last_mile_fare = last_trip["fare"]
+    last_mile_dur = last_trip["duration_minutes"]
+    last_operator = last_trip["operator"]
+    last_desc = f"{last_operator} dropoff from {last_hub_name} directly to {request.destination_name} ({last_mile_km} km)"
+    last_mode = last_trip["mode"]
 
     leg3 = MultimodalLegOut(
         leg_index=3,

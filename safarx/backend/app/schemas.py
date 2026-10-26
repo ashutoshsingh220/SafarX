@@ -129,7 +129,7 @@ class MultimodalPlanRequest(BaseModel):
 class MultimodalLegOut(BaseModel):
     leg_index: int
     leg_type: Literal["FIRST_MILE", "LONG_HAUL", "LAST_MILE"]
-    mode: Literal["AUTO", "CAB", "TRAIN", "FLIGHT", "BUS", "E_RICKSHAW"]
+    mode: str
     operator: str
     origin: str
     destination: str
@@ -151,11 +151,40 @@ class MultimodalPlanOut(BaseModel):
     summary: str
 
 
+class ReachabilityInfo(BaseModel):
+    place_name: str
+    state: str
+    district: Optional[str] = None
+    is_hill: bool = False
+    is_island: bool = False
+    train_reachable_direct: bool = False
+    nearest_railhead_name: str
+    nearest_railhead_code: str
+    railhead_distance_km: float
+    railhead_duration_minutes: int
+    railhead_feeder_mode: str
+    railhead_feeder_fare: float
+    railhead_reachability_text: str
+    nearest_airport_name: str
+    nearest_airport_code: str
+    airport_distance_km: float
+    airport_duration_minutes: int
+    airport_feeder_mode: str
+    airport_feeder_fare: float
+    airport_reachability_text: str
+    nearest_bus_terminal: str
+    bus_distance_km: float
+    feeder_summary: str
+
+
 class MultimodalPlanResponse(BaseModel):
     origin: str
     destination: str
     origin_coords: dict[str, float]
     destination_coords: dict[str, float]
+    origin_reachability: Optional[ReachabilityInfo] = None
+    destination_reachability: Optional[ReachabilityInfo] = None
+    reachability_note: Optional[str] = None
     plans: List[MultimodalPlanOut]
 
 
@@ -255,6 +284,9 @@ class CorridorInventoryResponse(BaseModel):
     has_direct_trains: bool = True
     connecting_train_note: Optional[str] = None
     connecting_itinerary: Optional[dict[str, Any]] = None
+    origin_reachability: Optional[dict[str, Any]] = None
+    destination_reachability: Optional[dict[str, Any]] = None
+    reachability_note: Optional[str] = None
     trains: List[TrainInventoryItem]
     buses: List[BusInventoryItem]
     flights: List[FlightInventoryItem]
