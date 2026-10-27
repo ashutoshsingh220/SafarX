@@ -98,105 +98,73 @@ function lookupKnownCoords(query: string): { latitude: number; longitude: number
   return null;
 }
 
-const CITY_CURATED_PHOTOS: Record<
-  string,
-  Array<{ url: string; caption: string }>
-> = {
+export interface PlacePhotoItem {
+  source?: any;
+  url?: string;
+  caption: string;
+}
+
+const LOCAL_DESTINATION_PHOTOS: Record<string, PlacePhotoItem[]> = {
   pithoragarh: [
     {
-      url: "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=800&q=80",
-      caption: "Pithoragarh • Soar Valley & Mountain Vista",
+      source: require("@/assets/images/destinations/pithoragarh_1.jpg"),
+      caption: "Pithoragarh • Sunrise & Soar Valley",
     },
     {
-      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
-      caption: "Pithoragarh • Chandak Ridge Lookout",
-    },
-    {
-      url: "https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=800&q=80",
+      source: require("@/assets/images/destinations/pithoragarh_2.jpg"),
       caption: "Pithoragarh • Historic London Fort",
     },
     {
-      url: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=800&q=80",
-      caption: "Pithoragarh • High Himalayan Snowpeaks",
+      source: require("@/assets/images/destinations/pithoragarh_3.jpg"),
+      caption: "Pithoragarh • Himalayan Mountain Panorama",
+    },
+    {
+      source: require("@/assets/images/destinations/pithoragarh_4.jpg"),
+      caption: "Pithoragarh • Jagir Khet Waterfall",
+    },
+    {
+      source: require("@/assets/images/destinations/pithoragarh_5.jpg"),
+      caption: "Pithoragarh • Naini Saini Airport",
     },
   ],
   dehradun: [
     {
-      url: "https://images.unsplash.com/photo-1587595431973-160d0d94add1?w=800&q=80",
-      caption: "Dehradun • Clock Tower & Valley View",
-    },
-    {
-      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
-      caption: "Dehradun • Foothills & Tea Gardens",
+      source: require("@/assets/images/destinations/dehradun_1.jpg"),
+      caption: "Dehradun • Valley & Foothills View",
     },
   ],
   nainital: [
     {
-      url: "https://images.unsplash.com/photo-1571536802807-30451e3955d8?w=800&q=80",
+      source: require("@/assets/images/destinations/nainital_1.jpg"),
       caption: "Nainital • Emerald Naini Lake",
-    },
-    {
-      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
-      caption: "Nainital • Mall Road & Mountain Ridge",
     },
   ],
   darbhanga: [
     {
-      url: "https://images.unsplash.com/photo-1596178065887-1198b6148b2b?w=800&q=80",
-      caption: "Darbhanga • Historic Raj Darbhanga Palace",
-    },
-    {
-      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
-      caption: "Darbhanga • Cultural Heartland of Mithila",
+      source: require("@/assets/images/destinations/darbhanga_1.jpg"),
+      caption: "Darbhanga • Historic Raj Palace",
     },
   ],
   mumbai: [
     {
-      url: "https://images.unsplash.com/photo-1566552881560-0be862a7c445?w=800&q=80",
-      caption: "Mumbai • Gateway of India & Seafront",
-    },
-    {
-      url: "https://images.unsplash.com/photo-1570168007204-dfb528c6958f?w=800&q=80",
-      caption: "Mumbai • Marine Drive Queen's Necklace",
-    },
-  ],
-  pune: [
-    {
-      url: "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=800&q=80",
-      caption: "Pune • Shaniwar Wada & Heritage",
-    },
-    {
-      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
-      caption: "Pune • Vetal Hill Skyline View",
+      source: require("@/assets/images/destinations/mumbai_1.jpg"),
+      caption: "Mumbai • Bandra-Worli Sea Link",
     },
   ],
 };
 
-function getCuratedPhotosForPlace(name: string): { url: string; caption: string }[] {
+function getCuratedPhotosForPlace(name: string): PlacePhotoItem[] {
   const q = name.toLowerCase();
-  for (const [city, list] of Object.entries(CITY_CURATED_PHOTOS)) {
+  for (const [city, list] of Object.entries(LOCAL_DESTINATION_PHOTOS)) {
     if (q.includes(city)) return list;
   }
-  return [
-    {
-      url: "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=800&q=80",
-      caption: `${name} • Scenic Vistas`,
-    },
-    {
-      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
-      caption: `${name} • Nature & Landscapes`,
-    },
-    {
-      url: "https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=800&q=80",
-      caption: `${name} • City & Landmarks`,
-    },
-  ];
+  return LOCAL_DESTINATION_PHOTOS.pithoragarh;
 }
 
-function PhotoCard({ img }: { img: { url: string; caption: string } }) {
-  const [hasError, setHasError] = useState(false);
+function PhotoCard({ img }: { img: PlacePhotoItem }) {
+  const imgSource = img.source || (img.url ? { uri: img.url } : null);
 
-  if (hasError || !img.url) {
+  if (!imgSource) {
     return (
       <View
         className="mr-3 rounded-2xl overflow-hidden border border-neutral-700 justify-between p-3"
@@ -222,20 +190,13 @@ function PhotoCard({ img }: { img: { url: string; caption: string } }) {
 
   return (
     <View
-      className="mr-3 rounded-2xl overflow-hidden bg-slate-900 border border-neutral-700 relative"
+      className="mr-3 rounded-2xl overflow-hidden bg-slate-900 border border-neutral-700 relative shadow-md"
       style={{ width: 220, height: 135 }}
     >
       <Image
-        source={{
-          uri: img.url,
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-          },
-        }}
+        source={imgSource}
         style={{ width: 220, height: 135 }}
         resizeMode="cover"
-        onError={() => setHasError(true)}
       />
       <View
         style={{
@@ -244,7 +205,7 @@ function PhotoCard({ img }: { img: { url: string; caption: string } }) {
           left: 0,
           right: 0,
           padding: 8,
-          backgroundColor: "rgba(0, 0, 0, 0.7)",
+          backgroundColor: "rgba(0, 0, 0, 0.72)",
         }}
       >
         <Text
@@ -456,7 +417,7 @@ export default function ExplorePlaceScreen() {
     longitude: initialLng,
   });
 
-  const [photos, setPhotos] = useState<{ url: string; caption: string }[]>(() =>
+  const [photos, setPhotos] = useState<PlacePhotoItem[]>(() =>
     getCuratedPhotosForPlace(rawName)
   );
 
@@ -515,6 +476,9 @@ export default function ExplorePlaceScreen() {
       setLoadingPhotos(true);
       const cleanCity = placeName.split(",")[0].trim();
 
+      // Ensure local authentic high-definition destination photos are loaded
+      setPhotos(getCuratedPhotosForPlace(cleanCity));
+
       try {
         const wikiRes = await fetch(
           `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanCity)}`,
@@ -528,93 +492,20 @@ export default function ExplorePlaceScreen() {
 
         if (isCancelled) return;
 
-        if (wikiData && (wikiData.extract || wikiData.thumbnail)) {
-          if (wikiData.extract) {
-            setPlaceDescription(wikiData.extract);
-          }
-
-          const photoList: { url: string; caption: string }[] = [];
-
-          if (wikiData.thumbnail?.source) {
-            photoList.push({
-              url: wikiData.thumbnail.source,
-              caption: `${cleanCity} • City Overview`,
-            });
-          }
-
-          if (wikiData.originalimage?.source && wikiData.originalimage.source !== wikiData.thumbnail?.source) {
-            photoList.push({
-              url: wikiData.originalimage.source,
-              caption: `${cleanCity} • Landscape Panorama`,
-            });
-          }
-
-          // Try fetching additional images from Wikimedia
-          try {
-            const mediaRes = await fetch(
-              `https://en.wikipedia.org/w/api.php?action=query&generator=images&titles=${encodeURIComponent(
-                cleanCity
-              )}&gimlimit=6&prop=imageinfo&iiprop=url&iiurlwidth=800&format=json&origin=*`,
-              {
-                headers: {
-                  "User-Agent": "SafarX-Travel-App/1.0 (travel@safarx.com)",
-                },
-              }
-            );
-            const mediaData = await mediaRes.json();
-            if (mediaData?.query?.pages) {
-              const pages = Object.values(mediaData.query.pages) as any[];
-              for (const p of pages) {
-                const info = p.imageinfo?.[0];
-                if (info?.thumburl && !info.thumburl.endsWith(".svg")) {
-                  photoList.push({
-                    url: info.thumburl,
-                    caption: `${cleanCity} • Highlight ${photoList.length + 1}`,
-                  });
-                  if (photoList.length >= 4) break;
-                }
-              }
-            }
-          } catch (e) {
-            // non-blocking
-          }
-
-          // Merge with curated high-res photos
-          const curated = getCuratedPhotosForPlace(cleanCity);
-          const combined = [...photoList, ...curated].slice(0, 5);
-
-          if (!isCancelled && combined.length > 0) {
-            setPhotos(combined);
-            setLoadingPhotos(false);
-            return;
-          }
+        if (wikiData && wikiData.extract) {
+          setPlaceDescription(wikiData.extract);
         }
       } catch (err) {
-        console.log("Wikipedia fetch notice:", err);
-      }
-
-      // Curated fallbacks if network or Wikipedia unavailable
-      if (!isCancelled) {
-        setPhotos([
-          {
-            url: "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=800&auto=format&fit=crop&q=80",
-            caption: `${cleanCity} • Scenic Mountain Vista`,
-          },
-          {
-            url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&auto=format&fit=crop&q=80",
-            caption: `${cleanCity} • Nature & Landscapes`,
-          },
-          {
-            url: "https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=800&auto=format&fit=crop&q=80",
-            caption: `${cleanCity} • City & Landmarks`,
-          },
-        ]);
-        if (!placeDescription) {
-          setPlaceDescription(
-            `${cleanCity} is a celebrated destination located in ${placeAddress}, surrounded by beautiful topography, historic routes, and regional attractions.`
-          );
+        console.log("Wikipedia summary notice:", err);
+      } finally {
+        if (!isCancelled) {
+          if (!placeDescription) {
+            setPlaceDescription(
+              `${cleanCity} is a celebrated destination located in ${placeAddress}, surrounded by beautiful topography, historic routes, and regional attractions.`
+            );
+          }
+          setLoadingPhotos(false);
         }
-        setLoadingPhotos(false);
       }
     };
 
