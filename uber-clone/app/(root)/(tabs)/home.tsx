@@ -53,8 +53,39 @@ const Home = () => {
   } = useFetch<Ride[]>(user?.id ? `/(api)/ride/${user.id}` : "");
 
   useEffect(() => {
+    let locationSubscription: Location.LocationSubscription | null = null;
+    let isMounted = true;
+
+    const updateLocationWithCoords = async (latitude: number, longitude: number) => {
+      // Don't override if coords are default Mountain View emulator unless user is actually there
+      if (Math.abs(latitude - 37.422) < 0.1 && Math.abs(longitude - (-122.084)) < 0.1) {
+        return;
+      }
+
+      let addressText = "Current Location";
+      try {
+        const address = await Location.reverseGeocodeAsync({ latitude, longitude });
+        if (address && address.length > 0) {
+          const item = address[0];
+          const parts = [item.name, item.street, item.subregion || item.city, item.region].filter(Boolean);
+          const unique = Array.from(new Set(parts));
+          addressText = unique.join(", ") || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+        }
+      } catch (e) {
+        addressText = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+      }
+
+      if (isMounted) {
+        setUserLocation({
+          latitude,
+          longitude,
+          address: addressText,
+        });
+      }
+    };
+
     (async () => {
-      // Set initial user location to Symbiosis Institute of Technology, Pune
+      // Set initial fallback location to Pune SIT
       setUserLocation({
         latitude: 18.5412,
         longitude: 73.7275,
@@ -62,36 +93,59 @@ const Home = () => {
       });
 
       try {
-        let { status } = await Location.requestForegroundPermissionsAsync();
+        const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== "granted") {
           setHasPermission(false);
           return;
         }
+        setHasPermission(true);
 
-        let location = await Location.getCurrentPositionAsync({});
-
-        // Only update if coords are real and not default Android emulator Mountain View (37.422)
-        if (
-          location?.coords &&
-          Math.abs(location.coords.latitude - 37.422) > 1
-        ) {
-          const address = await Location.reverseGeocodeAsync({
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-          });
-
-          if (address && address.length > 0) {
-            setUserLocation({
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-              address: `${address[0].name || ""}, ${address[0].region || address[0].city || ""}`,
-            });
+        // 1. Instantly read last known cached location (instant, no timeout)
+        try {
+          const lastKnown = await Location.getLastKnownPositionAsync({});
+          if (lastKnown?.coords && isMounted) {
+            await updateLocationWithCoords(lastKnown.coords.latitude, lastKnown.coords.longitude);
           }
+        } catch (cachedErr) {
+          console.log("Cached location notice:", cachedErr);
         }
+
+        // 2. Fetch fresh balanced GPS position
+        try {
+          const current = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          if (current?.coords && isMounted) {
+            await updateLocationWithCoords(current.coords.latitude, current.coords.longitude);
+          }
+        } catch (posErr) {
+          console.log("Fresh GPS lookup notice:", posErr);
+        }
+
+        // 3. Continuously track live location changes as the user moves
+        locationSubscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: 4000,
+            distanceInterval: 10,
+          },
+          (loc) => {
+            if (loc?.coords && isMounted) {
+              updateLocationWithCoords(loc.coords.latitude, loc.coords.longitude);
+            }
+          }
+        );
       } catch (err) {
         console.log("GPS Location notice:", err);
       }
     })();
+
+    return () => {
+      isMounted = false;
+      if (locationSubscription) {
+        locationSubscription.remove();
+      }
+    };
   }, []);
 
   const handleDestinationPress = (location: {
