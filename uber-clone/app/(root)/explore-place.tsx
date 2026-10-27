@@ -226,7 +226,13 @@ function PhotoCard({ img }: { img: { url: string; caption: string } }) {
       style={{ width: 220, height: 135 }}
     >
       <Image
-        source={{ uri: img.url }}
+        source={{
+          uri: img.url,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+          },
+        }}
         style={{ width: 220, height: 135 }}
         resizeMode="cover"
         onError={() => setHasError(true)}
@@ -573,22 +579,12 @@ export default function ExplorePlaceScreen() {
             // non-blocking
           }
 
-          // Add verified high-res scenic photos if needed
-          if (photoList.length < 3) {
-            photoList.push(
-              {
-                url: "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=800&auto=format&fit=crop&q=80",
-                caption: `${cleanCity} • Scenic Vistas`,
-              },
-              {
-                url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&auto=format&fit=crop&q=80",
-                caption: `${cleanCity} • Nature & Landscapes`,
-              }
-            );
-          }
+          // Merge with curated high-res photos
+          const curated = getCuratedPhotosForPlace(cleanCity);
+          const combined = [...photoList, ...curated].slice(0, 5);
 
-          if (!isCancelled && photoList.length > 0) {
-            setPhotos(photoList);
+          if (!isCancelled && combined.length > 0) {
+            setPhotos(combined);
             setLoadingPhotos(false);
             return;
           }
