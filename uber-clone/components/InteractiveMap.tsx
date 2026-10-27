@@ -7,7 +7,9 @@ export interface MapMarker {
   latitude: number;
   longitude: number;
   title?: string;
-  type?: "user" | "destination" | "driver";
+  subtitle?: string;
+  type?: "user" | "destination" | "driver" | "poi";
+  icon?: string;
 }
 
 interface InteractiveMapProps {
@@ -20,8 +22,10 @@ interface InteractiveMapProps {
   routeCoordinates?: [number, number][]; // [lat, lng]
   routeDuration?: string | null;
   routeDistance?: string | null;
-  recenterPosition?: "top-right" | "bottom-right";
+  recenterPosition?: "top-right" | "bottom-right" | "mid-right";
   showRecenter?: boolean;
+  showLayerToggle?: boolean;
+  mapType?: "default" | "satellite" | "terrain";
   style?: any;
   zoom?: number;
 }
@@ -38,6 +42,8 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   routeDistance,
   recenterPosition = "top-right",
   showRecenter = true,
+  showLayerToggle = true,
+  mapType = "default",
   style,
   zoom,
 }) => {
@@ -76,7 +82,9 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         lat: m.latitude,
         lng: m.longitude,
         title: m.title || "Cab",
+        subtitle: m.subtitle,
         type: m.type || "driver",
+        icon: m.icon,
       });
     });
 
@@ -93,6 +101,8 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     const recenterTopStyle =
       recenterPosition === "bottom-right"
         ? "bottom: 16px; right: 16px;"
+        : recenterPosition === "mid-right"
+        ? "top: 125px; right: 14px;"
         : "top: 14px; right: 14px;";
 
     return `
@@ -175,6 +185,43 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       background-color: #F1F3F4;
       transform: scale(0.95);
     }
+    .google-layer-container {
+      position: absolute; ${
+        recenterPosition === "bottom-right"
+          ? "bottom: 70px; right: 16px;"
+          : recenterPosition === "mid-right"
+          ? "top: 178px; right: 14px;"
+          : "top: 68px; right: 14px;"
+      } z-index: 1000;
+      display: flex; flex-direction: column; align-items: flex-end;
+    }
+    .google-layer-fab {
+      width: 44px; height: 44px; background: #FFFFFF; border-radius: 50%;
+      border: none; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: background-color 0.15s, transform 0.1s;
+      outline: none;
+    }
+    .google-layer-fab:active {
+      background-color: #F1F3F4;
+      transform: scale(0.95);
+    }
+    .layer-picker-menu {
+      position: absolute; ${recenterPosition === "bottom-right" ? "bottom: 50px; right: 0;" : "top: 50px; right: 0;"}
+      background: rgba(255, 255, 255, 0.98);
+      border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+      padding: 8px; display: flex; flex-direction: column; gap: 4px;
+      min-width: 130px; border: 1px solid rgba(0,0,0,0.08); z-index: 1001;
+    }
+    .map-type-btn {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      color: #3C4043; cursor: pointer; transition: all 0.15s;
+    }
+    .map-type-btn.active {
+      background: #E8F0FE; color: #1A73E8;
+    }
+    .map-type-icon { font-size: 16px; }
     .duration-badge {
       background: #1A73E8; color: #FFFFFF; padding: 5px 10px;
       border-radius: 14px; font-size: 12px; font-weight: 700;
@@ -203,6 +250,35 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       : ""
   }
 
+  ${
+    showLayerToggle
+      ? `
+  <!-- Google Maps Style Layer Type Toggle (Default, Satellite, Terrain) -->
+  <div class="google-layer-container">
+    <button class="google-layer-fab" onclick="toggleLayerMenu(event)" aria-label="Map Layers">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#5F6368" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <div id="layer-menu" class="layer-picker-menu" style="display: none;">
+      <div class="map-type-btn ${mapType === "default" ? "active" : ""}" id="btn-default" onclick="selectMapType('default', event)">
+        <span class="map-type-icon">🗺️</span>
+        <span>Default</span>
+      </div>
+      <div class="map-type-btn ${mapType === "satellite" ? "active" : ""}" id="btn-satellite" onclick="selectMapType('satellite', event)">
+        <span class="map-type-icon">🛰️</span>
+        <span>Satellite</span>
+      </div>
+      <div class="map-type-btn ${mapType === "terrain" ? "active" : ""}" id="btn-terrain" onclick="selectMapType('terrain', event)">
+        <span class="map-type-icon">⛰️</span>
+        <span>Terrain</span>
+      </div>
+    </div>
+  </div>
+  `
+      : ""
+  }
+
   <script>
     var userLat = ${userLatitude};
     var userLng = ${userLongitude};
@@ -220,11 +296,25 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       tap: true
     }).setView([${centerLat}, ${centerLng}], ${initialZoom});
 
-    // Real Google Maps standard road tiles
-    var googleTiles = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+    // Google Maps base layers (Default Road, Satellite Hybrid, Terrain)
+    var currentMapType = '${mapType || "default"}';
+    
+    var roadLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
       maxZoom: 20,
       subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
     });
+    var satelliteLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+      maxZoom: 20,
+      subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+    });
+    var terrainLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
+      maxZoom: 20,
+      subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+    });
+
+    var activeBaseLayer = roadLayer;
+    if (currentMapType === 'satellite') activeBaseLayer = satelliteLayer;
+    else if (currentMapType === 'terrain') activeBaseLayer = terrainLayer;
 
     // High reliability CartoDB fallback layer
     var fallbackTiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
@@ -232,13 +322,59 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       subdomains: 'abcd'
     });
 
-    googleTiles.on('tileerror', function() {
+    activeBaseLayer.on('tileerror', function() {
       if (!map.hasLayer(fallbackTiles)) {
         fallbackTiles.addTo(map);
       }
     });
 
-    googleTiles.addTo(map);
+    activeBaseLayer.addTo(map);
+
+    function setMapType(type) {
+      if (activeBaseLayer && map.hasLayer(activeBaseLayer)) {
+        map.removeLayer(activeBaseLayer);
+      }
+      if (type === 'satellite') {
+        activeBaseLayer = satelliteLayer;
+      } else if (type === 'terrain') {
+        activeBaseLayer = terrainLayer;
+      } else {
+        activeBaseLayer = roadLayer;
+      }
+      activeBaseLayer.addTo(map);
+      activeBaseLayer.bringToBack();
+      currentMapType = type;
+
+      ['default', 'satellite', 'terrain'].forEach(function(t) {
+        var el = document.getElementById('btn-' + t);
+        if (el) {
+          if (t === type) el.classList.add('active');
+          else el.classList.remove('active');
+        }
+      });
+    }
+
+    function toggleLayerMenu(e) {
+      if (e) e.stopPropagation();
+      var menu = document.getElementById('layer-menu');
+      if (menu) {
+        menu.style.display = (menu.style.display === 'none' || menu.style.display === '') ? 'flex' : 'none';
+      }
+    }
+
+    function selectMapType(type, e) {
+      if (e) e.stopPropagation();
+      setMapType(type);
+      var menu = document.getElementById('layer-menu');
+      if (menu) menu.style.display = 'none';
+    }
+
+    document.addEventListener('click', function() {
+      var menu = document.getElementById('layer-menu');
+      if (menu && menu.style.display !== 'none') {
+        menu.style.display = 'none';
+      }
+    });
 
     // Invalidate size once container renders
     setTimeout(function() { map.invalidateSize(); }, 150);
@@ -277,6 +413,14 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           iconSize: [32, 42],
           iconAnchor: [16, 40]
         });
+      } else if (item.type === 'poi') {
+        var emoji = item.icon || '📍';
+        icon = L.divIcon({
+          className: '',
+          html: '<div style="background:#FFFFFF;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.32);border:2.5px solid #1A73E8;font-size:16px;">' + emoji + '</div>',
+          iconSize: [34, 34],
+          iconAnchor: [17, 17]
+        });
       } else {
         icon = L.divIcon({
           className: '',
@@ -288,7 +432,12 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
       var m = L.marker([item.lat, item.lng], { icon: icon }).addTo(map);
       if (item.title) {
-        m.bindPopup("<b>" + item.title + "</b>");
+        var popupHtml = "<div style='font-family:-apple-system,sans-serif;padding:2px;'><b style='font-size:13px;color:#202124;'>" + item.title + "</b>";
+        if (item.subtitle) {
+          popupHtml += "<div style='font-size:11px;color:#5F6368;margin-top:2px;'>" + item.subtitle + "</div>";
+        }
+        popupHtml += "</div>";
+        m.bindPopup(popupHtml);
       }
     });
 
@@ -345,6 +494,9 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     routeDuration,
     routeDistance,
     recenterPosition,
+    showRecenter,
+    showLayerToggle,
+    mapType,
     zoom,
   ]);
 

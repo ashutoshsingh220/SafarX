@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSmartTripStore } from "../../../src/features/smarttrip/store/smartTripStore";
 import { useProfileStore } from "../../../store/profileStore";
+import { useLocationStore } from "../../../store";
 import {
   fetchCorridorInventory,
   stitchDoorToDoorPlan,
@@ -26,25 +27,60 @@ import {
   TransitClassOption,
 } from "../../../src/features/smarttrip/types/smarttrip";
 
-const QUICK_DATES = [
-  { label: "Today", date: "25-Sep-2026" },
-  { label: "Tomorrow", date: "26-Sep-2026" },
-  { label: "Thu, 15 Oct", date: "15-Oct-2026" },
-  { label: "Mon, 05 Oct (Tejas/Rajdhani)", date: "05-Oct-2026" },
-  { label: "Wed, 07 Oct", date: "07-Oct-2026" },
-];
+function getDynamicQuickDates() {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  const formatApiDate = (d: Date) => {
+    const day = String(d.getDate()).padStart(2, "0");
+    const mon = months[d.getMonth()];
+    const yr = d.getFullYear();
+    return `${day}-${mon}-${yr}`;
+  };
+
+  const today = new Date();
+  
+  const tomorrow = new Date();
+  tomorrow.setDate(today.getDate() + 1);
+
+  const day2 = new Date();
+  day2.setDate(today.getDate() + 2);
+
+  const day3 = new Date();
+  day3.setDate(today.getDate() + 3);
+
+  const nextWeek = new Date();
+  nextWeek.setDate(today.getDate() + 7);
+
+  return [
+    { label: "Today", date: formatApiDate(today) },
+    { label: "Tomorrow", date: formatApiDate(tomorrow) },
+    { label: `${days[day2.getDay()]}, ${day2.getDate()} ${months[day2.getMonth()]}`, date: formatApiDate(day2) },
+    { label: `${days[day3.getDay()]}, ${day3.getDate()} ${months[day3.getMonth()]}`, date: formatApiDate(day3) },
+    { label: `Next ${days[nextWeek.getDay()]} (${nextWeek.getDate()} ${months[nextWeek.getMonth()]})`, date: formatApiDate(nextWeek) },
+  ];
+}
 
 export default function TravelSearchScreen() {
   const { setSelectedPlan } = useSmartTripStore();
   const profileStore = useProfileStore();
+  const { userAddress } = useLocationStore();
   const params = useLocalSearchParams<{ origin?: string; destination?: string; date?: string }>();
 
-  const [origin, setOrigin] = useState(params.origin ? String(params.origin) : "Navi Mumbai, Maharashtra, India");
-  const [destination, setDestination] = useState(params.destination ? String(params.destination) : "Darbhanga, Bihar, India");
+  const dynamicQuickDates = React.useMemo(() => getDynamicQuickDates(), []);
+
+  const [origin, setOrigin] = useState(
+    params.origin ? String(params.origin) : (userAddress || "")
+  );
+  const [destination, setDestination] = useState(
+    params.destination ? String(params.destination) : ""
+  );
   const [originCoords, setOriginCoords] = useState<{ lat?: number; lon?: number }>({});
   const [destinationCoords, setDestinationCoords] = useState<{ lat?: number; lon?: number }>({});
 
-  const [travelDate, setTravelDate] = useState(params.date ? String(params.date) : "05-Oct-2026");
+  const [travelDate, setTravelDate] = useState(
+    params.date ? String(params.date) : dynamicQuickDates[0].date
+  );
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [feederMode, setFeederMode] = useState<"AUTO" | "CAB">("AUTO");
 
@@ -75,7 +111,7 @@ export default function TravelSearchScreen() {
 
   // Only auto-search on initial mount if BOTH origin and destination were passed
   useEffect(() => {
-    if (origin.trim() && destination.trim()) {
+    if (params.origin && params.destination) {
       handleSearch();
     }
   }, []);
@@ -374,8 +410,8 @@ export default function TravelSearchScreen() {
             </View>
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row">
-              {/* Custom Date Bubble if not in QUICK_DATES */}
-              {!QUICK_DATES.some((d) => d.date === travelDate) && (
+              {/* Custom Date Bubble if not in dynamicQuickDates */}
+              {!dynamicQuickDates.some((d) => d.date === travelDate) && (
                 <TouchableOpacity
                   onPress={() => setShowDatePicker(true)}
                   className="px-3 py-1.5 rounded-full mr-2 border bg-primary-500 border-primary-500 flex-row items-center"
@@ -386,7 +422,7 @@ export default function TravelSearchScreen() {
                 </TouchableOpacity>
               )}
 
-              {QUICK_DATES.map((item) => (
+              {dynamicQuickDates.map((item) => (
                 <TouchableOpacity
                   key={item.date}
                   onPress={() => {
@@ -492,9 +528,6 @@ export default function TravelSearchScreen() {
                   Door-to-Door Reachability Radar
                 </Text>
               </View>
-              <View className="bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 rounded-full">
-                <Text className="text-[10px] font-JakartaBold text-amber-300">28 States & 8 UTs</Text>
-              </View>
             </View>
 
             {/* Origin Reachability Section */}
@@ -521,7 +554,7 @@ export default function TravelSearchScreen() {
                     <Text className="text-[11px] font-JakartaSemiBold text-slate-200">
                       {inventory.origin_reachability.train_reachable_direct
                         ? `Direct Rail: ${inventory.origin_reachability.rail_station} (${inventory.origin_reachability.rail_dist_km} km)`
-                        : `Train reaches till: ${inventory.origin_reachability.rail_station}`}
+                        : `Board train at: ${inventory.origin_reachability.rail_station}`}
                     </Text>
                     {!inventory.origin_reachability.train_reachable_direct && (
                       <Text className="text-[10px] font-JakartaMedium text-amber-300 mt-0.5">
@@ -536,7 +569,7 @@ export default function TravelSearchScreen() {
                   <Text className="text-xs mr-1">✈️</Text>
                   <View className="flex-1">
                     <Text className="text-[10px] font-Jakarta text-slate-300">
-                      Flights reach till: {inventory.origin_reachability.airport} ({inventory.origin_reachability.airport_dist_km} km away)
+                      Flights depart from: {inventory.origin_reachability.airport} ({inventory.origin_reachability.airport_dist_km} km away)
                     </Text>
                   </View>
                 </View>
