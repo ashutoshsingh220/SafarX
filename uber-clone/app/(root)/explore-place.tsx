@@ -98,35 +98,149 @@ function lookupKnownCoords(query: string): { latitude: number; longitude: number
   return null;
 }
 
+const CITY_CURATED_PHOTOS: Record<
+  string,
+  Array<{ url: string; caption: string }>
+> = {
+  pithoragarh: [
+    {
+      url: "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=800&q=80",
+      caption: "Pithoragarh • Soar Valley & Mountain Vista",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
+      caption: "Pithoragarh • Chandak Ridge Lookout",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=800&q=80",
+      caption: "Pithoragarh • Historic London Fort",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=800&q=80",
+      caption: "Pithoragarh • High Himalayan Snowpeaks",
+    },
+  ],
+  dehradun: [
+    {
+      url: "https://images.unsplash.com/photo-1587595431973-160d0d94add1?w=800&q=80",
+      caption: "Dehradun • Clock Tower & Valley View",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
+      caption: "Dehradun • Foothills & Tea Gardens",
+    },
+  ],
+  nainital: [
+    {
+      url: "https://images.unsplash.com/photo-1571536802807-30451e3955d8?w=800&q=80",
+      caption: "Nainital • Emerald Naini Lake",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
+      caption: "Nainital • Mall Road & Mountain Ridge",
+    },
+  ],
+  darbhanga: [
+    {
+      url: "https://images.unsplash.com/photo-1596178065887-1198b6148b2b?w=800&q=80",
+      caption: "Darbhanga • Historic Raj Darbhanga Palace",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
+      caption: "Darbhanga • Cultural Heartland of Mithila",
+    },
+  ],
+  mumbai: [
+    {
+      url: "https://images.unsplash.com/photo-1566552881560-0be862a7c445?w=800&q=80",
+      caption: "Mumbai • Gateway of India & Seafront",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1570168007204-dfb528c6958f?w=800&q=80",
+      caption: "Mumbai • Marine Drive Queen's Necklace",
+    },
+  ],
+  pune: [
+    {
+      url: "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=800&q=80",
+      caption: "Pune • Shaniwar Wada & Heritage",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
+      caption: "Pune • Vetal Hill Skyline View",
+    },
+  ],
+};
+
+function getCuratedPhotosForPlace(name: string): { url: string; caption: string }[] {
+  const q = name.toLowerCase();
+  for (const [city, list] of Object.entries(CITY_CURATED_PHOTOS)) {
+    if (q.includes(city)) return list;
+  }
+  return [
+    {
+      url: "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=800&q=80",
+      caption: `${name} • Scenic Vistas`,
+    },
+    {
+      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&q=80",
+      caption: `${name} • Nature & Landscapes`,
+    },
+    {
+      url: "https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=800&q=80",
+      caption: `${name} • City & Landmarks`,
+    },
+  ];
+}
+
 function PhotoCard({ img }: { img: { url: string; caption: string } }) {
   const [hasError, setHasError] = useState(false);
-  const [loading, setLoading] = useState(true);
+
+  if (hasError || !img.url) {
+    return (
+      <View
+        className="mr-3 rounded-2xl overflow-hidden border border-neutral-700 justify-between p-3"
+        style={{ width: 220, height: 135, backgroundColor: "#1E293B" }}
+      >
+        <View className="flex-row items-center justify-between">
+          <Text className="text-2xl">🏔️</Text>
+          <View className="bg-primary-500/20 px-2 py-0.5 rounded-full border border-primary-500/40">
+            <Text className="text-primary-300 text-[10px] font-JakartaBold">Scenic Point</Text>
+          </View>
+        </View>
+        <View>
+          <Text className="text-white text-xs font-JakartaBold" numberOfLines={2}>
+            {img.caption}
+          </Text>
+          <Text className="text-neutral-400 text-[10px] font-Jakarta mt-0.5">
+            Verified Destination Point
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View
-      className="mr-3 rounded-2xl overflow-hidden bg-neutral-800 border border-neutral-700 relative"
+      className="mr-3 rounded-2xl overflow-hidden bg-slate-900 border border-neutral-700 relative"
       style={{ width: 220, height: 135 }}
     >
-      {loading && !hasError && (
-        <View className="absolute inset-0 items-center justify-center bg-neutral-800 z-10">
-          <ActivityIndicator size="small" color="#0286FF" />
-        </View>
-      )}
       <Image
-        source={{
-          uri: hasError
-            ? "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&auto=format&fit=crop&q=80"
-            : img.url,
-        }}
-        className="w-full h-full"
+        source={{ uri: img.url }}
+        style={{ width: 220, height: 135 }}
         resizeMode="cover"
-        onLoadEnd={() => setLoading(false)}
-        onError={() => {
-          setHasError(true);
-          setLoading(false);
-        }}
+        onError={() => setHasError(true)}
       />
-      <View className="absolute bottom-0 left-0 right-0 p-2 bg-black/65">
+      <View
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          padding: 8,
+          backgroundColor: "rgba(0, 0, 0, 0.7)",
+        }}
+      >
         <Text
           className="text-white text-[11px] font-JakartaSemiBold"
           numberOfLines={1}
@@ -336,20 +450,13 @@ export default function ExplorePlaceScreen() {
     longitude: initialLng,
   });
 
-  const [photos, setPhotos] = useState<{ url: string; caption: string }[]>([
-    {
-      url: "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=800&auto=format&fit=crop&q=80",
-      caption: `${rawName} • Scenic Mountain Vista`,
-    },
-    {
-      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800&auto=format&fit=crop&q=80",
-      caption: `${rawName} • Nature & Landscapes`,
-    },
-    {
-      url: "https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=800&auto=format&fit=crop&q=80",
-      caption: `${rawName} • City & Landmarks`,
-    },
-  ]);
+  const [photos, setPhotos] = useState<{ url: string; caption: string }[]>(() =>
+    getCuratedPhotosForPlace(rawName)
+  );
+
+  useEffect(() => {
+    setPhotos(getCuratedPhotosForPlace(placeName));
+  }, [placeName]);
   const [placeDescription, setPlaceDescription] = useState<string>("");
   const [loadingPhotos, setLoadingPhotos] = useState(false);
 
@@ -404,7 +511,12 @@ export default function ExplorePlaceScreen() {
 
       try {
         const wikiRes = await fetch(
-          `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanCity)}`
+          `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanCity)}`,
+          {
+            headers: {
+              "User-Agent": "SafarX-Travel-App/1.0 (travel@safarx.com)",
+            },
+          }
         );
         const wikiData = await wikiRes.json();
 
@@ -436,7 +548,12 @@ export default function ExplorePlaceScreen() {
             const mediaRes = await fetch(
               `https://en.wikipedia.org/w/api.php?action=query&generator=images&titles=${encodeURIComponent(
                 cleanCity
-              )}&gimlimit=6&prop=imageinfo&iiprop=url&iiurlwidth=800&format=json&origin=*`
+              )}&gimlimit=6&prop=imageinfo&iiprop=url&iiurlwidth=800&format=json&origin=*`,
+              {
+                headers: {
+                  "User-Agent": "SafarX-Travel-App/1.0 (travel@safarx.com)",
+                },
+              }
             );
             const mediaData = await mediaRes.json();
             if (mediaData?.query?.pages) {
